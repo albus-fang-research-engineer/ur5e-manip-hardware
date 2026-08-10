@@ -1,0 +1,32 @@
+# ---- model weights & checkpoints (never commit; FP weights exceed
+# ---- GitHub's 100MB hard limit and would poison the history) ----
+foundationpose_runtime/weights/
+pointso_runtime/checkpoints/
+*.pth
+*.pt
+*.ckpt
+*.safetensors
+
+# meshes are small and versionable -- foundationpose_runtime/meshes/ is
+# deliberately NOT ignored. Add a .gitkeep there if the dir is empty.
+
+# ---- future AnyGrasp sidecar (license files must never be public) ----
+anygrasp_runtime/
+
+# ---- python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+
+# ---- experiment artifacts ----
+*.log
+*.bag
+rosbag2_*/
+debug/
+outputs/
+
+# ---- local env / editor ----
+.env
+.vscode/
+.idea/

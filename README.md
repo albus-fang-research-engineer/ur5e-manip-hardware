@@ -61,11 +61,7 @@ s.send(msgpack.packb({"cmd": "ping"})); print(msgpack.unpackb(s.recv()))
 
 ## Notes / sharp edges
 
-- **GPU pinning**: both sidecars are pinned to `device_ids: ["0"]` because
-  GPUs 1–2 are saturated by the FSDP VLA training. Change in the overlay if
-  that run finishes.
-- **Arch**: `TORCH_CUDA_ARCH_LIST=8.6` everywhere (3090). Host `nvcc` 10.1 is
-  irrelevant — containers ship their own toolkits.
+
 - **FoundationPose build drift**: `build_all.sh` occasionally breaks against
   upstream kaolin/repo changes. If the image build fails there, set
   `--build-arg FP_COMMIT=<known-good SHA>`.
