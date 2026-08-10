@@ -1,0 +1,31 @@
+# ROS2 Humble bridge container
+#
+# Deliberately contains NO perception code and NO CUDA. It runs thin rclpy
+# nodes that are ZMQ clients of the pose / pointso / grasp sidecars and
+# republish results as ROS topics. This keeps ROS's python 3.10 pin out of
+# the FoundationPose (Ubuntu 20.04 conda) and SoFar (py3.12) environments.
+#
+# Runs with network_mode: host + ipc: host so DDS discovery works with the
+# robot and any other ROS2 machines on the LAN without multicast-over-bridge
+# headaches. Set ROS_DOMAIN_ID in compose to match the rest of your system.
+
+FROM ros:humble-ros-base
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3-pip \
+    ros-humble-cv-bridge \
+    ros-humble-vision-msgs \
+    ros-humble-sensor-msgs-py \
+    ros-humble-tf2-ros \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip3 install --no-cache-dir pyzmq msgpack msgpack-numpy numpy opencv-python-headless
+
+# Bridge nodes are mounted at /opt/ros2_bridge (edit on host, restart container)
+WORKDIR /opt/ros2_bridge
+
+# Default: run the pose bridge. Override `command:` in compose to run others,
+# or use a launch file once you promote these scripts into a colcon package.
+CMD ["bash", "-lc", "source /opt/ros/humble/setup.bash && python3 /opt/ros2_bridge/pose_bridge_node.py"]

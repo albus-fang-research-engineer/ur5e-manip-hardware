@@ -1,0 +1,42 @@
+# PointSO sidecar (ZMQ semantic-orientation server)
+#
+# SoFar's recommended env is python 3.12 + `pip install -e .`; the pytorch
+# devel image (py3.11, cu121) is close enough for inference and saves a
+# miniforge bootstrap. If setup.py hard-pins >=3.12, swap the base for
+# nvidia/cuda:12.1.1-devel-ubuntu22.04 + miniforge py312 and install torch
+# cu121 manually.
+#
+# We only need the orientation stack (orientation/ + serve/pointso.py), not
+# the full SoFar pipeline (SAM / Florence-2), so we skip `segmentation/SAM`.
+
+FROM pytorch/pytorch:2.4.1-cuda12.1-cudnn9-devel
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TORCH_CUDA_ARCH_LIST="8.6"
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git wget ca-certificates libgl1 libglib2.0-0 && \
+    rm -rf /var/lib/apt/lists/*
+
+ARG SOFAR_COMMIT=main
+RUN git clone https://github.com/qizekun/SoFar /opt/SoFar && \
+    cd /opt/SoFar && git checkout ${SOFAR_COMMIT}
+
+WORKDIR /opt/SoFar
+
+# NOTE: if this reinstalls torch to a different build and something breaks,
+# rerun with `pip install -e . --no-deps` + install the missing deps
+# (easydict, pyyaml, timm, etc.) explicitly.
+RUN pip install --no-cache-dir -e . && \
+    pip install --no-cache-dir pyzmq msgpack msgpack-numpy
+
+# Checkpoint is mounted, not baked:
+#   ./pointso_runtime/checkpoints -> /opt/SoFar/checkpoints
+# Grab it once on the host:
+#   wget -c https://huggingface.co/qizekun/PointSO/resolve/main/small.pth \
+#        -P pointso_runtime/checkpoints/
+#   (or base_finetune.pth for Open6DOR-style tasks; serve/pointso.py picks
+#    the cfg/checkpoint pair at the top of the file)
+
+ENV PYTHONPATH=/opt/SoFar
+CMD ["python", "/opt/pointso_server/server.py"]

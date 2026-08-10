@@ -1,0 +1,50 @@
+# FoundationPose sidecar (ZMQ pose server)
+#
+# Base: official prebuilt image (Ubuntu 20.04, conda env "my", torch cu118,
+# kaolin + nvdiffrast preinstalled). We bake the repo clone + build_all.sh
+# into the image so the CUDA extensions (mycpp, bundlesdf/mycuda) compile
+# once at build time instead of on every container start.
+#
+# Host driver 535 / CUDA 12.2 runs cu118 containers fine; host nvcc 10.1 is
+# irrelevant (the image ships its own toolkit). NVIDIA_DISABLE_REQUIRE=1
+# silences the base-image CUDA version check against the newer driver.
+#
+# If build_all.sh breaks due to upstream drift (kaolin API churn is the usual
+# culprit, see NVlabs/FoundationPose#374), pin FP_COMMIT to a known-good SHA.
+
+FROM wenbowen123/foundationpose:latest
+
+SHELL ["/bin/bash", "-c"]
+ENV DEBIAN_FRONTEND=noninteractive
+ENV NVIDIA_DISABLE_REQUIRE=1
+
+# RTX 3090 = Ampere sm_86. Build for exactly this arch (no GPU needed at
+# docker-build time; nvcc just needs the arch list).
+ENV TORCH_CUDA_ARCH_LIST="8.6"
+
+ARG FP_COMMIT=main
+RUN git clone https://github.com/NVlabs/FoundationPose /opt/FoundationPose && \
+    cd /opt/FoundationPose && git checkout ${FP_COMMIT}
+
+# Build the C++/CUDA extensions inside the "my" conda env from the base image.
+# pybind11 cmake dir resolved dynamically (base image python has drifted
+# between 3.8/3.9 across image versions -- don't hardcode the path).
+RUN source /opt/conda/etc/profile.d/conda.sh && conda activate my && \
+    cd /opt/FoundationPose && \
+    CMAKE_PREFIX_PATH=$(python -c 'import pybind11; print(pybind11.get_cmake_dir())') \
+    bash build_all.sh
+
+# Server-side transport deps
+RUN source /opt/conda/etc/profile.d/conda.sh && conda activate my && \
+    pip install --no-cache-dir pyzmq msgpack msgpack-numpy
+
+ENV PYTHONPATH=/opt/FoundationPose
+WORKDIR /opt/FoundationPose
+
+# Weights are NOT baked in -- mount them:
+#   ./foundationpose_runtime/weights -> /opt/FoundationPose/weights
+#     (refiner: 2023-10-28-18-33-37, scorer: 2024-01-11-20-02-45)
+#   ./foundationpose_runtime/meshes  -> /opt/meshes   (your object CADs)
+#   ./pose_server                    -> /opt/pose_server
+
+CMD ["bash", "-lc", "source /opt/conda/etc/profile.d/conda.sh && conda activate my && python /opt/pose_server/server.py"]
