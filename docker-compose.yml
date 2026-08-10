@@ -1,0 +1,100 @@
+# ur5e-manip-hardware: perception stack for real-robot experiments.
+#
+#   pose         FoundationPose 6D pose sidecar   :5667
+#   pointso      PointSO semantic-orientation     :5668
+#   ros2-bridge  ROS2 Humble <-> ZMQ bridge       (DDS on host network)
+#
+# No profiles -- this is the whole stack, so bring it all up at once:
+#   docker compose up -d --build
+#
+# Everything is privileged + host-networked with full driver capabilities.
+# Privileged mode exposes all of /dev, so a USB RealSense (or any camera)
+# plugged into the workstation is directly visible inside ros2-bridge if
+# you ever run the camera driver in-container.
+#
+# Port 5666 is left free for the AnyGrasp sidecar; copy its stanza over
+# from the sim repo if hardware grasping needs it.
+
+services:
+
+  # ======================================================================
+  # pose: FoundationPose sidecar (port 5667)
+  # ======================================================================
+  pose:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.foundationpose
+    image: manip-pose:latest
+    container_name: PoseServer
+    network_mode: host
+    ipc: host
+    privileged: true
+    shm_size: '8gb'
+    gpus: all
+    restart: unless-stopped
+    volumes:
+      - ./pose_server:/opt/pose_server
+      - ./foundationpose_runtime/weights:/opt/FoundationPose/weights
+      - ./foundationpose_runtime/meshes:/opt/meshes
+      - /tmp/.X11-unix:/tmp/.X11-unix      # only needed for debug viz
+    environment:
+      - POSE_PORT=5667
+      - NVIDIA_DISABLE_REQUIRE=1
+      - NVIDIA_DRIVER_CAPABILITIES=all     # nvdiffrast wants graphics caps
+      - TORCH_CUDA_ARCH_LIST=8.6
+      - DISPLAY=${DISPLAY}
+      # GPUs 1-2 run the FSDP VLA training on this workstation; soft-pin
+      # to GPU 0. Delete to let it roam over all three.
+      - CUDA_VISIBLE_DEVICES=0
+    stdin_open: true
+    tty: true
+
+  # ======================================================================
+  # pointso: PointSO sidecar (port 5668)
+  # ======================================================================
+  pointso:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.pointso
+    image: manip-pointso:latest
+    container_name: PointSOServer
+    network_mode: host
+    ipc: host
+    privileged: true
+    gpus: all
+    restart: unless-stopped
+    volumes:
+      - ./pointso_server:/opt/pointso_server
+      - ./pointso_runtime/checkpoints:/opt/SoFar/checkpoints
+    environment:
+      - POINTSO_PORT=5668
+      - TORCH_CUDA_ARCH_LIST=8.6
+      - NVIDIA_DRIVER_CAPABILITIES=all
+      # Same soft-pin as pose; delete to roam.
+      - CUDA_VISIBLE_DEVICES=0
+    stdin_open: true
+    tty: true
+
+  # ======================================================================
+  # ros2-bridge: ROS2 Humble <-> ZMQ sidecars (no GPU)
+  # ======================================================================
+  ros2-bridge:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.ros2
+    image: manip-ros2-bridge:latest
+    container_name: Ros2Bridge
+    network_mode: host        # DDS discovery with the UR5e box / other machines
+    ipc: host                 # DDS shared-memory transport
+    pid: host
+    privileged: true          # full /dev access (USB cameras, etc.)
+    restart: unless-stopped
+    volumes:
+      - ./ros2_bridge:/opt/ros2_bridge
+    environment:
+      - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-0}
+      - POSE_ADDR=tcp://127.0.0.1:5667     # host-net: sidecars are localhost
+      - POINTSO_ADDR=tcp://127.0.0.1:5668
+      - GRASP_ADDR=tcp://127.0.0.1:5666
+    stdin_open: true
+    tty: true
