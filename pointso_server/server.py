@@ -2,9 +2,12 @@
 
 Thin wrapper around SoFar's own serving helpers (serve/pointso.py), which
 expose get_model() and pred_orientation(model, pcd, instruction). The cfg /
-checkpoint pair (small.yaml + small.pth vs base.yaml + base_finetune.pth)
-is selected at the top of serve/pointso.py -- edit there, or override the
-paths via the env vars below if you've patched it to read them.
+checkpoint pair is selected via env vars (overriding the globals at the top
+of serve/pointso.py before get_model() reads them):
+
+  POINTSO_CKPT  path to .pth   (default: repo's small.pth)
+  POINTSO_CFG   path to yaml   (default: derived from ckpt name --
+                                base* -> base.yaml, else small.yaml)
 
 Wire protocol (msgpack + msgpack_numpy, REQ/REP):
 
@@ -37,7 +40,8 @@ import msgpack_numpy
 msgpack_numpy.patch()
 
 # PYTHONPATH=/opt/SoFar
-from serve.pointso import get_model, pred_orientation
+import serve.pointso as pointso
+from serve.pointso import pred_orientation
 
 PORT = int(os.environ.get("POINTSO_PORT", "5668"))
 
@@ -45,9 +49,28 @@ logging.basicConfig(level=logging.INFO, format="[pointso-server] %(message)s")
 log = logging.getLogger(__name__)
 
 
+def load_model():
+    """Resolve cfg/ckpt from env, patch serve.pointso globals, load."""
+    ckpt = os.environ.get("POINTSO_CKPT", pointso.CHECKPOINT_PATH)
+    variant = "base" if os.path.basename(ckpt).startswith("base") else "small"
+    cfg = os.environ.get("POINTSO_CFG", f"orientation/cfgs/train/{variant}.yaml")
+
+    if not os.path.isfile(ckpt):
+        raise FileNotFoundError(
+            f"{ckpt} not found -- is ./pointso_runtime/checkpoints mounted? "
+            "wget -c https://huggingface.co/qizekun/PointSO/resolve/main/"
+            f"{os.path.basename(ckpt)} -P pointso_runtime/checkpoints/"
+        )
+
+    pointso.CHECKPOINT_PATH = ckpt
+    pointso.CFG_PATH = cfg
+    log.info("cfg=%s ckpt=%s", cfg, ckpt)
+    return pointso.get_model()
+
+
 def main():
     log.info("loading PointSO...")
-    model = get_model()
+    model = load_model()
     log.info("model ready, listening on :%d", PORT)
 
     ctx = zmq.Context()

@@ -45,7 +45,7 @@ services:
       - DISPLAY=${DISPLAY}
       # GPUs 1-2 run the FSDP VLA training on this workstation; soft-pin
       # to GPU 0. Delete to let it roam over all three.
-      - CUDA_VISIBLE_DEVICES=0
+      # - CUDA_VISIBLE_DEVICES=0
     stdin_open: true
     tty: true
 
@@ -68,10 +68,11 @@ services:
       - ./pointso_runtime/checkpoints:/opt/SoFar/checkpoints
     environment:
       - POINTSO_PORT=5668
+      - POINTSO_CKPT=checkpoints/base_finetune.pth 
       - TORCH_CUDA_ARCH_LIST=8.6
       - NVIDIA_DRIVER_CAPABILITIES=all
       # Same soft-pin as pose; delete to roam.
-      - CUDA_VISIBLE_DEVICES=0
+      # - CUDA_VISIBLE_DEVICES=0
     stdin_open: true
     tty: true
 
