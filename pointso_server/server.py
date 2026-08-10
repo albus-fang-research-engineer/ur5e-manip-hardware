@@ -63,12 +63,20 @@ def main():
 
             elif cmd == "orient":
                 pcd = np.asarray(req["pcd"], np.float32)
-                d = pred_orientation(model, pcd, req["instruction"])
+                # pred_orientation takes a LIST of instructions (n =
+                # len(instruction)); a bare string is iterated per-character.
+                d = pred_orientation(model, pcd, [req["instruction"]])[0]
                 rep = {"ok": True, "direction": np.asarray(d, np.float32)}
 
             elif cmd == "orient_batch":
                 pcd = np.asarray(req["pcd"], np.float32)
-                ds = [np.asarray(pred_orientation(model, pcd, ins), np.float32)
+                # One call per instruction on purpose: upstream
+                # pred_orientation with n>1 instructions interleaves
+                # [i0,i1]*12 against vote-major point clouds, so the
+                # 12-vote mean averages ACROSS instructions. n=1 is the
+                # only pairing that is unambiguously correct.
+                ds = [np.asarray(pred_orientation(model, pcd, [ins])[0],
+                                 np.float32)
                       for ins in req["instructions"]]
                 rep = {"ok": True, "directions": np.stack(ds)}
 
