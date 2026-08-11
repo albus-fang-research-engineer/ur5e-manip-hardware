@@ -9,7 +9,7 @@
     ament_python, so all .srv/.msg for the whole stack live here and the
     Python nodes stay in manip_bridge.
   </description>
-  <maintainer email="albus@localhost">albus</maintainer>
+  <maintainer email="albus.fang.research.engineer@gmail.com">albus</maintainer>
   <license>MIT</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
