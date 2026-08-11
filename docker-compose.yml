@@ -152,3 +152,34 @@ services:
       # - CUDA_VISIBLE_DEVICES=0
     stdin_open: true
     tty: true
+  # ======================================================================
+  # sam3: SAM 3 open-vocabulary segmentation sidecar (port 5670)
+  # ======================================================================
+  sam3:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.sam3
+    image: manip-sam3:latest
+    container_name: Sam3Server
+    network_mode: host
+    ipc: host
+    privileged: true
+    shm_size: '8gb'
+    gpus: all
+    restart: unless-stopped
+    volumes:
+      - ./sam3_server:/opt/sam3_server
+      - ./sam3_runtime/hf_cache:/opt/hf_cache   # sam3.pt (~3.4GB) on first pull
+    environment:
+      - SAM3_PORT=5670
+      - SAM3_VERSION=sam3                       # or sam3.1 (multiplex ckpt)
+      # Checkpoints are GATED: request access at hf.co/facebook/sam3, then
+      # `export HF_TOKEN=hf_...` in your shell before first `up`. Once the
+      # ckpt is in the mounted cache the token is no longer needed.
+      - HF_TOKEN=${HF_TOKEN:-}
+      - NVIDIA_DRIVER_CAPABILITIES=all
+      - TORCH_CUDA_ARCH_LIST=8.6
+      # Same soft-pin as pose/pointso; delete to roam.
+      # - CUDA_VISIBLE_DEVICES=0
+    stdin_open: true
+    tty: true

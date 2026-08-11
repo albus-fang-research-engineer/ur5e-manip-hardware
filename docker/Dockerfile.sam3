@@ -1,0 +1,56 @@
+# =============================================================================
+# manip-sam3 : SAM 3 sidecar (open-vocabulary segmentation wing)
+#
+# Isolated from the sim wings because SAM 3 requires python>=3.12,
+# torch>=2.7 and CUDA>=12.6 — none of which the 22.04/py3.10 images can
+# provide. Ubuntu 24.04 ships python3.12 natively; cu128 wheels run fine
+# under minor-version compat on any >=12.x host driver.
+#
+# Checkpoints are GATED: request access at hf.co/facebook/sam3, then pass
+# HF_TOKEN at runtime. First start downloads ~3.4 GB into the mounted
+# HF cache (sam3_runtime/hf_cache) and reuses it thereafter.
+#
+# Interface: ZMQ REP on tcp://*:${SAM3_PORT:-5667}
+#   in : {image HxWx3 u8 (RGB), prompts [str, ...], score_thresh f32}
+#   out: per-prompt {masks NxHxW bool, boxes Nx4 f32 (xyxy), scores N f32}
+# =============================================================================
+FROM nvidia/cuda:12.8.1-runtime-ubuntu24.04
+
+ARG DEBIAN_FRONTEND=noninteractive
+ENV PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3.12 python3.12-venv python3-dev \
+        git curl ca-certificates \
+        # cv2 / matplotlib runtime libs pulled in by sam3 deps
+        libgl1 libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN python3.12 -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Torch first, pinned to the README-recommended pair for SAM 3 / cu128.
+RUN pip install --upgrade pip && \
+    pip install torch==2.10.0 torchvision --index-url https://download.pytorch.org/whl/cu128
+
+# SAM 3 itself. TODO: pin to a commit hash once working (same discipline as
+# the mujoco pin) — replace `main` below. Note: SAM 3.1 checkpoints require
+# post-03/2026 model code, so don't pin earlier than that.
+RUN git clone --branch main https://github.com/facebookresearch/sam3.git /opt/sam3 && \
+    cd /opt/sam3 && pip install -e .
+
+# Optional fast path (flash-attn-3). Compiles nothing (prebuilt wheel), but
+# adds ~1 GB; uncomment if segmentation latency becomes the bottleneck.
+# RUN pip install einops ninja && \
+#     pip install flash-attn-3 --no-deps --index-url https://download.pytorch.org/whl/cu128
+
+RUN pip install pyzmq pillow
+
+# Checkpoints resolve through the HF hub cache; the compose file mounts
+# sam3_runtime/hf_cache here so the gated download happens exactly once.
+ENV HF_HOME=/opt/hf_cache
+
+WORKDIR /opt/sam3
+
+CMD ["python", "/opt/sam3_server/server.py"]
