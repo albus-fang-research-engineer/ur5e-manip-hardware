@@ -81,8 +81,7 @@ RUN source /opt/conda/etc/profile.d/conda.sh && conda activate trellis2 && \
 
 # Server-side transport deps (same wire format as the other sidecars)
 RUN source /opt/conda/etc/profile.d/conda.sh && conda activate trellis2 && \
-    pip install --no-cache-dir pyzmq msgpack msgpack-numpy
-RUN pip install scipy open3d
+    pip install --no-cache-dir pyzmq msgpack msgpack-numpy scipy open3d
 # Weights are NOT baked in. from_pretrained pulls TRELLIS.2-4B (+ the image
 # conditioner) into HF_HOME on first run -- mount it so re-creates don't
 # re-download ~15GB:
@@ -92,5 +91,8 @@ RUN pip install scipy open3d
 ENV HF_HOME=/opt/hf_cache
 ENV PYTHONPATH=/opt/TRELLIS.2
 WORKDIR /opt/TRELLIS.2
-
+# Host driver is 535 (CUDA 12.2). Minor-version compat covers the cu124
+# userspace; the bundled 550 compat libcuda is GeForce-incompatible (err 804).
+RUN apt-get purge -y cuda-compat-12-4 || true && \
+    rm -rf /usr/local/cuda/compat /usr/local/cuda-12.4/compat
 CMD ["bash", "-lc", "source /opt/conda/etc/profile.d/conda.sh && conda activate trellis2 && python /opt/trellis2_server/server.py"]

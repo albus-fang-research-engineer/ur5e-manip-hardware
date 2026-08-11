@@ -147,6 +147,7 @@ services:
       - NVIDIA_DRIVER_CAPABILITIES=all                 # nvdiffrast/nvdiffrec want graphics caps
       - TORCH_CUDA_ARCH_LIST=8.6
       - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True   # repo-recommended; matters at 24GB
+      - HF_TOKEN=${HF_TOKEN:-}
       # - ATTN_BACKEND=xformers    # only for GPUs without flash-attn support; 3090 is fine
       # Same soft-pin convention as pose/pointso; delete to roam.
       # - CUDA_VISIBLE_DEVICES=0
