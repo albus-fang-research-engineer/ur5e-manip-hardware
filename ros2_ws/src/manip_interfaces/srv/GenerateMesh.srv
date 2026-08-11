@@ -1,0 +1,31 @@
+# TRELLIS.2 image-to-3D request. RGB in, mesh out.
+#
+# TRELLIS.2 itself is RGB-only and emits a CANONICAL mesh: unit AABB
+# [-0.5, 0.5]^3, no metric scale, no camera-frame pose. If you also supply
+# depth + camera_info (+ mask), the sidecar runs similarity registration
+# (partial depth cloud <-> generated mesh) and additionally returns a
+# metrically scaled mesh plus the camera-frame similarity transform.
+
+sensor_msgs/Image rgb               # rgb8/bgr8
+sensor_msgs/Image mask              # mono8, >0 = foreground. Empty (0x0) =
+                                    # model's own matting (avoid on-robot).
+sensor_msgs/Image depth             # OPTIONAL: 16UC1 (mm) or 32FC1 (m),
+                                    # aligned to rgb. Empty = canonical only.
+sensor_msgs/CameraInfo camera_info  # required iff depth is given
+int32 seed 42
+uint32 decimation_target 500000
+uint16 texture_size 2048
+string output_name                  # basename for GLBs; "" = auto timestamp
+---
+bool success
+string message
+string glb_path                     # canonical-frame GLB
+shape_msgs/Mesh mesh                # canonical, decimated, untextured
+
+# -- populated only when depth + camera_info were provided --
+bool metric_valid
+string metric_glb_path              # scaled copy (object frame, meters)
+float64 scale                       # canonical -> meters
+geometry_msgs/PoseStamped object_pose   # T_cam_obj of the scaled mesh
+float32 registration_rmse           # meters, obs->mesh inlier RMSE
+float32 gen_time
