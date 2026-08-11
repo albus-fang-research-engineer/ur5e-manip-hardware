@@ -1,56 +1,79 @@
-# =============================================================================
-# manip-sam3 : SAM 3 sidecar (open-vocabulary segmentation wing)
+# SAM 3 sidecar (ZMQ open-vocabulary segmentation server)
 #
-# Isolated from the sim wings because SAM 3 requires python>=3.12,
-# torch>=2.7 and CUDA>=12.6 — none of which the 22.04/py3.10 images can
-# provide. Ubuntu 24.04 ships python3.12 natively; cu128 wheels run fine
-# under minor-version compat on any >=12.x host driver.
+# Base: cu128 devel + miniconda (same recipe as trellis2 -- no official
+# image). SAM 3 wants python >=3.12, torch >=2.7, CUDA >=12.6; we mirror the
+# repo README's recommended pins (py3.12, torch 2.10.0 cu128). Torch cu12x
+# wheels run on any >=525 driver via CUDA minor-version compat, so the host
+# 535 driver is fine; NVIDIA_DISABLE_REQUIRE=1 silences the base-image check.
 #
-# Checkpoints are GATED: request access at hf.co/facebook/sam3, then pass
-# HF_TOKEN at runtime. First start downloads ~3.4 GB into the mounted
-# HF cache (sam3_runtime/hf_cache) and reuses it thereafter.
+# The optional "faster inference" extras from the README are deliberately
+# skipped:
+#   - flash-attn-3 is Hopper-only (sm90+); useless on the 3090 (sm86).
+#   - cc_torch (CUDA connected components) is a nice-to-have; uncomment the
+#     layer below if mask postprocessing becomes the bottleneck.
 #
-# Interface: ZMQ REP on tcp://*:${SAM3_PORT:-5667}
-#   in : {image HxWx3 u8 (RGB), prompts [str, ...], score_thresh f32}
-#   out: per-prompt {masks NxHxW bool, boxes Nx4 f32 (xyxy), scores N f32}
-# =============================================================================
-FROM nvidia/cuda:12.8.1-runtime-ubuntu24.04
+# Checkpoints are GATED on Hugging Face: request access at
+# https://huggingface.co/facebook/sam3 (and /sam3.1 for the multiplex ckpt),
+# then export HF_TOKEN in your shell -- compose passes it through. First run
+# pulls sam3.pt (~3.4GB, 848M params) into HF_HOME; mount the cache so
+# container re-creates don't re-download.
 
-ARG DEBIAN_FRONTEND=noninteractive
-ENV PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1
+FROM nvidia/cuda:12.8.1-devel-ubuntu22.04
+
+SHELL ["/bin/bash", "-c"]
+ENV DEBIAN_FRONTEND=noninteractive
+ENV NVIDIA_DISABLE_REQUIRE=1
+
+# RTX 3090 = Ampere sm_86. Same convention as the other sidecars.
+ENV TORCH_CUDA_ARCH_LIST="8.6"
+ENV MAX_JOBS=4
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        python3.12 python3.12-venv python3-dev \
-        git curl ca-certificates \
-        # cv2 / matplotlib runtime libs pulled in by sam3 deps
+        git wget ca-certificates build-essential ninja-build \
         libgl1 libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
-RUN python3.12 -m venv /opt/venv
-ENV PATH="/opt/venv/bin:$PATH"
+# Miniconda + sam3 env (python 3.12, torch 2.10.0 cu128 -- mirrors the
+# upstream README's conda recipe)
+RUN wget -q https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O /tmp/conda.sh && \
+    bash /tmp/conda.sh -b -p /opt/conda && rm /tmp/conda.sh
 
-# Torch first, pinned to the README-recommended pair for SAM 3 / cu128.
-RUN pip install --upgrade pip && \
-    pip install torch==2.10.0 torchvision --index-url https://download.pytorch.org/whl/cu128
+# conda-anaconda-tos plugin blocks non-interactive builds (see
+# Dockerfile.trellis2 for the gory details).
+RUN source /opt/conda/etc/profile.d/conda.sh && \
+    conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main && \
+    conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r
+RUN source /opt/conda/etc/profile.d/conda.sh && \
+    conda create -y -n sam3 python=3.12 && conda activate sam3 && \
+    pip install --no-cache-dir torch==2.10.0 torchvision \
+        --index-url https://download.pytorch.org/whl/cu128
 
-# SAM 3 itself. TODO: pin to a commit hash once working (same discipline as
-# the mujoco pin) — replace `main` below. Note: SAM 3.1 checkpoints require
-# post-03/2026 model code, so don't pin earlier than that.
-RUN git clone --branch main https://github.com/facebookresearch/sam3.git /opt/sam3 && \
-    cd /opt/sam3 && pip install -e .
-
-# Optional fast path (flash-attn-3). Compiles nothing (prebuilt wheel), but
-# adds ~1 GB; uncomment if segmentation latency becomes the bottleneck.
-# RUN pip install einops ninja && \
-#     pip install flash-attn-3 --no-deps --index-url https://download.pytorch.org/whl/cu128
-
-RUN pip install pyzmq pillow
-
-# Checkpoints resolve through the HF hub cache; the compose file mounts
-# sam3_runtime/hf_cache here so the gated download happens exactly once.
-ENV HF_HOME=/opt/hf_cache
+# SAM3_COMMIT pin: SAM 3.1 checkpoints need post-03/2026 model code; if you
+# ever pin earlier than that, also set SAM3_VERSION=sam3 in the compose env.
+ARG SAM3_COMMIT=main
+RUN git clone https://github.com/facebookresearch/sam3 /opt/sam3 && \
+    cd /opt/sam3 && git checkout ${SAM3_COMMIT}
 
 WORKDIR /opt/sam3
 
-CMD ["python", "/opt/sam3_server/server.py"]
+# Deps are light (timm, ftfy, iopath, huggingface_hub, numpy<2) -- no CUDA
+# extension builds, so no --no-build-isolation dance needed.
+RUN source /opt/conda/etc/profile.d/conda.sh && conda activate sam3 && \
+    pip install --no-cache-dir -e . && \
+    pip install --no-cache-dir pyzmq msgpack msgpack-numpy pillow
+
+# Optional: CUDA connected-components for faster mask postprocessing.
+# RUN source /opt/conda/etc/profile.d/conda.sh && conda activate sam3 && \
+#     pip install --no-cache-dir einops ninja && \
+#     pip install --no-cache-dir git+https://github.com/ronghanghu/cc_torch.git
+
+# Weights are NOT baked in (gated HF repo + auth token, so they can't be).
+# build_sam3_image_model() hf_hub_download's facebook/sam3 into HF_HOME on
+# first run -- mount it:
+#   ./sam3_runtime/hf_cache -> /opt/hf_cache
+#   ./sam3_server           -> /opt/sam3_server
+
+ENV HF_HOME=/opt/hf_cache
+ENV PYTHONPATH=/opt/sam3
+
+CMD ["bash", "-lc", "source /opt/conda/etc/profile.d/conda.sh && conda activate sam3 && python /opt/sam3_server/server.py"]
