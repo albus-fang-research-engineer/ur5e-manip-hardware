@@ -183,3 +183,42 @@ services:
       # - CUDA_VISIBLE_DEVICES=0
     stdin_open: true
     tty: true
+  # ======================================================================
+  # curobo: cuRoboV2 ESDF mapping / motion-gen sidecar (port 5671)
+  # ======================================================================
+  curobo:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.curobo
+    image: manip-curobo:latest
+    container_name: CuroboServer
+    network_mode: host
+    ipc: host
+    privileged: true
+    shm_size: '8gb'
+    gpus: all
+    restart: unless-stopped
+    volumes:
+      - ./curobo_server:/opt/curobo_server
+      - ./curobo_runtime/kernel_cache:/opt/kernel_cache   # warp JIT cache; ~30-60s cold without it
+      - ./curobo_runtime/checkpoints:/data/tsdf_blocks    # mapper.save_blocks() output (resume across restarts)
+    environment:
+      - CUROBO_PORT=5671
+      - NVIDIA_DISABLE_REQUIRE=1
+      - NVIDIA_DRIVER_CAPABILITIES=all
+      - TORCH_CUDA_ARCH_LIST=8.6
+      # Default mapper config; the server also accepts a "configure" cmd to
+      # rebuild the Mapper with different params at runtime.
+      - CUROBO_VOXEL_SIZE=0.01
+      - CUROBO_EXTENT=2.0,2.0,1.5          # meters, xyz, centered on map origin
+      - CUROBO_IMAGE_HEIGHT=480            # RealSense D4xx depth at 480p
+      - CUROBO_IMAGE_WIDTH=848
+      - CUROBO_NUM_CAMERAS=1
+      # viser debug viz (server started only if CUROBO_VISUALIZE=1); host-net,
+      # so http://localhost:8080 -- same port family as nothing else here.
+      # - CUROBO_VISUALIZE=1
+      # Same soft-pin as pose/pointso; delete to roam.
+      # - CUDA_VISIBLE_DEVICES=0
+    stdin_open: true
+    tty: true
+ 

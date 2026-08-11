@@ -1,0 +1,59 @@
+# cuRoboV2 sidecar (ZMQ ESDF/mapping + motion-gen server)
+#
+# cuRoboV2 (v0.8.0+, Apache 2.0) is a full rewrite: pure-python package with
+# CUDA kernels compiled AT RUNTIME via cuda.core/NVRTC (to sm_86 cubins) and
+# Warp -- no build_all.sh, no nvcc at image-build time, no weights to mount.
+# The native block-sparse TSDF + PBA ESDF mapper replaces nvblox entirely.
+#
+# torch>=2.5 is required, so we step up from the 2.4.1 base used by pointso.
+# cu121 wheels are the closest match to the host's 535 driver (CUDA 12.2).
+#
+# DRIVER CAVEAT: upstream docs say driver >= 580.65.06; this box runs
+# 535.230.02. Minor-version compat within CUDA 12 usually makes this fine
+# (kernels go straight to sm_86 cubins, no PTX JIT), but if kernel loads fail
+# at runtime, rebuild with --build-arg CUDA_WHEEL_PIN=12.4 to pin the NVRTC/
+# runtime wheels closer to the driver. The real fix is a driver upgrade --
+# blocked until the FSDP run frees the box for a reboot.
+
+FROM pytorch/pytorch:2.5.1-cuda12.1-cudnn9-devel
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TORCH_CUDA_ARCH_LIST="8.6"
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git wget ca-certificates libgl1 libglib2.0-0 && \
+    rm -rf /var/lib/apt/lists/*
+
+# cuRoboV2 landed on main April 2026; v1 lives at the v0.7.8 tag. Pin a SHA
+# here once the stack is validated -- upstream is moving fast post-rewrite
+# (LiDAR fusion June '26, textured mapper July '26).
+ARG CUROBO_COMMIT=main
+RUN git clone https://github.com/NVlabs/curobo /opt/curobo && \
+    cd /opt/curobo && git checkout ${CUROBO_COMMIT}
+
+WORKDIR /opt/curobo
+
+# [cu12] (not [cu12-torch]) -- torch comes from the base image; the extra just
+# adds cuda-core + the NVRTC/runtime wheels for runtime kernel compilation.
+# CUDA_WHEEL_PIN: empty = latest 12.x wheels (default); "12.4" etc. pins
+# nvrtc/runtime wheels for older-driver fallback (see header).
+ARG CUDA_WHEEL_PIN=
+RUN pip install --no-cache-dir -e ".[cu12]" && \
+    if [ -n "${CUDA_WHEEL_PIN}" ]; then \
+      pip install --no-cache-dir \
+        "nvidia-cuda-nvrtc-cu12==${CUDA_WHEEL_PIN}.*" \
+        "nvidia-cuda-runtime-cu12==${CUDA_WHEEL_PIN}.*"; \
+    fi && \
+    pip install --no-cache-dir pyzmq msgpack msgpack-numpy
+
+# Warp JIT-compiles its kernels on first use (~30-60s cold). Persist the cache
+# across container recreation:
+#   ./curobo_runtime/kernel_cache -> /opt/kernel_cache
+# (cuda.core kernels are cached in-memory per process; first ESDF call after
+# a restart pays a few seconds of NVRTC, unavoidable.)
+ENV WARP_CACHE_PATH=/opt/kernel_cache/warp
+
+# Nothing to download: no checkpoints, no weights. TSDF block checkpoints
+# (mapper.save_blocks) land in the mounted /data/tsdf_blocks.
+
+CMD ["python", "/opt/curobo_server/server.py"]
