@@ -73,9 +73,10 @@ RUN source /opt/conda/etc/profile.d/conda.sh && conda activate sam3 && \
 #   ./sam3_runtime/hf_cache -> /opt/hf_cache
 #   ./sam3_server           -> /opt/sam3_server
 RUN source /opt/conda/etc/profile.d/conda.sh && conda activate sam3 && \
-    pip install --no-cache-dir setuptools && \
-    pip install --no-cache-dir torch==2.10.0 torchvision \
-      --index-url https://download.pytorch.org/whl/cu128
+    pip install --no-cache-dir "setuptools<82"
+RUN source /opt/conda/etc/profile.d/conda.sh && conda activate sam3 && \
+    pip install --no-cache-dir -e . && \
+    pip install --no-cache-dir pyzmq msgpack msgpack-numpy pillow einops pycocotools psutil
 ENV HF_HOME=/opt/hf_cache
 ENV PYTHONPATH=/opt/sam3
 
