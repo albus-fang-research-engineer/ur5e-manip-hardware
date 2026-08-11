@@ -90,7 +90,12 @@ services:
     pid: host
     privileged: true          # full /dev access (USB cameras, etc.)
     restart: unless-stopped
+    working_dir: /root/ros2_ws
     volumes:
+      # Dev workspace: edit + colcon build from the host copy. build/ install/
+      # log/ land on the host too, so builds survive container recreation.
+      - ./ros2_ws:/root/ros2_ws
+      # Legacy standalone scripts, until they're promoted into manip_bridge
       - ./ros2_bridge:/opt/ros2_bridge
       - ./trellis2_runtime/outputs:/data/meshes
     environment:

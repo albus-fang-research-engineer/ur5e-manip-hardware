@@ -1,9 +1,14 @@
-# ROS2 Humble bridge container
+# ROS2 Humble bridge container (development image)
 #
 # Deliberately contains NO perception code and NO CUDA. It runs thin rclpy
 # nodes that are ZMQ clients of the pose / pointso / grasp sidecars and
 # republish results as ROS topics. This keeps ROS's python 3.10 pin out of
 # the FoundationPose (Ubuntu 20.04 conda) and SoFar (py3.12) environments.
+#
+# Development-style: the colcon workspace is bind-mounted from the host at
+# /root/ros2_ws (see docker-compose.yml), so nothing is baked into the image.
+# Edit on host, then inside the container:
+#   cd /root/ros2_ws && colcon build --symlink-install && source install/setup.bash
 #
 # Runs with network_mode: host + ipc: host so DDS discovery works with the
 # robot and any other ROS2 machines on the LAN without multicast-over-bridge
@@ -15,17 +20,26 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-pip \
+    python3-colcon-common-extensions \
+    python3-rosdep \
+    build-essential \
+    git \
+    vim \
+    iputils-ping \
+    net-tools \
     ros-humble-cv-bridge \
     ros-humble-vision-msgs \
     ros-humble-sensor-msgs-py \
     ros-humble-tf2-ros \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip3 install --no-cache-dir pyzmq msgpack msgpack-numpy numpy opencv-python-headless
+RUN pip3 install --no-cache-dir pyzmq msgpack msgpack-numpy numpy scipy opencv-python-headless
 
-# Bridge nodes are mounted at /opt/ros2_bridge (edit on host, restart container)
-WORKDIR /opt/ros2_bridge
+# Auto-source ROS and the workspace overlay (if built) in every interactive shell
+RUN echo 'source /opt/ros/humble/setup.bash' >> /root/.bashrc && \
+    echo '[ -f /root/ros2_ws/install/setup.bash ] && source /root/ros2_ws/install/setup.bash' >> /root/.bashrc
 
-# Default: run the pose bridge. Override `command:` in compose to run others,
-# or use a launch file once you promote these scripts into a colcon package.
-CMD ["bash", "-lc", "source /opt/ros/humble/setup.bash && python3 /opt/ros2_bridge/pose_bridge_node.py"]
+# Workspace is a bind mount -- created here only so WORKDIR exists image-side
+WORKDIR /root/ros2_ws
+
+CMD ["/bin/bash"]
