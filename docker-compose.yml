@@ -87,7 +87,7 @@ services:
     container_name: Ros2Bridge
     network_mode: host        # DDS discovery with the UR5e box / other machines
     ipc: host                 # DDS shared-memory transport
-    pid: host
+    # pid: host
     privileged: true          # full /dev access (USB cameras, etc.)
     restart: unless-stopped
     working_dir: /root/ros2_ws

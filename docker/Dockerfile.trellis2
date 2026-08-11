@@ -82,7 +82,7 @@ RUN source /opt/conda/etc/profile.d/conda.sh && conda activate trellis2 && \
 # Server-side transport deps (same wire format as the other sidecars)
 RUN source /opt/conda/etc/profile.d/conda.sh && conda activate trellis2 && \
     pip install --no-cache-dir pyzmq msgpack msgpack-numpy
-
+RUN pip install scipy open3d
 # Weights are NOT baked in. from_pretrained pulls TRELLIS.2-4B (+ the image
 # conditioner) into HF_HOME on first run -- mount it so re-creates don't
 # re-download ~15GB:
