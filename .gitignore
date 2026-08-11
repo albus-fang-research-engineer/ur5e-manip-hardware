@@ -12,7 +12,7 @@ pointso_runtime/checkpoints/
 
 # ---- future AnyGrasp sidecar (license files must never be public) ----
 anygrasp_runtime/
-
+*_runtime/
 # ---- colcon build artifacts (ros2_ws is bind-mounted into the bridge
 # ---- container, so builds land on the host) ----
 ros2_ws/build/
@@ -39,3 +39,4 @@ outputs/
 
 __pycache__/
 __init__.py
+test/data/
