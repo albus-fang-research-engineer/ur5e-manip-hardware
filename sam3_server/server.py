@@ -42,6 +42,7 @@ import os
 import logging
 
 import numpy as np
+import torch
 import zmq
 import msgpack
 import msgpack_numpy
@@ -109,17 +110,23 @@ def main():
                 proc.confidence_threshold = float(
                     req.get("threshold", DEFAULT_THRESH))
                 rgb = np.ascontiguousarray(req["rgb"], np.uint8)
-                state = proc.set_image(Image.fromarray(rgb))
+                # SAM 3 is meant to run under bf16 autocast (parts of the
+                # backbone emit bf16 activations against fp32 weights, e.g.
+                # fc2 in the ViTDet MLP). The context covers set_image AND
+                # set_text_prompt so both paths share identical numerics.
+                with torch.autocast("cuda", dtype=torch.bfloat16):
+                    state = proc.set_image(Image.fromarray(rgb))
 
-                if cmd == "segment":
-                    rep = {"ok": True, **run_prompt(proc, state, req["prompt"])}
-                else:
-                    results = []
-                    for p in req["prompts"]:
-                        # new text prompt overwrites the old one in-state;
-                        # image features are reused across the loop
-                        results.append(run_prompt(proc, state, p))
-                    rep = {"ok": True, "results": results}
+                    if cmd == "segment":
+                        rep = {"ok": True,
+                               **run_prompt(proc, state, req["prompt"])}
+                    else:
+                        results = []
+                        for p in req["prompts"]:
+                            # new text prompt overwrites the old one in-state;
+                            # image features are reused across the loop
+                            results.append(run_prompt(proc, state, p))
+                        rep = {"ok": True, "results": results}
 
             else:
                 rep = {"ok": False, "error": f"unknown cmd {cmd!r}"}
