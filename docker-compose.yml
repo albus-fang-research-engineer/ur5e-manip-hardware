@@ -95,8 +95,9 @@ services:
       # Dev workspace: edit + colcon build from the host copy. build/ install/
       # log/ land on the host too, so builds survive container recreation.
       - ./ros2_ws:/root/ros2_ws
-      # Legacy standalone scripts, until they're promoted into manip_bridge
-      - ./ros2_bridge:/opt/ros2_bridge
+      # Legacy loose scripts, mounted inside the workspace so one launch file
+      # coordinates everything. COLCON_IGNORE keeps colcon from building it.
+      - ./ros2_bridge:/root/ros2_ws/src/ros2_bridge
       - ./trellis2_runtime/outputs:/data/meshes
     environment:
       - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-0}
@@ -104,6 +105,19 @@ services:
       - POINTSO_ADDR=tcp://127.0.0.1:5668
       - GRASP_ADDR=tcp://127.0.0.1:5666
       - TRELLIS_ADDR=tcp://127.0.0.1:5669
+    # Launch all bridges once the workspace has been colcon-built; before the
+    # first build, idle in a shell so you can exec in and build:
+    #   docker exec -it Ros2Bridge bash
+    #   colcon build --symlink-install && exit
+    #   docker compose restart ros2-bridge
+    command: >
+      bash -lc "if [ -f install/setup.bash ]; then
+        source /opt/ros/humble/setup.bash && source install/setup.bash &&
+        ros2 launch manip_bridge bridges.launch.py;
+      else
+        echo 'ros2_ws not built yet -- exec in, colcon build, then restart';
+        exec bash;
+      fi"
     stdin_open: true
     tty: true
   
