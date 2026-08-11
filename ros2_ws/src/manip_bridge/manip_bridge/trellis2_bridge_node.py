@@ -2,12 +2,13 @@
 
 Exposes:  /trellis2/generate_mesh   (manip_interfaces/srv/GenerateMesh)
 
-Forwards the request to the trellis2 sidecar over ZMQ REQ and converts the
-reply into shape_msgs/Mesh. Generation is SLOW relative to normal ROS
-services (roughly tens of seconds to ~2 min on a 3090 depending on
-resolution) -- the handler blocks for up to TRELLIS_TIMEOUT_S. Call it from
-its own callback group / a dedicated client node, and don't put it on the
-control path.
+Forwards to the trellis2 sidecar over ZMQ REQ. If the request carries depth
++ camera_info, the sidecar also runs similarity registration and the reply
+includes a metric mesh + T_cam_obj (see GenerateMesh.srv).
+
+Generation is SLOW for a ROS service (tens of seconds to minutes on a
+3090). The handler blocks up to TRELLIS_TIMEOUT_S; keep it off the control
+path and call from a dedicated client / its own callback group.
 
 Env:
     TRELLIS_ADDR        tcp://127.0.0.1:5669 (host-net default)
@@ -35,7 +36,6 @@ TIMEOUT_MS = int(float(os.environ.get("TRELLIS_TIMEOUT_S", 240)) * 1000)
 
 
 def _image_to_rgb(msg) -> np.ndarray:
-    """sensor_msgs/Image -> HxWx3 uint8 RGB, no cv_bridge dependency."""
     h, w = msg.height, msg.width
     buf = np.frombuffer(bytes(msg.data), dtype=np.uint8)
     if msg.encoding in ("rgb8", "bgr8"):
@@ -54,14 +54,24 @@ def _image_to_mono(msg) -> np.ndarray:
     return buf.reshape(msg.height, msg.step)[:, : msg.width].copy()
 
 
+def _image_to_depth_m(msg) -> np.ndarray:
+    """16UC1 mm or 32FC1 m -> HxW float32 meters."""
+    h, w = msg.height, msg.width
+    if msg.encoding == "16UC1":
+        d = np.frombuffer(bytes(msg.data), dtype=np.uint16)
+        return d.reshape(h, msg.step // 2)[:, :w].astype(np.float32) * 1e-3
+    if msg.encoding == "32FC1":
+        d = np.frombuffer(bytes(msg.data), dtype=np.float32)
+        return d.reshape(h, msg.step // 4)[:, :w].copy()
+    raise ValueError(f"unsupported depth encoding: {msg.encoding}")
+
+
 class Trellis2Bridge(Node):
     def __init__(self):
         super().__init__("trellis2_bridge")
         self._zctx = zmq.Context()
         self._sock = None
         self._connect()
-        # Own group so a long-running generation doesn't starve anything
-        # else this process might also be serving.
         self._cbg = MutuallyExclusiveCallbackGroup()
         self.create_service(
             GenerateMesh, "trellis2/generate_mesh", self._on_generate,
@@ -90,8 +100,12 @@ class Trellis2Bridge(Node):
                 "output_name": req.output_name or None,
                 "return_glb": False,
             }
-            if req.mask.height > 0 and req.mask.width > 0:
+            if req.mask.height > 0:
                 payload["mask"] = _image_to_mono(req.mask)
+            if req.depth.height > 0:
+                payload["depth"] = _image_to_depth_m(req.depth)
+                payload["K"] = np.asarray(req.camera_info.k,
+                                          dtype=np.float64).reshape(3, 3)
 
             self._sock.send(msgpack.packb(payload, use_bin_type=True))
             reply = msgpack.unpackb(self._sock.recv(), raw=False)
@@ -114,15 +128,34 @@ class Trellis2Bridge(Node):
         verts = np.asarray(reply["vertices"], dtype=np.float64)
         faces = np.asarray(reply["faces"], dtype=np.uint32)
         res.mesh = Mesh(
-            vertices=[Point(x=float(v[0]), y=float(v[1]), z=float(v[2])) for v in verts],
+            vertices=[Point(x=float(v[0]), y=float(v[1]), z=float(v[2]))
+                      for v in verts],
             triangles=[MeshTriangle(vertex_indices=f.tolist()) for f in faces],
         )
         res.glb_path = reply["glb_path"]
         res.gen_time = float(reply["gen_time"])
+
+        metric = reply.get("metric")
+        res.metric_valid = bool(metric)
+        if metric:
+            res.metric_glb_path = metric["glb_path"]
+            res.scale = float(metric["scale"])
+            res.registration_rmse = float(metric["rmse"])
+            res.object_pose.header = req.rgb.header  # camera frame + stamp
+            p, q = metric["t"], metric["q_xyzw"]
+            res.object_pose.pose.position.x = float(p[0])
+            res.object_pose.pose.position.y = float(p[1])
+            res.object_pose.pose.position.z = float(p[2])
+            res.object_pose.pose.orientation.x = float(q[0])
+            res.object_pose.pose.orientation.y = float(q[1])
+            res.object_pose.pose.orientation.z = float(q[2])
+            res.object_pose.pose.orientation.w = float(q[3])
+
         res.success = True
         res.message = (
-            f"{len(verts)} verts / {len(faces)} faces in {res.gen_time:.1f}s "
-            "(canonical frame, unit AABB -- no metric scale)"
+            f"{len(verts)} verts / {len(faces)} faces in {res.gen_time:.1f}s"
+            + (f"; scale={res.scale:.4f} rmse={res.registration_rmse * 1e3:.1f}mm"
+               if res.metric_valid else " (canonical only)")
         )
         return res
 

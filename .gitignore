@@ -36,3 +36,6 @@ outputs/
 .env
 .vscode/
 .idea/
+
+__pycache__/
+__init__.py

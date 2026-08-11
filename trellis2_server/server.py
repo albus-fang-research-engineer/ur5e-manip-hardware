@@ -126,6 +126,33 @@ def _handle_generate(pipeline, req: dict) -> dict:
     if req.get("return_glb", False):
         reply["glb"] = glb_bytes
 
+    # Optional metric scale recovery: depth (HxW float32 m, aligned to rgb)
+    # + K (3x3) + mask -> similarity registration onto the canonical mesh.
+    if req.get("depth") is not None and req.get("K") is not None:
+        from scipy.spatial.transform import Rotation
+        import metric_scale
+
+        P_obs = metric_scale.backproject(
+            np.asarray(req["depth"], dtype=np.float32),
+            np.asarray(req["K"], dtype=np.float64),
+            req.get("mask", np.ones(req["depth"].shape, np.uint8)),
+        )
+        sim = metric_scale.register_similarity(P_obs, tm)
+
+        tm_metric = tm.copy()
+        tm_metric.apply_scale(sim["scale"])
+        metric_path = glb_path.replace(".glb", "_metric.glb")
+        tm_metric.export(metric_path)  # geometry-only; textures stay in the
+                                       # canonical GLB (scale in your loader)
+        reply["metric"] = {
+            "glb_path": metric_path,
+            "scale": sim["scale"],
+            "t": sim["t"].astype(np.float64),
+            "q_xyzw": Rotation.from_matrix(sim["R"]).as_quat(),
+            "rmse": sim["rmse"],
+            "ok": sim["ok"],
+        }
+
     torch.cuda.empty_cache()
     return reply
 
