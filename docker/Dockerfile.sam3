@@ -79,5 +79,7 @@ RUN source /opt/conda/etc/profile.d/conda.sh && conda activate sam3 && \
     pip install --no-cache-dir pyzmq msgpack msgpack-numpy pillow einops pycocotools psutil
 ENV HF_HOME=/opt/hf_cache
 ENV PYTHONPATH=/opt/sam3
-
+# GeForce (sm86) doesn't support CUDA forward compat; nuke the compat libcuda
+# so the entrypoint falls back to the host 535 driver (minor-version compat).
+RUN rm -rf /usr/local/cuda/compat
 CMD ["bash", "-lc", "source /opt/conda/etc/profile.d/conda.sh && conda activate sam3 && python /opt/sam3_server/server.py"]

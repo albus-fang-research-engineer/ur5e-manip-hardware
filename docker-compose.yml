@@ -181,6 +181,8 @@ services:
       - TORCH_CUDA_ARCH_LIST=8.6
       # Same soft-pin as pose/pointso; delete to roam.
       # - CUDA_VISIBLE_DEVICES=0
+    # entrypoint: ["bash", "-lc"]
+    # command: "source /opt/conda/etc/profile.d/conda.sh && conda activate sam3 && python /opt/sam3_server/server.py"
     stdin_open: true
     tty: true
   # ======================================================================
