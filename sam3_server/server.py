@@ -82,11 +82,13 @@ def load_processor():
 def run_prompt(proc, state, prompt):
     """set_text_prompt + convert to numpy, score-sorted."""
     state = proc.set_text_prompt(prompt=prompt, state=state)
-    scores = state["scores"].detach().cpu().numpy().astype(np.float32)
+    # under bf16 autocast these tensors come back bf16, which .numpy()
+    # can't represent -- cast to fp32 on the torch side first
+    scores = state["scores"].detach().float().cpu().numpy()
     order = np.argsort(-scores)
     masks = state["masks"].detach().cpu().numpy()  # (N,1,H,W) bool
     masks = masks[:, 0][order]
-    boxes = state["boxes"].detach().cpu().numpy().astype(np.float32)[order]
+    boxes = state["boxes"].detach().float().cpu().numpy()[order]
     return {"masks": masks, "boxes": boxes, "scores": scores[order]}
 
 
