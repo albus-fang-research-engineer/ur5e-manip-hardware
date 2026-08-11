@@ -92,10 +92,44 @@ services:
     restart: unless-stopped
     volumes:
       - ./ros2_bridge:/opt/ros2_bridge
+      - ./trellis2_runtime/outputs:/data/meshes
     environment:
       - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-0}
       - POSE_ADDR=tcp://127.0.0.1:5667     # host-net: sidecars are localhost
       - POINTSO_ADDR=tcp://127.0.0.1:5668
       - GRASP_ADDR=tcp://127.0.0.1:5666
+      - TRELLIS_ADDR=tcp://127.0.0.1:5669
+    stdin_open: true
+    tty: true
+  
+  # ======================================================================
+  # trellis2: TRELLIS.2 sidecar (port 5669)
+  # ======================================================================
+  trellis2:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.trellis2
+    image: manip-trellis2:latest
+    container_name: Trellis2Server
+    network_mode: host
+    ipc: host
+    privileged: true
+    shm_size: '8gb'
+    gpus: all
+    restart: unless-stopped
+    volumes:
+      - ./trellis2_server:/opt/trellis2_server
+      - ./trellis2_runtime/hf_cache:/opt/hf_cache      # ~15GB weights on first pull
+      - ./trellis2_runtime/outputs:/data/meshes        # GLBs land here (bridge sees same host dir)
+    environment:
+      - TRELLIS_PORT=5669
+      - TRELLIS_OUT_DIR=/data/meshes
+      - NVIDIA_DISABLE_REQUIRE=1
+      - NVIDIA_DRIVER_CAPABILITIES=all                 # nvdiffrast/nvdiffrec want graphics caps
+      - TORCH_CUDA_ARCH_LIST=8.6
+      - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True   # repo-recommended; matters at 24GB
+      # - ATTN_BACKEND=xformers    # only for GPUs without flash-attn support; 3090 is fine
+      # Same soft-pin convention as pose/pointso; delete to roam.
+      # - CUDA_VISIBLE_DEVICES=0
     stdin_open: true
     tty: true

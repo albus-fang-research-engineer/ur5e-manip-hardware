@@ -1,0 +1,89 @@
+# TRELLIS.2 sidecar (ZMQ image-to-3D server)
+#
+# Base: cu124 devel (TRELLIS.2 wants CUDA 12.4 + torch 2.6.0). No official
+# image exists, so we build from the NVIDIA devel image + miniconda.
+#
+# NOTE: the repo's setup.sh hard-exits if `nvidia-smi` is missing, and there
+# is no GPU visible at docker-build time. We therefore replicate its steps
+# manually (same pins: nvdiffrast v0.4.0, JeffreyXiang forks of nvdiffrec/
+# CuMesh/FlexGEMM, in-repo o-voxel) instead of sourcing it. If upstream
+# setup.sh drifts, diff against it before bumping T2_COMMIT.
+#
+# flash-attn==2.7.3 normally resolves to a prebuilt wheel for
+# cp310/torch2.6/cu12; if it falls back to a source build, MAX_JOBS caps
+# nvcc parallelism so the build doesn't OOM the host.
+
+FROM nvidia/cuda:12.4.1-devel-ubuntu22.04
+
+SHELL ["/bin/bash", "-c"]
+ENV DEBIAN_FRONTEND=noninteractive
+ENV NVIDIA_DISABLE_REQUIRE=1
+
+# RTX 3090 = Ampere sm_86. Extensions compile without a GPU present as long
+# as the arch list is pinned.
+ENV TORCH_CUDA_ARCH_LIST="8.6"
+ENV MAX_JOBS=4
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        git wget ca-certificates build-essential ninja-build \
+        libjpeg-dev libgl1 libglib2.0-0 libegl1 libgles2 ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+# Miniconda + trellis2 env (python 3.10, torch 2.6.0 cu124 -- mirrors
+# setup.sh --new-env)
+RUN wget -q https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O /tmp/conda.sh && \
+    bash /tmp/conda.sh -b -p /opt/conda && rm /tmp/conda.sh
+RUN source /opt/conda/etc/profile.d/conda.sh && \
+    conda create -y -n trellis2 python=3.10 && conda activate trellis2 && \
+    pip install --no-cache-dir torch==2.6.0 torchvision==0.21.0 \
+        --index-url https://download.pytorch.org/whl/cu124
+
+ARG T2_COMMIT=main
+RUN git clone --recursive -b main https://github.com/microsoft/TRELLIS.2.git /opt/TRELLIS.2 && \
+    cd /opt/TRELLIS.2 && git checkout ${T2_COMMIT} && \
+    git submodule update --init --recursive
+
+# --basic (sans sudo; libjpeg-dev is in the apt layer above). pillow-simd is
+# a pure optimization and occasionally fails to build -- fall back to pillow.
+RUN source /opt/conda/etc/profile.d/conda.sh && conda activate trellis2 && \
+    pip install --no-cache-dir imageio imageio-ffmpeg tqdm easydict \
+        opencv-python-headless ninja trimesh transformers gradio==6.0.1 \
+        tensorboard pandas lpips zstandard kornia timm && \
+    pip install --no-cache-dir \
+        git+https://github.com/EasternJournalist/utils3d.git@9a4eb15e4021b67b12c460c7057d642626897ec8 && \
+    (pip install --no-cache-dir pillow-simd || pip install --no-cache-dir pillow)
+
+# --flash-attn (prebuilt wheel expected; source build capped by MAX_JOBS)
+RUN source /opt/conda/etc/profile.d/conda.sh && conda activate trellis2 && \
+    pip install --no-cache-dir flash-attn==2.7.3
+
+# --nvdiffrast / --nvdiffrec / --cumesh / --flexgemm / --o-voxel
+RUN source /opt/conda/etc/profile.d/conda.sh && conda activate trellis2 && \
+    mkdir -p /tmp/extensions && \
+    git clone -b v0.4.0 https://github.com/NVlabs/nvdiffrast.git /tmp/extensions/nvdiffrast && \
+    pip install --no-cache-dir /tmp/extensions/nvdiffrast --no-build-isolation && \
+    git clone -b renderutils https://github.com/JeffreyXiang/nvdiffrec.git /tmp/extensions/nvdiffrec && \
+    pip install --no-cache-dir /tmp/extensions/nvdiffrec --no-build-isolation && \
+    git clone --recursive https://github.com/JeffreyXiang/CuMesh.git /tmp/extensions/CuMesh && \
+    pip install --no-cache-dir /tmp/extensions/CuMesh --no-build-isolation && \
+    git clone --recursive https://github.com/JeffreyXiang/FlexGEMM.git /tmp/extensions/FlexGEMM && \
+    pip install --no-cache-dir /tmp/extensions/FlexGEMM --no-build-isolation && \
+    cp -r /opt/TRELLIS.2/o-voxel /tmp/extensions/o-voxel && \
+    pip install --no-cache-dir /tmp/extensions/o-voxel --no-build-isolation && \
+    rm -rf /tmp/extensions
+
+# Server-side transport deps (same wire format as the other sidecars)
+RUN source /opt/conda/etc/profile.d/conda.sh && conda activate trellis2 && \
+    pip install --no-cache-dir pyzmq msgpack msgpack-numpy
+
+# Weights are NOT baked in. from_pretrained pulls TRELLIS.2-4B (+ the image
+# conditioner) into HF_HOME on first run -- mount it so re-creates don't
+# re-download ~15GB:
+#   ./trellis2_runtime/hf_cache -> /opt/hf_cache
+#   ./trellis2_server           -> /opt/trellis2_server
+#   ./trellis2_runtime/outputs  -> /data/meshes   (GLBs, shared w/ bridge)
+ENV HF_HOME=/opt/hf_cache
+ENV PYTHONPATH=/opt/TRELLIS.2
+WORKDIR /opt/TRELLIS.2
+
+CMD ["bash", "-lc", "source /opt/conda/etc/profile.d/conda.sh && conda activate trellis2 && python /opt/trellis2_server/server.py"]
