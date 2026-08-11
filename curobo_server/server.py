@@ -5,17 +5,27 @@ frames go in, a dense ESDF VoxelGrid comes out (PBA+ on GPU). The rest of
 cuRoboV2 (IK / trajopt / motion gen) is installed in the image; extend this
 server or exec in when you need it.
 
-Mapper config comes from env at startup (CUROBO_VOXEL_SIZE, CUROBO_EXTENT,
-CUROBO_IMAGE_HEIGHT/WIDTH, CUROBO_NUM_CAMERAS) and can be rebuilt at runtime
-via the "configure" cmd.
+Mapper config comes from env at startup (CUROBO_VOXEL_SIZE,
+CUROBO_ESDF_VOXEL_SIZE, CUROBO_EXTENT, CUROBO_IMAGE_HEIGHT/WIDTH,
+CUROBO_NUM_CAMERAS) and can be rebuilt at runtime via the "configure" cmd.
+
+ESDF grid semantics (cuRoboV2 >= 0.8.0.post1): the ESDF grid SHAPE is fixed
+at Mapper construction from (extent, esdf_voxel_size) -- the seeding kernel
+has fixed launch dims for CUDA-graph safety. The per-call voxel_size override
+rescales SPACING on that fixed buffer, so it trades resolution against
+coverage (0.02 on a grid built for 0.01 covers 2x the extent). It does NOT
+reallocate. Upstream, the override is also sticky (it mutates integrator
+state); this server defeats that by always passing an explicit voxel size,
+so an un-overridden "esdf" call always returns the configured resolution.
 
 Wire protocol (msgpack + msgpack_numpy, REQ/REP):
 
   {"cmd": "ping"} -> {"ok": True}
 
   {"cmd": "configure",                # optional; rebuilds the Mapper
-   "voxel_size": 0.01,
-   "extent": [2.0, 2.0, 1.5],         # meters xyz
+   "voxel_size": 0.01,                # TSDF voxel (m)
+   "esdf_voxel_size": 0.01,           # ESDF voxel (m); default = voxel_size
+   "extent": [2.0, 2.0, 1.5],         # meters xyz, both TSDF and ESDF grids
    "image_height": 480, "image_width": 848,
    "num_cameras": 1}
       -> {"ok": True, "memory_mb": float}
@@ -28,7 +38,8 @@ Wire protocol (msgpack + msgpack_numpy, REQ/REP):
       -> {"ok": True}
 
   {"cmd": "esdf",
-   "voxel_size": 0.01,                # optional override (m)
+   "voxel_size": 0.02,                # optional; rescales spacing on the
+                                      #   FIXED grid -> coverage scales too
    "origin": [x, y, z]}               # optional override (sliding window)
       -> {"ok": True,
           "esdf": float32 tensor,     # signed distance (m); reshape w/ grid_shape
@@ -39,7 +50,13 @@ Wire protocol (msgpack + msgpack_numpy, REQ/REP):
   {"cmd": "reset"}                              -> {"ok": True}
   {"cmd": "clear_region", "min": [..], "max": [..]} -> {"ok": True, "n_cleared": int}
   {"cmd": "save",  "name": "scene.pt"}          -> {"ok": True, "path": str}
-  {"cmd": "load",  "name": "scene.pt"}          -> {"ok": True, "memory_mb": float}
+  {"cmd": "load",  "name": "scene.pt",
+   "import_weight": null,             # optional; null preserves saved weights
+                                      #   (recommended). If set, must be
+                                      #   STRICTLY > minimum_tsdf_weight or
+                                      #   every voxel reads as unobserved.
+   "force": false}                    # skip saved-config compatibility check
+      -> {"ok": True, "n_blocks": int, "memory_mb": float}
   {"cmd": "stats"}                              -> {"ok": True, "memory_mb": float, ...}
 
 Conventions: depth in METERS float32 (convert RealSense uint16 mm on the
@@ -49,6 +66,7 @@ First integrate/esdf call after container start pays NVRTC + warp JIT
 (seconds with a warm /opt/kernel_cache mount, ~a minute cold).
 """
 
+import json
 import os
 import logging
 
@@ -74,8 +92,15 @@ def default_cfg_kwargs():
     extent = tuple(
         float(x) for x in os.environ.get("CUROBO_EXTENT", "2.0,2.0,1.5").split(",")
     )
+    voxel_size = float(os.environ.get("CUROBO_VOXEL_SIZE", "0.01"))
     return dict(
-        voxel_size=float(os.environ.get("CUROBO_VOXEL_SIZE", "0.01")),
+        voxel_size=voxel_size,
+        # ESDF resolution defaults to TSDF resolution; leaving MapperCfg's
+        # own default (0.05 on a grid that ignores `extent`) is how you get
+        # a 128^3 / 6.4 m window that silently mismatches the map.
+        esdf_voxel_size=float(
+            os.environ.get("CUROBO_ESDF_VOXEL_SIZE", str(voxel_size))
+        ),
         extent=extent,
         image_height=int(os.environ.get("CUROBO_IMAGE_HEIGHT", "480")),
         image_width=int(os.environ.get("CUROBO_IMAGE_WIDTH", "848")),
@@ -83,12 +108,17 @@ def default_cfg_kwargs():
     )
 
 
-def build_mapper(voxel_size, extent, image_height, image_width, num_cameras):
+def build_mapper(voxel_size, esdf_voxel_size, extent, image_height, image_width,
+                 num_cameras):
     """MapperCfg defaults mirror the upstream volumetric_mapping example;
-    truncation = 6 * voxel is the recommended band."""
+    truncation = 6 * voxel is the recommended band. esdf_voxel_size and
+    extent_esdf_meters_xyz are set explicitly so the fixed-shape ESDF grid
+    actually covers the configured extent at the configured resolution."""
     cfg = MapperCfg(
         voxel_size=voxel_size,
+        esdf_voxel_size=esdf_voxel_size,
         extent_meters_xyz=tuple(extent),
+        extent_esdf_meters_xyz=tuple(extent),
         truncation_distance=voxel_size * 6,
         depth_maximum_distance=3.0,       # tabletop scale; raise for room-scale
         depth_minimum_distance=0.05,
@@ -104,9 +134,9 @@ def build_mapper(voxel_size, extent, image_height, image_width, num_cameras):
     )
     mapper = Mapper(cfg)
     log.info(
-        "mapper: voxel=%.3fm extent=%s img=%dx%d cams=%d (%.1f MB)",
-        voxel_size, extent, image_width, image_height, num_cameras,
-        mapper.memory_usage_mb(),
+        "mapper: voxel=%.3fm esdf=%.3fm extent=%s img=%dx%d cams=%d (%.1f MB)",
+        voxel_size, esdf_voxel_size, extent, image_width, image_height,
+        num_cameras, mapper.memory_usage_mb(),
     )
     return mapper, cfg
 
@@ -114,9 +144,7 @@ def build_mapper(voxel_size, extent, image_height, image_width, num_cameras):
 def to_batched(arr, dtype, batch, name):
     """HxW... -> 1xHxW... torch tensor on cuda; validate leading batch dim."""
     t = torch.as_tensor(np.ascontiguousarray(arr), dtype=dtype, device="cuda")
-    if t.ndim == 2 or (t.ndim == 3 and name == "rgb") or (t.ndim == 2 and name == "intrinsics"):
-        t = t.unsqueeze(0)
-    if name == "intrinsics" and t.ndim == 2:
+    if t.ndim == 2 or (t.ndim == 3 and name == "rgb"):
         t = t.unsqueeze(0)
     if t.shape[0] != batch:
         raise ValueError(f"{name}: expected batch {batch}, got {tuple(t.shape)}")
@@ -152,6 +180,10 @@ def make_observation(msg, cfg):
     )
 
 
+def _sidecar_path(path):
+    return path + ".cfg.json"
+
+
 def handle(msg, state):
     cmd = msg.get("cmd")
     mapper, cfg = state["mapper"], state["cfg"]
@@ -174,9 +206,12 @@ def handle(msg, state):
         origin = msg.get("origin")
         if origin is not None:
             origin = torch.as_tensor(origin, dtype=torch.float32, device="cuda")
-        grid = mapper.compute_esdf(
-            esdf_origin=origin, esdf_voxel_size=msg.get("voxel_size")
-        )
+        # Always pass an explicit voxel size: upstream's override mutates
+        # integrator state (sticky), so relying on None here would make this
+        # call return whatever resolution the *previous* request asked for.
+        vs = msg.get("voxel_size")
+        vs = float(vs) if vs is not None else float(cfg.esdf_voxel_size)
+        grid = mapper.compute_esdf(esdf_origin=origin, esdf_voxel_size=vs)
         grid_shape, low, high = grid.get_grid_shape()
         return {
             "ok": True,
@@ -200,14 +235,56 @@ def handle(msg, state):
         os.makedirs(BLOCKS_DIR, exist_ok=True)
         path = os.path.join(BLOCKS_DIR, os.path.basename(msg.get("name", "blocks.pt")))
         mapper.save_blocks(path)
+        # Stash the builder kwargs next to the checkpoint so a load under a
+        # different config fails loudly instead of pairing blocks with a
+        # mismatched voxel size / extent.
+        with open(_sidecar_path(path), "w") as f:
+            json.dump({k: list(v) if isinstance(v, tuple) else v
+                       for k, v in state["cfg_kwargs"].items()}, f)
         return {"ok": True, "path": path}
 
     if cmd == "load":
         path = os.path.join(BLOCKS_DIR, os.path.basename(msg["name"]))
         if not os.path.isfile(path):
             raise FileNotFoundError(f"{path} not found in mounted {BLOCKS_DIR}")
-        state["mapper"] = Mapper.load_blocks(path, cfg)
-        return {"ok": True, "memory_mb": state["mapper"].memory_usage_mb()}
+
+        sidecar = _sidecar_path(path)
+        if os.path.isfile(sidecar) and not msg.get("force", False):
+            with open(sidecar) as f:
+                saved_kw = json.load(f)
+            live_kw = {k: list(v) if isinstance(v, tuple) else v
+                       for k, v in state["cfg_kwargs"].items()}
+            if saved_kw != live_kw:
+                raise ValueError(
+                    f"checkpoint config {saved_kw} != live config {live_kw}; "
+                    f'send {{"cmd": "configure", ...}} to match, or "force": true'
+                )
+
+        # import_blocks into the existing (reset) mapper instead of
+        # Mapper.load_blocks: keeps the same mapper object (no re-JIT, no
+        # integrator state reset to a different ESDF resolution), and returns
+        # a block count we can assert on. import_weight=None preserves saved
+        # per-voxel weights, which round-trip correctly. If a caller sets it,
+        # the value must be STRICTLY greater than minimum_tsdf_weight -- the
+        # observation gate is a strict comparison, and weight == threshold
+        # marks every voxel unobserved (empirically: whole grid goes to the
+        # far sentinel). Note the static analytic-primitive channel is not in
+        # the checkpoint; re-stamp obstacles after load if you use it.
+        iw = msg.get("import_weight")
+        if iw is not None:
+            iw = float(iw)
+            if iw <= cfg.minimum_tsdf_weight:
+                raise ValueError(
+                    f"import_weight={iw} must be > minimum_tsdf_weight="
+                    f"{cfg.minimum_tsdf_weight} (strict observation gate); "
+                    f"omit it to preserve saved weights"
+                )
+        mapper.reset()
+        n = mapper.import_blocks(path, import_weight=iw)
+        if n <= 0:
+            raise RuntimeError(f"import_blocks({path}) imported {n} blocks")
+        return {"ok": True, "n_blocks": int(n),
+                "memory_mb": mapper.memory_usage_mb()}
 
     if cmd == "stats":
         return {"ok": True, "memory_mb": mapper.memory_usage_mb(),
