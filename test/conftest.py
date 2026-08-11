@@ -94,6 +94,17 @@ class ZmqService:
         assert rep.get("ok"), f"{self.addr} error: {rep.get('error')}"
         return rep
 
+    def err(self, payload, timeout_ms=None):
+        """Send a request that MUST fail server-side; return the error reply.
+        The sidecars' REP loops catch handler exceptions and answer
+        {"ok": False, "error": ...}, so an err() call still gets a reply —
+        a timeout here means the server crashed, which is its own failure."""
+        rep = self.call(payload, timeout_ms=timeout_ms)
+        assert not rep.get("ok"), \
+            f"{self.addr}: expected error reply for {payload.get('cmd', payload.get('op'))}, got {rep.keys() if isinstance(rep, dict) else rep}"
+        assert rep.get("error"), f"{self.addr}: error reply without error message: {rep}"
+        return rep
+
 
 def _service(name, ping):
     addr = ADDRS[name]
