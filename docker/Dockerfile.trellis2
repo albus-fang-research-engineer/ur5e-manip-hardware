@@ -33,6 +33,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # setup.sh --new-env)
 RUN wget -q https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O /tmp/conda.sh && \
     bash /tmp/conda.sh -b -p /opt/conda && rm /tmp/conda.sh
+
+# Newer Miniconda ships the conda-anaconda-tos plugin, which blocks
+# conda create/install against the defaults channels until ToS is
+# accepted -- and there's no interactive prompt in a docker build.
+RUN source /opt/conda/etc/profile.d/conda.sh && \
+    conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main && \
+    conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r
 RUN source /opt/conda/etc/profile.d/conda.sh && \
     conda create -y -n trellis2 python=3.10 && conda activate trellis2 && \
     pip install --no-cache-dir torch==2.6.0 torchvision==0.21.0 \
@@ -55,7 +62,7 @@ RUN source /opt/conda/etc/profile.d/conda.sh && conda activate trellis2 && \
 
 # --flash-attn (prebuilt wheel expected; source build capped by MAX_JOBS)
 RUN source /opt/conda/etc/profile.d/conda.sh && conda activate trellis2 && \
-    pip install --no-cache-dir flash-attn==2.7.3
+    pip install --no-cache-dir flash-attn==2.7.3 --no-build-isolation
 
 # --nvdiffrast / --nvdiffrec / --cumesh / --flexgemm / --o-voxel
 RUN source /opt/conda/etc/profile.d/conda.sh && conda activate trellis2 && \
