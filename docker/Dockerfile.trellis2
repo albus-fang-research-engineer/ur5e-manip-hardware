@@ -95,4 +95,17 @@ WORKDIR /opt/TRELLIS.2
 # userspace; the bundled 550 compat libcuda is GeForce-incompatible (err 804).
 RUN apt-get purge -y cuda-compat-12-4 || true && \
     rm -rf /usr/local/cuda/compat /usr/local/cuda-12.4/compat
+# transformers >=5 refactored DINOv3ViTModel's module hierarchy
+# (.layer moved / layer forward signature changed), which breaks
+# trellis2/modules/image_feature_extractor.py's manual block walk.
+# Pin to the 4.x line TRELLIS.2 was developed against.
+RUN source /opt/conda/etc/profile.d/conda.sh && conda activate trellis2 && \
+    pip install --no-cache-dir "transformers>=4.56,<5"
+# pillow-simd (frozen at Pillow 9.x) + a later dep-resolved Pillow 11.x
+# overwrite each other in the same PIL/ dir -> chimera install
+# (old WebP plugin code, new _webp C ext missing HAVE_WEBPANIM).
+# Purge both and reinstall one clean modern Pillow.
+RUN source /opt/conda/etc/profile.d/conda.sh && conda activate trellis2 && \
+    pip uninstall -y pillow pillow-simd && \
+    pip install --no-cache-dir --force-reinstall pillow
 CMD ["bash", "-lc", "source /opt/conda/etc/profile.d/conda.sh && conda activate trellis2 && python /opt/trellis2_server/server.py"]
