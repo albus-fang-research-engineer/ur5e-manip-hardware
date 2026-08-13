@@ -1,0 +1,131 @@
+# Any6D sidecar (ZMQ model-free 6D pose + metric-scale mesh server)
+#
+# Any6D = FoundationPose backbone + joint 2D-3D alignment for metric scale,
+# with an optional SAM2 + InstantMesh image-to-3D front end (single RGB-D
+# anchor -> scaled mesh + pose). CVPR'25, github.com/taeyeopl/Any6D.
+#
+# Base: cu121 devel + miniconda (same recipe as trellis2/sam3 -- no usable
+# official image; the upstream Dockerfile targets the same cu121 stack we
+# replicate here, layered to match this repo's conventions). Env pins mirror
+# the upstream README: python 3.9, torch 2.4.1+cu121, kaolin 0.16.0,
+# pytorch3d 0.7.8+pt2.4.1cu121. Host driver 535 (CUDA 12.2) >= cu121, so no
+# compat-libcuda surgery needed (unlike trellis2's cu124).
+#
+# Known drift hazards (same class as FoundationPose's build_all.sh):
+#   - nvdiffrast is installed from git tip, matching upstream; pin a ref via
+#     NVDIFFRAST_REF if a future release breaks against torch 2.4.
+#   - the vendored foundationpose/ extensions (mycpp, bundlesdf/mycuda) are
+#     built exactly the way the upstream Dockerfile does it (manual cmake +
+#     pip -e, eigen symlink) rather than build_all_conda.sh -- that's the
+#     path upstream actually tests in Docker.
+#   - if the Any6D repo itself drifts, pin ANY6D_COMMIT to a known-good SHA.
+
+FROM nvidia/cuda:12.1.1-cudnn8-devel-ubuntu22.04
+
+SHELL ["/bin/bash", "-c"]
+ENV DEBIAN_FRONTEND=noninteractive
+ENV NVIDIA_DISABLE_REQUIRE=1
+
+# RTX 3090 = Ampere sm_86. Same convention as the other sidecars; no GPU is
+# needed at docker-build time, nvcc just needs the arch list.
+ENV TORCH_CUDA_ARCH_LIST="8.6"
+ENV MAX_JOBS=4
+ENV CUDA_HOME=/usr/local/cuda
+ENV PATH=/usr/local/cuda/bin:${PATH}
+
+# boost: mycpp links boost::system/thread/program_options; gtk2/egl: upstream
+# apt set (pyrender/nvdiffrast EGL path + opencv gui deps).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        git wget ca-certificates build-essential cmake ninja-build unzip \
+        libgtk2.0-dev libegl1-mesa-dev libgl1 libglib2.0-0 \
+        libboost-system-dev libboost-thread-dev libboost-program-options-dev \
+        libboost-test-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Miniconda + any6d env (python 3.9 -- upstream pin; eigen 3.4.0 from
+# conda-forge is a hard requirement of the mycpp cmake build)
+RUN wget -q https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O /tmp/conda.sh && \
+    bash /tmp/conda.sh -b -p /opt/conda && rm /tmp/conda.sh
+
+# conda-anaconda-tos plugin blocks non-interactive builds (see
+# Dockerfile.trellis2 for the gory details).
+RUN source /opt/conda/etc/profile.d/conda.sh && \
+    conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main && \
+    conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r
+RUN source /opt/conda/etc/profile.d/conda.sh && \
+    conda create -y -n any6d python=3.9 && conda activate any6d && \
+    conda install -y conda-forge::eigen=3.4.0
+
+# mycpp's CMakeLists finds eigen at the system prefix; conda drops it under
+# the env prefix. Same symlink the upstream Dockerfile uses.
+RUN ln -sf /opt/conda/envs/any6d/include/eigen3 /usr/local/include/eigen3
+
+ARG ANY6D_COMMIT=main
+RUN git clone https://github.com/taeyeopl/Any6D /opt/Any6D && \
+    cd /opt/Any6D && git checkout ${ANY6D_COMMIT}
+
+WORKDIR /opt/Any6D
+
+# requirements.txt carries the torch==2.4.1+cu121 pin via its own
+# --extra-index-url line, plus the merged FoundationPose + InstantMesh dep
+# trees. Heavy layer (~10 min); keep it early and stable.
+RUN source /opt/conda/etc/profile.d/conda.sh && conda activate any6d && \
+    python -m pip install --no-cache-dir -r requirements.txt
+
+# nvdiffrast (git tip, matching upstream) + kaolin 0.16.0 (prebuilt for
+# torch 2.4.0/cu121 -- ABI-compatible with 2.4.1) + pytorch3d wheel.
+ARG NVDIFFRAST_REF=main
+RUN source /opt/conda/etc/profile.d/conda.sh && conda activate any6d && \
+    python -m pip install --no-cache-dir \
+        git+https://github.com/NVlabs/nvdiffrast.git@${NVDIFFRAST_REF} && \
+    FORCE_CUDA=1 python -m pip install --no-cache-dir kaolin==0.16.0 \
+        -f https://nvidia-kaolin.s3.us-east-2.amazonaws.com/torch-2.4.0_cu121.html && \
+    pip install --no-cache-dir \
+        --extra-index-url https://miropsota.github.io/torch_packages_builder \
+        pytorch3d==0.7.8+pt2.4.1cu121
+
+# Vendored FoundationPose C++/CUDA extensions. pybind11 cmake dir resolved
+# dynamically -- don't hardcode the python version path (see
+# Dockerfile.foundationpose for why).
+RUN source /opt/conda/etc/profile.d/conda.sh && conda activate any6d && \
+    cd /opt/Any6D/foundationpose/mycpp && mkdir -p build && cd build && \
+    CMAKE_PREFIX_PATH=$(python -c 'import pybind11; print(pybind11.get_cmake_dir())') \
+    cmake .. -DPYTHON_EXECUTABLE=$(which python) && make -j${MAX_JOBS} && \
+    cd /opt/Any6D/foundationpose/bundlesdf/mycuda && \
+    rm -rf build *egg* && pip install --no-cache-dir -e .
+
+# SAM2 (image-to-3D segmentation front end) -- code only, checkpoint mounted.
+RUN source /opt/conda/etc/profile.d/conda.sh && conda activate any6d && \
+    cd /opt/Any6D/sam2 && pip install --no-cache-dir -e .
+
+# InstantMesh deps (vendored copy; upstream Dockerfile installs its
+# requirements rather than -e) + bop_toolkit.
+RUN source /opt/conda/etc/profile.d/conda.sh && conda activate any6d && \
+    cd /opt/Any6D/instantmesh && pip install --no-cache-dir -r requirements.txt && \
+    cd /opt/Any6D/bop_toolkit && python setup.py install
+
+# huggingface-hub pin from upstream (InstantMesh's from_pretrained calls
+# break against newer hub API churn).
+RUN source /opt/conda/etc/profile.d/conda.sh && conda activate any6d && \
+    pip install --no-cache-dir huggingface-hub==0.24.0
+
+# Server-side transport deps (same wire format as the other sidecars)
+RUN source /opt/conda/etc/profile.d/conda.sh && conda activate any6d && \
+    pip install --no-cache-dir pyzmq msgpack msgpack-numpy
+
+ENV PYTHONPATH=/opt/Any6D
+WORKDIR /opt/Any6D
+
+# Weights are NOT baked in -- mount them (see docker-compose.yml):
+#   ./foundationpose_runtime/weights -> /opt/Any6D/foundationpose/weights
+#     (SAME two run folders the pose sidecar uses: refiner
+#      2023-10-28-18-33-37, scorer 2024-01-11-20-02-45 -- share the host dir,
+#      don't duplicate 2GB of checkpoints)
+#   ./any6d_runtime/sam2_ckpts       -> /opt/Any6D/sam2/checkpoints
+#     (sam2.1_hiera_large.pt)
+#   ./any6d_runtime/instantmesh_ckpts -> /opt/Any6D/instantmesh/ckpts
+#     (diffusion_pytorch_model.bin + instant_mesh_large.ckpt)
+#   ./any6d_server                   -> /opt/any6d_server
+#   ./any6d_runtime/outputs          -> /data/any6d   (scaled meshes out)
+
+CMD ["bash", "-lc", "source /opt/conda/etc/profile.d/conda.sh && conda activate any6d && python /opt/any6d_server/server.py"]

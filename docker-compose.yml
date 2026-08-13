@@ -68,7 +68,8 @@ services:
       - ./pointso_runtime/checkpoints:/opt/SoFar/checkpoints
     environment:
       - POINTSO_PORT=5668
-      - POINTSO_CKPT=checkpoints/base_finetune.pth 
+      # - POINTSO_CKPT=checkpoints/base_finetune.pth 
+      - POINTSO_CKPT=checkpoints/small.pth 
       - TORCH_CUDA_ARCH_LIST=8.6
       - NVIDIA_DRIVER_CAPABILITIES=all
       # Same soft-pin as pose; delete to roam.
@@ -220,6 +221,42 @@ services:
       # viser debug viz (server started only if CUROBO_VISUALIZE=1); host-net,
       # so http://localhost:8080 -- same port family as nothing else here.
       # - CUROBO_VISUALIZE=1
+      # Same soft-pin as pose/pointso; delete to roam.
+      # - CUDA_VISIBLE_DEVICES=0
+    stdin_open: true
+    tty: true
+  # ======================================================================
+  # any6d: Any6D model-free 6D pose + metric-scale mesh sidecar (port 5672)
+  # ======================================================================
+  any6d:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.any6d
+    image: manip-any6d:latest
+    container_name: Any6DServer
+    network_mode: host
+    ipc: host
+    privileged: true
+    shm_size: '8gb'
+    gpus: all
+    restart: unless-stopped
+    volumes:
+      - ./any6d_server:/opt/any6d_server
+      # FoundationPose refiner/scorer -- SAME host dir as the pose sidecar
+      # (identical checkpoints; don't duplicate 2GB on disk)
+      - ./foundationpose_runtime/weights:/opt/Any6D/foundationpose/weights
+      # Reference meshes shared with pose (Any6D rescales, so non-metric
+      # TRELLIS.2 / InstantMesh outputs are fine here too)
+      - ./foundationpose_runtime/meshes:/opt/meshes
+      - ./any6d_runtime/sam2_ckpts:/opt/Any6D/sam2/checkpoints
+      - ./any6d_runtime/instantmesh_ckpts:/opt/Any6D/instantmesh/ckpts
+      - ./any6d_runtime/outputs:/data/any6d     # scaled meshes out
+    environment:
+      - ANY6D_PORT=5672
+      - ANY6D_OUT_DIR=/data/any6d
+      - NVIDIA_DISABLE_REQUIRE=1
+      - NVIDIA_DRIVER_CAPABILITIES=all     # nvdiffrast wants graphics caps
+      - TORCH_CUDA_ARCH_LIST=8.6
       # Same soft-pin as pose/pointso; delete to roam.
       # - CUDA_VISIBLE_DEVICES=0
     stdin_open: true
