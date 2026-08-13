@@ -1,71 +1,86 @@
 """Metric scale recovery: similarity registration of a partial single-view
-depth cloud (camera frame, meters) onto the TRELLIS.2 canonical mesh.
+depth cloud (camera frame, meters) onto a TRELLIS-style canonical mesh.
 
 Estimates (s, R, t) s.t.  p_cam ~= s * R * p_mesh + t.
 
-Pipeline (see README for rationale and failure modes):
-  1. Backproject masked depth -> P_obs; erode mask (depth bleeding at
-     silhouette edges is the #1 scale killer on RealSense), SOR, voxel DS.
-  2. Area-weighted sample the mesh -> P_mesh, carrying TRUE face normals
-     (never estimated -- estimated normals on mesh samples have arbitrary
-     sign and shred FPFH similarity against the obs cloud).
-  3. Global init: normalize both clouds to unit RMS radius; FPFH with
-     CONSISTENTLY ORIENTED normals (obs: toward camera at origin; mesh:
-     outward face normals -- outward == camera-facing on the visible
-     surface, so the conventions agree). Correspondences are computed
-     OURSELVES with a mutual-NN filter: Open3D's built-in mutual filter
-     silently falls back to noisy one-way matches whenever mutual pairs
-     < 10% of source points ("Too few correspondences ... fall back"),
-     which is the wrong heuristic for partial-to-full -- a few dozen
-     mutual matches is a high-precision set and plenty for ransac_n=4.
-     RANSAC (with_scaling=True) is rerun RANSAC_N_HYP times and every
-     hypothesis is refined; best refined RMSE wins (mirror symmetries).
-     NB: all radii used at this stage (N_*) are expressed in NORMALIZED
-     units (unit-RMS clouds have extent ~2-3), not meters.
-  4. Refine: trimmed scaled-ICP, closed-form Umeyama per iteration,
-     correspondences obs -> mesh only (partial-to-full).
-  5. Report inlier RMSE; caller thresholds it (see MAX_OK_RMSE hint).
+Differences from v1, all driven by measured failures (reproduce with test_roundtrip.py
+and test_objective.py):
 
-Degeneracy policy: this module NEVER raises for bad geometry -- every
-degenerate path (too few points, singular RANSAC similarity, NaN/collapsed
-ICP) returns ok=False with rmse=inf, so the server's metric branch always
-replies and the caller decides.
+  1. FPFH + RANSAC initialization is GONE. On partial-to-full it produced
+     mutual-NN sets of 3-97 pairs out of ~3000 points, fell through to
+     one-way matching, and returned scale seeds spanning 0.2x to 24x the
+     truth. Replaced by a deterministic SO(3) grid multi-start seeded from
+     the RMS-radius ratio -- which is biased low by a predictable ~10-20%
+     (a single-view patch has smaller spread about its own centroid than
+     the full surface does) and is corrected for.
 
-Degeneracies to expect: near-spherical objects (R unobservable -- fine, s
-is still well constrained); mirror symmetries (handled by multi-hypothesis
-RANSAC + refined-RMSE selection); thin/low-relief geometry (poorly
-constrained along the normal; note voxel DS averages opposing face normals
-on thin sheets toward zero -- those points contribute weak FPFH, which is
-honest).
+  2. ICP is BIDIRECTIONAL with a visibility test. v1 scored only
+     obs -> mesh, which is unbounded upward: inflate the mesh and slide
+     the observed patch onto a locally flat region and the cost barely
+     moves. Front-facing mesh points inside the observed region now also
+     have to find an observation. This is what constrains scale for
+     low-relief geometry; curvature alone does it for rounded objects.
+
+  3. Acceptance is SIZE-RELATIVE. v1's fixed 6 mm gate passed solutions
+     with +500% to +800% scale error. Residual at truth is ~0.9 mm here,
+     so the gate is now a fraction of the estimated object diameter.
+
+Degeneracy policy unchanged: never raises, returns ok=False on any
+degenerate path so the caller's metric branch always replies.
 """
 
 import numpy as np
-import open3d as o3d
+import trimesh
 from scipy.spatial import cKDTree
 
-# ---- metric-space knobs (meters; applied to the raw obs cloud) ----------
-VOXEL = 0.003          # m, downsample of the observed cloud
-MIN_OBS_POINTS = 200   # below this, don't even attempt registration
-MAX_OK_RMSE = 0.006    # m; above this, treat scale as unreliable
+# ---- metric-space knobs (meters) ---------------------------------------
+VOXEL = 0.003
+MIN_OBS_POINTS = 200
+MAX_OK_REL_RMSE = 0.025   # fraction of estimated object diameter
+MAX_OK_ABS_RMSE = 0.008   # meters, hard ceiling
 
-# ---- normalized-space knobs (unit-RMS clouds, extent ~2-3) --------------
-# Rule of thumb: voxel ~5% of RMS radius; normals ~2-3x voxel; FPFH ~6x.
-N_VOXEL = 0.05
-N_NORMAL_RADIUS = 0.12
-N_FPFH_RADIUS = 0.30
-N_MAX_CORR = 0.08      # RANSAC correspondence distance / checker
-
-MIN_MUTUAL_CORR = 10   # accept a mutual set this small (vs o3d's 10% of N)
-RANSAC_N_HYP = 3       # independent RANSAC restarts, all refined
-TRIM_FRAC = 0.75       # keep best 75% correspondences per ICP iter
+# ---- registration knobs ------------------------------------------------
+S_PARTIAL_CORRECTION = 1.15  # RMS ratio underestimates on single views
+N_AXIS = 42                  # icosphere(1) vertices
+N_ROLL = 8                   # in-plane samples per axis  -> 336 rotations
+COARSE_ITERS = 6
+COARSE_STRIDE = 4
+TOPK = 8
 ICP_ITERS = 40
+TRIM_FRAC = 0.75
+REV_WEIGHT = 0.5             # weight on the visible mesh -> obs term
+VIS_MARGIN = -0.40           # cos(normal, line-of-sight) cutoff; grazing
+                             # mesh points near the silhouette are excluded
+                             # because mask erosion removed their support
+                             # and demanding it shrinks the mesh
+MESH_SAMPLES = 30_000
 
 _FAIL = {"scale": 1.0, "R": np.eye(3), "t": np.zeros(3),
-         "rmse": float("inf"), "ok": False}
+         "rmse": float("inf"), "ok": False, "path": "fail"}
 
 
-def backproject(depth_m: np.ndarray, K: np.ndarray, mask: np.ndarray,
-                erode_px: int = 4, z_range=(0.15, 2.0)) -> np.ndarray:
+def _so3_grid(n_axis=N_AXIS, n_roll=N_ROLL):
+    ico = trimesh.creation.icosphere(subdivisions=1)
+    axes = np.asarray(ico.vertices)[:n_axis]
+    out = []
+    for a in axes:
+        z = a / np.linalg.norm(a)
+        tmp = np.array([1., 0., 0.]) if abs(z[0]) < 0.9 else np.array([0., 1., 0.])
+        x = np.cross(tmp, z); x /= np.linalg.norm(x)
+        B = np.stack([x, np.cross(z, x), z], axis=1)
+        for r in np.linspace(0, 2 * np.pi, n_roll, endpoint=False):
+            c, sn = np.cos(r), np.sin(r)
+            out.append(B @ np.array([[c, -sn, 0], [sn, c, 0], [0, 0, 1.]]))
+    return np.asarray(out)
+
+
+_GRID = _so3_grid()
+
+
+def backproject(depth_m, K, mask, erode_px=4, z_range=(0.15, 2.0)):
+    """Masked metric depth -> camera-frame points. Erosion matters: depth
+    bleeding at silhouette edges drags points into free space and biases
+    scale upward."""
     import cv2
     m = (mask > 0).astype(np.uint8)
     if erode_px > 0:
@@ -79,182 +94,161 @@ def backproject(depth_m: np.ndarray, K: np.ndarray, mask: np.ndarray,
     return np.stack([x, y, z], axis=1).astype(np.float64)
 
 
-def _pcd(points: np.ndarray, voxel: float | None,
-         normals: np.ndarray | None = None) -> o3d.geometry.PointCloud:
+def _clean(points, voxel):
+    """Voxel downsample + statistical outlier removal, numpy in/out."""
+    import open3d as o3d
     p = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(points))
-    if normals is not None:
-        p.normals = o3d.utility.Vector3dVector(normals)
     if voxel:
-        p = p.voxel_down_sample(voxel)  # averages normals if present
+        p = p.voxel_down_sample(voxel)
     p, _ = p.remove_statistical_outlier(nb_neighbors=20, std_ratio=2.0)
-    return p
+    return np.asarray(p.points)
 
 
-def _fpfh(p: o3d.geometry.PointCloud):
-    """FPFH with consistently oriented normals. If the cloud already
-    carries normals (mesh sample: true outward face normals), keep them;
-    otherwise (obs cloud, camera frame scaled about the origin) estimate
-    and orient toward the camera at the origin. FPFH angles are taken
-    relative to the normal, so sign consistency ACROSS the two clouds is
-    what makes descriptors comparable at all."""
-    if not p.has_normals():
-        # Hybrid search: radius in NORMALIZED units, capped neighbor count
-        # so dense patches can't blow up the neighborhood.
-        p.estimate_normals(
-            o3d.geometry.KDTreeSearchParamHybrid(radius=N_NORMAL_RADIUS,
-                                                 max_nn=30))
-        p.orient_normals_towards_camera_location(np.zeros(3))
-    p.normalize_normals()  # voxel averaging leaves non-unit normals
-    return o3d.pipelines.registration.compute_fpfh_feature(
-        p, o3d.geometry.KDTreeSearchParamHybrid(radius=N_FPFH_RADIUS,
-                                                max_nn=100))
-
-
-def _correspondences(f_src, f_dst) -> np.ndarray:
-    """(M, 2) int array of (src_idx, dst_idx). Mutual-NN in FPFH space if
-    the mutual set has >= MIN_MUTUAL_CORR pairs, else one-way src->dst.
-    Version-independent replacement for o3d's built-in mutual filter,
-    whose >=10%-of-source fallback discards small-but-precise mutual sets
-    in the partial-to-full regime (backside mesh points break mutuality by
-    construction)."""
-    A = np.asarray(f_src.data).T  # (Ns, 33)
-    B = np.asarray(f_dst.data).T  # (Nd, 33)
-    _, j = cKDTree(B).query(A)    # src -> dst
-    _, i = cKDTree(A).query(B)    # dst -> src
-    src_idx = np.arange(len(A))
-    mutual = src_idx[i[j] == src_idx]
-    if len(mutual) >= MIN_MUTUAL_CORR:
-        return np.stack([mutual, j[mutual]], axis=1)
-    return np.stack([src_idx, j], axis=1)
-
-
-def _umeyama(src: np.ndarray, dst: np.ndarray):
-    """Closed-form similarity: dst ~= s R src + t (Umeyama 1991)."""
-    mu_s, mu_d = src.mean(0), dst.mean(0)
+def _umeyama(src, dst, w=None):
+    """Closed-form similarity dst ~= s R src + t (Umeyama 1991), with
+    optional per-correspondence weights. src should be the CLEAN set (the
+    mesh): the scale estimator divides by src variance, so noise on src
+    attenuates s while noise on dst does not."""
+    if w is None:
+        w = np.ones(len(src))
+    w = w / w.sum()
+    mu_s = (w[:, None] * src).sum(0)
+    mu_d = (w[:, None] * dst).sum(0)
     sc, dc = src - mu_s, dst - mu_d
-    cov = dc.T @ sc / len(src)
+    cov = (w[:, None] * dc).T @ sc
     U, D, Vt = np.linalg.svd(cov)
     S = np.eye(3)
     if np.linalg.det(U) * np.linalg.det(Vt) < 0:
         S[2, 2] = -1
     R = U @ S @ Vt
-    var_s = (sc ** 2).sum() / len(src)
+    var_s = (w * (sc ** 2).sum(1)).sum()
+    if var_s < 1e-18:
+        return np.nan, R, np.zeros(3)
     s = np.trace(np.diag(D) @ S) / var_s
-    t = mu_d - s * R @ mu_s
-    return s, R, t
+    return s, R, mu_d - s * R @ mu_s
 
 
-def _trimmed_scaled_icp(P_obs: np.ndarray, P_mesh: np.ndarray,
-                        s: float, R: np.ndarray, t: np.ndarray):
-    """Returns (s, R, t, rmse). Degenerate states return rmse=inf instead
-    of raising; caller maps that to ok=False."""
-    tree = cKDTree(P_mesh)  # vectorized queries; the o3d per-point python
-                            # loop was O(N * ICP_ITERS) interpreter calls
-    for _ in range(ICP_ITERS):
-        if not (np.isfinite(s) and s > 1e-9 and
-                np.all(np.isfinite(R)) and np.all(np.isfinite(t))):
+def _visible_mask(P_mesh, N_mesh, s, R, t, margin=VIS_MARGIN):
+    """Front-facing test in camera frame: a mesh point is expected to be
+    observed iff its outward normal points back toward the origin."""
+    p_cam = s * (P_mesh @ R.T) + t
+    n_cam = N_mesh @ R.T
+    los = p_cam / np.linalg.norm(p_cam, axis=1, keepdims=True)
+    return (n_cam * los).sum(1) < margin
+
+
+def _bidir_icp(P_obs, P_mesh, N_mesh, tree_mesh, s, R, t,
+               iters, rev_weight=REV_WEIGHT, trim=TRIM_FRAC):
+    """Returns (s, R, t, rmse). Forward term: every observed point must lie
+    on the mesh. Reverse term: every front-facing mesh point must be
+    explained by an observation. The reverse term is what stops the mesh
+    from inflating."""
+    tree_obs = cKDTree(P_obs)
+    for it in range(iters + 1):
+        if not (np.isfinite(s) and s > 1e-9
+                and np.all(np.isfinite(R)) and np.all(np.isfinite(t))):
             return s, R, t, float("inf")
+
+        # forward: obs -> mesh, evaluated in canonical units
         Q = (P_obs - t) @ R / s
-        _, idx = tree.query(Q, k=1)
-        matched = P_mesh[idx]
-        d = np.linalg.norm(Q - matched, axis=1)
-        keep = d <= np.quantile(d, TRIM_FRAC)
-        if keep.sum() < 10:
+        df, idx_f = tree_mesh.query(Q, k=1)
+        keep_f = df <= np.quantile(df, trim)
+        if keep_f.sum() < 10:
             return s, R, t, float("inf")
-        s, R, t = _umeyama(matched[keep], P_obs[keep])
-    if not (np.isfinite(s) and s > 1e-9):
-        return s, R, t, float("inf")
-    Q = (P_obs - t) @ R / s
-    _, idx = tree.query(Q, k=1)
-    resid = s * np.linalg.norm(Q - P_mesh[idx], axis=1)  # back to meters
-    inl = resid <= np.quantile(resid, TRIM_FRAC)
-    rmse = float(np.sqrt((resid[inl] ** 2).mean()))
+        src = [P_mesh[idx_f][keep_f]]
+        dst = [P_obs[keep_f]]
+        w = [np.ones(int(keep_f.sum()))]
+
+        # reverse: visible mesh -> obs, evaluated in metric units
+        vis = _visible_mask(P_mesh, N_mesh, s, R, t)
+        dr = np.array([])
+        if vis.sum() >= 10 and rev_weight > 0:
+            Mv = P_mesh[vis]
+            dr, idx_r = tree_obs.query(s * (Mv @ R.T) + t, k=1)
+            keep_r = dr <= np.quantile(dr, trim)
+            if keep_r.sum() >= 10:
+                src.append(Mv[keep_r])
+                dst.append(P_obs[idx_r][keep_r])
+                # match total influence, then apply the user weight
+                w.append(np.full(int(keep_r.sum()),
+                                 rev_weight * keep_f.sum() / keep_r.sum()))
+                dr = dr[keep_r]
+
+        if it == iters:
+            break
+        s, R, t = _umeyama(np.concatenate(src), np.concatenate(dst),
+                           np.concatenate(w))
+
+    fwd = (df[keep_f] * s) ** 2
+    rmse = float(np.sqrt(np.concatenate([fwd, dr ** 2]).mean()))
     return s, R, t, rmse
 
 
-def _scale_only_fallback(P_obs_ds, P_mesh, r_obs, r_msh):
-    """Scale seed from the RMS ratio with identity rotation -- for
-    near-symmetric objects ICP can still converge, and if it can't,
-    rmse=inf -> ok=False, never a crash."""
-    s0 = r_obs / r_msh
-    s, R, t, rmse = _trimmed_scaled_icp(
-        P_obs_ds, P_mesh, s0, np.eye(3),
-        P_obs_ds.mean(0) - s0 * P_mesh.mean(0))
-    return {"scale": float(s), "R": R, "t": t, "rmse": rmse,
-            "ok": bool(np.isfinite(rmse) and rmse < MAX_OK_RMSE)}
+def register_similarity(P_obs, mesh_trimesh, rev_weight=REV_WEIGHT,
+                        return_transform=False):
+    """P_obs: (N,3) camera-frame meters. mesh_trimesh: canonical (unit) mesh.
 
-
-def register_similarity(P_obs: np.ndarray, mesh_trimesh) -> dict:
-    """P_obs: Nx3 camera-frame meters. mesh_trimesh: canonical trimesh.
-    Returns {scale, R, t, rmse, ok}. Never raises on degenerate geometry."""
-    if len(P_obs) < MIN_OBS_POINTS:
+    Returns {scale, R, t, rmse, rel_rmse, ok, path}. With
+    return_transform=True also returns 'T', the 4x4 taking canonical mesh
+    vertices straight to camera-frame meters, so the caller can do
+    mesh.copy().apply_transform(T) and sample interaction points on it.
+    """
+    if P_obs is None or len(P_obs) < MIN_OBS_POINTS:
         return dict(_FAIL)
-    pts, fid = mesh_trimesh.sample(30_000, return_index=True)
+
+    pts, fid = mesh_trimesh.sample(MESH_SAMPLES, return_index=True)
     P_mesh = np.asarray(pts, dtype=np.float64)
     N_mesh = np.asarray(mesh_trimesh.face_normals[fid], dtype=np.float64)
+    N_mesh /= np.linalg.norm(N_mesh, axis=1, keepdims=True) + 1e-12
+    tree_mesh = cKDTree(P_mesh)
 
-    obs = _pcd(P_obs, VOXEL)
-    P_obs_ds = np.asarray(obs.points)
-    if len(P_obs_ds) < MIN_OBS_POINTS:
+    P = _clean(P_obs, VOXEL)
+    if len(P) < MIN_OBS_POINTS:
         return dict(_FAIL)
 
-    # RMS-normalize both so the N_* radii mean the same thing on each
-    # cloud; downsampling BOTH at N_VOXEL also equalizes density (FPFH is
-    # sensitive to density mismatch between source and target). Uniform
-    # scaling about the origin leaves normal directions AND the camera
-    # location (origin) unchanged, so orientation logic still holds.
-    r_obs = float(np.sqrt(P_obs_ds.var(0).sum()))
+    r_obs = float(np.sqrt(P.var(0).sum()))
     r_msh = float(np.sqrt(P_mesh.var(0).sum()))
     if not (r_obs > 1e-6 and r_msh > 1e-6):
         return dict(_FAIL)
-    obs_n = _pcd(P_obs_ds / r_obs, N_VOXEL)
-    msh_n = _pcd(P_mesh / r_msh, N_VOXEL, normals=N_mesh)
 
-    corr = _correspondences(_fpfh(obs_n), _fpfh(msh_n))
-    if len(corr) < MIN_MUTUAL_CORR:
-        return _scale_only_fallback(P_obs_ds, P_mesh, r_obs, r_msh)
+    s0 = (r_obs / r_msh) * S_PARTIAL_CORRECTION
+    c_obs, c_msh = P.mean(0), P_mesh.mean(0)
 
-    estimation = (o3d.pipelines.registration
-                  .TransformationEstimationPointToPoint(with_scaling=True))
-    checkers = [o3d.pipelines.registration
-                .CorrespondenceCheckerBasedOnDistance(N_MAX_CORR)]
-    criteria = (o3d.pipelines.registration
-                .RANSACConvergenceCriteria(200_000, 0.999))
-    corr_o3d = o3d.utility.Vector2iVector(corr.astype(np.int32))
+    # coarse pass over the rotation grid on a subsample
+    sub = P[::COARSE_STRIDE]
+    if len(sub) < 50:
+        sub = P
+    # coarse ranking uses a decimated mesh and the forward term only:
+    # the reverse term costs a visibility pass over every mesh sample and
+    # is not needed to discriminate grossly wrong rotations.
+    step = max(1, len(P_mesh) // 4000)
+    Pm_c, Nm_c = P_mesh[::step], N_mesh[::step]
+    tree_c = cKDTree(Pm_c)
+    cand = []
+    for R0 in _GRID:
+        t0 = c_obs - s0 * R0 @ c_msh
+        s_, R_, t_, e_ = _bidir_icp(sub, Pm_c, Nm_c, tree_c,
+                                    s0, R0, t0, COARSE_ITERS, 0.0)
+        cand.append((s_, R_, t_, e_))
+    cand.sort(key=lambda c: c[3] if np.isfinite(c[3]) else np.inf)
 
-    # Multi-hypothesis: RANSAC restarts are cheap relative to a wrong
-    # mirror-symmetric basin; refine every hypothesis, keep best RMSE.
     best = None
-    for _ in range(RANSAC_N_HYP):
-        result = (o3d.pipelines.registration
-                  .registration_ransac_based_on_correspondence(
-                      obs_n, msh_n, corr_o3d,
-                      max_correspondence_distance=N_MAX_CORR,
-                      estimation_method=estimation, ransac_n=4,
-                      checkers=checkers, criteria=criteria))
-        # obs_n -> msh_n similarity T = [s'R' | t']; invert & denormalize
-        # into mesh->cam convention: p_cam ~= s R p_mesh + t.
-        T = result.transformation
-        sR, tp = T[:3, :3], T[:3, 3]
-        det = np.linalg.det(sR)
-        if (len(result.correspondence_set) < 10
-                or not np.isfinite(det) or det < 1e-9):
-            continue  # singular / unsupported hypothesis
-        sp = np.cbrt(det)
-        Rp = sR / sp
-        s0 = r_obs / (sp * r_msh)
-        R0 = Rp.T
-        t0 = -r_obs * (Rp.T @ tp) / sp
-        s, R, t, rmse = _trimmed_scaled_icp(P_obs_ds, P_mesh, s0, R0, t0)
-        if best is None or rmse < best[3]:
-            best = (s, R, t, rmse)
-        if np.isfinite(rmse) and rmse < MAX_OK_RMSE:
-            break  # good enough; skip remaining restarts
-
-    if best is None:
-        # Every RANSAC hypothesis degenerate: scale-only seed.
-        return _scale_only_fallback(P_obs_ds, P_mesh, r_obs, r_msh)
+    for s, R, t, _ in cand[:TOPK]:
+        out = _bidir_icp(P, P_mesh, N_mesh, tree_mesh, s, R, t,
+                         ICP_ITERS, rev_weight)
+        if best is None or out[3] < best[3]:
+            best = out
+    if best is None or not np.isfinite(best[3]):
+        return dict(_FAIL)
 
     s, R, t, rmse = best
-    return {"scale": float(s), "R": R, "t": t, "rmse": rmse,
-            "ok": bool(np.isfinite(rmse) and rmse < MAX_OK_RMSE)}
+    diam = s * float(np.linalg.norm(P_mesh.max(0) - P_mesh.min(0)))
+    rel = rmse / max(diam, 1e-9)
+    ok = bool(np.isfinite(rmse) and s > 1e-9
+              and rmse < MAX_OK_ABS_RMSE and rel < MAX_OK_REL_RMSE)
+    out = {"scale": float(s), "R": R, "t": t, "rmse": rmse,
+           "rel_rmse": float(rel), "ok": ok, "path": "multistart"}
+    if return_transform:
+        T = np.eye(4); T[:3, :3] = s * R; T[:3, 3] = t
+        out["T"] = T
+    return out
