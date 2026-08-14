@@ -40,12 +40,14 @@ ADDRS = {
     "pose":    os.environ.get("POSE_ADDR",    "tcp://127.0.0.1:5667"),
     "trellis2": os.environ.get("TRELLIS_ADDR", "tcp://127.0.0.1:5669"),
     "curobo":  os.environ.get("CUROBO_ADDR",  "tcp://127.0.0.1:5671"),
+    "any6d":   os.environ.get("ANY6D_ADDR",   "tcp://127.0.0.1:5672"),
 }
 COMPOSE_HINT = {
     "sam3": "docker compose up -d sam3",
     "pose": "docker compose up -d pose",
     "trellis2": "docker compose up -d trellis2",
     "curobo": "docker compose up -d curobo",
+    "any6d": "docker compose up -d any6d",
 }
 
 
@@ -136,6 +138,11 @@ def trellis2():
 @pytest.fixture(scope="session")
 def curobo():
     return _service("curobo", {"cmd": "ping"})
+
+
+@pytest.fixture(scope="session")
+def any6d():
+    return _service("any6d", {"cmd": "ping"})
 
 
 # --------------------------------------------------------------- frame packet
