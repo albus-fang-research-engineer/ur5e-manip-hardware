@@ -109,26 +109,34 @@ RUN source /opt/conda/etc/profile.d/conda.sh && conda activate any6d && \
 
 # Vendored FoundationPose C++/CUDA extensions. pybind11 cmake dir resolved
 # dynamically -- don't hardcode the python version path (see
-# Dockerfile.foundationpose for why).
+# Dockerfile.foundationpose for why). mycuda's setup.py imports torch, so
+# like nvdiffrast it needs --no-build-isolation to see the env.
 RUN source /opt/conda/etc/profile.d/conda.sh && conda activate any6d && \
     cd /opt/Any6D/foundationpose/mycpp && mkdir -p build && cd build && \
     CMAKE_PREFIX_PATH=$(python -c 'import pybind11; print(pybind11.get_cmake_dir())') \
     cmake .. -DPYTHON_EXECUTABLE=$(which python) && make -j${MAX_JOBS} && \
     cd /opt/Any6D/foundationpose/bundlesdf/mycuda && \
-    rm -rf build *egg* && pip install --no-cache-dir -e .
+    rm -rf build *egg* && \
+    pip install --no-cache-dir --no-build-isolation -e .
 
 # SAM2 (image-to-3D segmentation front end) -- code only, checkpoint mounted.
 RUN source /opt/conda/etc/profile.d/conda.sh && conda activate any6d && \
     cd /opt/Any6D/sam2 && pip install --no-cache-dir -e .
 
 # InstantMesh deps (vendored copy; upstream Dockerfile installs its
-# requirements rather than -e) + bop_toolkit. bop_toolkit's bare
-# `setup.py install` runs against the ENV's setuptools (no build isolation,
-# so PIP_CONSTRAINT doesn't reach it) -- pin it there too, since new
-# setuptools removed the setup.py install command outright.
+# requirements rather than -e) + bop_toolkit. Two adjustments:
+#   - instantmesh's requirements.txt re-lists nvdiffrast as a git URL; it's
+#     already installed (same commit) two layers up, and re-resolving it
+#     trips the same build-isolation wall. Filter it out.
+#   - bop_toolkit's bare `setup.py install` runs against the ENV's
+#     setuptools (no build isolation, so PIP_CONSTRAINT doesn't reach it) --
+#     pin it there too, since new setuptools removed setup.py install.
 RUN source /opt/conda/etc/profile.d/conda.sh && conda activate any6d && \
     pip install --no-cache-dir "setuptools<81" && \
-    cd /opt/Any6D/instantmesh && pip install --no-cache-dir -r requirements.txt && \
+    cd /opt/Any6D/instantmesh && \
+    grep -vi nvdiffrast requirements.txt > /tmp/instantmesh-req.txt && \
+    pip install --no-cache-dir -r /tmp/instantmesh-req.txt && \
+    rm /tmp/instantmesh-req.txt && \
     cd /opt/Any6D/bop_toolkit && python setup.py install
 
 # huggingface-hub pin from upstream (InstantMesh's from_pretrained calls
