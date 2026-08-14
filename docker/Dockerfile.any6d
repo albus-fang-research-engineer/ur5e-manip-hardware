@@ -60,11 +60,31 @@ RUN source /opt/conda/etc/profile.d/conda.sh && \
 # the env prefix. Same symlink the upstream Dockerfile uses.
 RUN ln -sf /opt/conda/envs/any6d/include/eigen3 /usr/local/include/eigen3
 
+# pysdf's setup.py has a brittle Eigen finder: it sees the symlink above,
+# fails to parse the 3.4.0 version macros, falls back to a dead download
+# URL, and then compiles with no eigen include dir at all. The finder
+# failure is non-fatal -- only the missing include path is -- so putting
+# eigen on the compiler's default search path via CPATH fixes pysdf (and
+# anything else that `#include <Eigen/Core>`s) without touching its logic.
+# NOTE: plain assignment, no ${CPATH} suffix -- an empty trailing ':' would
+# silently add cwd to every include search.
+ENV CPATH=/opt/conda/envs/any6d/include/eigen3
+
 ARG ANY6D_COMMIT=main
 RUN git clone https://github.com/taeyeopl/Any6D /opt/Any6D && \
     cd /opt/Any6D && git checkout ${ANY6D_COMMIT}
 
 WORKDIR /opt/Any6D
+
+# Legacy setup.py packages in the dep tree (visdom via torchnet, pyOpenGL
+# 3.1.0, antlr4, ...) do `import pkg_resources` at build time, and pip's
+# ISOLATED build envs pull latest setuptools -- which dropped pkg_resources.
+# PIP_CONSTRAINT is the one knob pip honors inside build isolation; keep it
+# as an ENV so every later pip layer (mycuda -e, instantmesh, bop_toolkit)
+# gets the same fix. Same disease as sam3's setuptools<82 pin, different
+# delivery mechanism.
+RUN echo "setuptools<81" > /opt/build-constraints.txt
+ENV PIP_CONSTRAINT=/opt/build-constraints.txt
 
 # requirements.txt carries the torch==2.4.1+cu121 pin via its own
 # --extra-index-url line, plus the merged FoundationPose + InstantMesh dep
@@ -74,9 +94,12 @@ RUN source /opt/conda/etc/profile.d/conda.sh && conda activate any6d && \
 
 # nvdiffrast (git tip, matching upstream) + kaolin 0.16.0 (prebuilt for
 # torch 2.4.0/cu121 -- ABI-compatible with 2.4.1) + pytorch3d wheel.
+# nvdiffrast's setup.py imports torch and compiles its CUDA extension at
+# install time, so it MUST see the env's torch: --no-build-isolation, same
+# as Dockerfile.trellis2. No GPU needed -- TORCH_CUDA_ARCH_LIST drives nvcc.
 ARG NVDIFFRAST_REF=main
 RUN source /opt/conda/etc/profile.d/conda.sh && conda activate any6d && \
-    python -m pip install --no-cache-dir \
+    python -m pip install --no-cache-dir --no-build-isolation \
         git+https://github.com/NVlabs/nvdiffrast.git@${NVDIFFRAST_REF} && \
     FORCE_CUDA=1 python -m pip install --no-cache-dir kaolin==0.16.0 \
         -f https://nvidia-kaolin.s3.us-east-2.amazonaws.com/torch-2.4.0_cu121.html && \
@@ -99,8 +122,12 @@ RUN source /opt/conda/etc/profile.d/conda.sh && conda activate any6d && \
     cd /opt/Any6D/sam2 && pip install --no-cache-dir -e .
 
 # InstantMesh deps (vendored copy; upstream Dockerfile installs its
-# requirements rather than -e) + bop_toolkit.
+# requirements rather than -e) + bop_toolkit. bop_toolkit's bare
+# `setup.py install` runs against the ENV's setuptools (no build isolation,
+# so PIP_CONSTRAINT doesn't reach it) -- pin it there too, since new
+# setuptools removed the setup.py install command outright.
 RUN source /opt/conda/etc/profile.d/conda.sh && conda activate any6d && \
+    pip install --no-cache-dir "setuptools<81" && \
     cd /opt/Any6D/instantmesh && pip install --no-cache-dir -r requirements.txt && \
     cd /opt/Any6D/bop_toolkit && python setup.py install
 
