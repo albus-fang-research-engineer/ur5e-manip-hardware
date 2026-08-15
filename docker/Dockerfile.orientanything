@@ -1,0 +1,54 @@
+# Orient Anything V2 sidecar (ZMQ semantic-orientation server)
+#
+# V2 over V1: symmetry-aware (predicts 0..N valid front faces via the alpha
+# head), directly regresses relative rotation from image pairs, and beats V1
+# across the zero-shot orientation benchmarks (86.4% vs 72.4% Acc on
+# Ori_COCO; same story on SUN-RGBD / ARKitScenes / Pascal3D+ / Objectron).
+# No reason to run V1.
+#
+# Upstream recommends python 3.11 + requirements.txt; the pytorch devel image
+# (py3.11, cu121) matches exactly, same base as the pointso sidecar. The
+# requirements are trimmed for inference:
+#   - gradio / lightning / pandas: demo UI + training only
+#   - bpy==4.2 (Blender): only used by utils/axis_renderer.py to draw the
+#     pretty axis overlay in the demo -- 2GB we never touch. server.py
+#     imports utils.app_utils / utils.utils only, which never import bpy.
+# cv2 + matplotlib stay: the vggt package import chain (visual_track etc.)
+# pulls them at import time even though we never call them.
+
+FROM pytorch/pytorch:2.4.1-cuda12.1-cudnn9-devel
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TORCH_CUDA_ARCH_LIST="8.6"
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git wget ca-certificates libgl1 libglib2.0-0 && \
+    rm -rf /var/lib/apt/lists/*
+
+ARG ORIANY_COMMIT=main
+RUN git clone https://github.com/SpatialVision/Orient-Anything-V2 /opt/OrientAnythingV2 && \
+    cd /opt/OrientAnythingV2 && git checkout ${ORIANY_COMMIT}
+
+WORKDIR /opt/OrientAnythingV2
+
+# No setup.py upstream (script repo) -- install the inference subset of
+# requirements.txt explicitly. torch/torchvision come from the base image;
+# don't let pip touch them.
+RUN pip install --no-cache-dir \
+        numpy einops scipy scikit-learn timm transformers accelerate \
+        "huggingface_hub>=0.23" pillow opencv-python-headless matplotlib \
+        rembg onnxruntime && \
+    pip install --no-cache-dir pyzmq msgpack msgpack-numpy
+
+# Checkpoint is NOT baked (5.05 GB). server.py hf_hub_download's
+# Viglong/OriAnyV2_ckpt :: demo_ckpts/rotmod_realrotaug_best.pt into HF_HOME
+# on first run (repo is public, no token needed) -- mount the cache:
+#   ./oriany_runtime/hf_cache -> /opt/hf_cache
+# rembg's u2net.onnx (~170MB, background removal) lands in U2NET_HOME on
+# first `remove_bkg` request; point it into the same mounted cache so
+# container re-creates don't re-download either.
+ENV HF_HOME=/opt/hf_cache
+ENV U2NET_HOME=/opt/hf_cache/u2net
+
+ENV PYTHONPATH=/opt/OrientAnythingV2
+CMD ["python", "/opt/oriany_server/server.py"]

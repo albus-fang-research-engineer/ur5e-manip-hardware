@@ -261,4 +261,33 @@ services:
       # - CUDA_VISIBLE_DEVICES=0
     stdin_open: true
     tty: true
- 
+  
+  # ======================================================================
+  # oriany: Orient Anything V2 sidecar (port 5673)
+  # ======================================================================
+  oriany:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.orientanything
+    image: manip-oriany:latest
+    container_name: OriAnyServer
+    network_mode: host
+    ipc: host
+    privileged: true
+    shm_size: '8gb'
+    gpus: all
+    restart: unless-stopped
+    volumes:
+      - ./oriany_server:/opt/oriany_server
+      - ./oriany_runtime/hf_cache:/opt/hf_cache   # 5GB ckpt + u2net on first pull
+    environment:
+      - ORIANY_PORT=5673
+      # Point at a local .pt to skip the HF pull entirely:
+      # - ORIANY_CKPT=/opt/hf_cache/rotmod_realrotaug_best.pt
+      - NVIDIA_DISABLE_REQUIRE=1
+      - NVIDIA_DRIVER_CAPABILITIES=all
+      - TORCH_CUDA_ARCH_LIST=8.6
+      # Same soft-pin as pose/pointso; delete to roam.
+      # - CUDA_VISIBLE_DEVICES=0
+    stdin_open: true
+    tty: true
