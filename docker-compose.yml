@@ -287,6 +287,7 @@ services:
       - NVIDIA_DISABLE_REQUIRE=1
       - NVIDIA_DRIVER_CAPABILITIES=all
       - TORCH_CUDA_ARCH_LIST=8.6
+      - HF_TOKEN=${HF_TOKEN:-}
       # Same soft-pin as pose/pointso; delete to roam.
       # - CUDA_VISIBLE_DEVICES=0
     stdin_open: true
