@@ -1,8 +1,10 @@
 # Perception wing: FoundationPose + PointSO + ROS2 bridge
 
-Three new services following the existing `grasp` sidecar pattern. Everything
-is host-networked; fixed ports: grasp `5666` (existing), pose `5667`,
-pointso `5668`.
+Fixed ports: grasp `5666`, pose `5667`, pointso `5668`, trellis2 `5669`,
+sam3 `5670`, curobo `5671`, any6d `5672`, oriany `5673`. Everything is
+host-networked *except* `grasp`, which is bridged with a pinned MAC so the
+AnyGrasp license fingerprint can't drift — see
+[AnyGrasp sidecar](#anygrasp-sidecar-port-5666).
 
 ```
 ur5e-manip-sim/
@@ -77,6 +79,106 @@ s.send(msgpack.packb({"cmd": "ping"})); print(msgpack.unpackb(s.recv()))
   `/pose_bridge/mask`. In sim, publish the ground-truth instance mask; on
   hardware, front it with your SAM/Florence segmenter (which SoFar already
   bundles if you later widen the pointso image to full SoFar).
+
+## AnyGrasp sidecar (port 5666)
+
+Moved over from `ur5e-manip-sim`. Same ZMQ/pickle contract, so
+`manip_sim/perception/grasp_client.py` works against it unchanged — point
+the sim wing's `ANYGRASP_ADDR` at this box instead of at its own `grasp`
+profile.
+
+### One-time setup
+
+```bash
+mkdir -p anygrasp_runtime/checkpoints anygrasp_runtime/license
+# checkpoint_detection.tar from the AnyGrasp SDK's Google Drive link
+# license/ = the zip the authors mail back (see below)
+
+cp .env.example .env
+echo "ANYGRASP_MAC=$(cat /sys/class/net/eno1/address)" >> .env   # your real NIC
+docker compose up -d --build grasp
+docker compose logs -f grasp        # wait for "model ready, listening on :5666"
+```
+
+### The feature-id problem, and why this service isn't host-networked
+
+AnyGrasp's license is bound to a *feature id*, and that id is not a stable
+machine identifier. From `gsnet.license_tools`:
+
+```
+macs       = sorted(set of MACs matched by /(?:ether|HWaddr)\s+([0-9A-Fa-f:.-]{12,17})/
+                    in the output of `ifconfig`)
+feature_id = "N" + f(sha256("mac=" + ",".join(macs)))
+```
+
+It hashes **the whole set of MAC addresses `ifconfig` reports**, and
+net-tools `ifconfig` without `-a` reports every interface that is *UP*. So:
+
+- On `network_mode: host` — what the sim repo's stanza uses — the container
+  sees `eno1` **and** `docker0` **and** a `br-<id>` + `veth*` pair for every
+  other running container. Bring up a different set of sidecars, create or
+  tear down a compose network, attach a dock or a VPN, and the set changes,
+  so the id changes, so the license stops validating. That's the drift you
+  hit moving between the two repos: the sim box ran the `grasp` profile
+  more or less alone; this box runs seven sidecars.
+- On default bridge with no pin, Docker hands out a fresh random MAC per
+  container, so the id changes on literally every `up`.
+
+The fix here: the `grasp` service is the one non-host-networked service in
+this compose file. It sits on its own `grasp_net` bridge with
+`mac_address: ${ANYGRASP_MAC}` and publishes `5666`. `ifconfig` inside then
+reports exactly one `ether` line (`lo` prints `loop`, not `ether`, so it
+contributes nothing to the hash), always the same one. Set `ANYGRASP_MAC`
+to the workstation's permanent NIC MAC and the fingerprint stays bound to
+this physical machine while ignoring whatever else Docker is doing.
+
+Second, independent source of drift: the SDK commit is now **pinned**
+(`ANYGRASP_COMMIT=b8eaafc9…`). The 2026-07-04 SDK release replaced the
+license tool outright and changed feature-id generation, so an unpinned
+`main` can invalidate a working license on a rebuild. `docker/Dockerfile.anygrasp`
+in the sim repo still floats `--branch main`; if you rebuild there, pin it too.
+
+### Diagnosing
+
+The entrypoint validates the license *before* loading the model, so a
+failure is a fast restart loop with a legible message rather than a silent
+`create_detector -> None`.
+
+```bash
+docker compose run --rm grasp feature-id     # what this container hashes to
+docker compose run --rm grasp check          # validate the mounted license
+```
+
+If you have a working license but don't know which MAC produced it, sweep
+the host's interfaces — `scan` rewrites `eth0`'s MAC in place, asks the SDK
+for the resulting id, and flags the match:
+
+```bash
+docker compose run --rm grasp scan $(cat /sys/class/net/*/address | tr '\n' ' ')
+```
+
+If nothing matches, the id was hashed from a multi-MAC set (the host-network
+case) and can't be reproduced from a single pinned interface. Re-register:
+pin `ANYGRASP_MAC` first, take the id from `feature-id`, and submit it at
+the SDK's [registration form](https://forms.gle/XVV3Eip8njTYJEBo6) (~5
+working days). Because the MAC is pinned, that id will not drift again.
+
+### Smoke test
+
+Pickle, not msgpack, unlike the other sidecars here:
+
+```python
+import pickle, zmq
+s = zmq.Context().socket(zmq.REQ); s.connect("tcp://127.0.0.1:5666")
+s.send(pickle.dumps({"cmd": "ping"})); print(pickle.loads(s.recv()))
+```
+
+### Still missing
+
+No `grasp_bridge_node.py` in `ros2_bridge/` yet — `GRASP_ADDR` is already
+plumbed into the `ros2-bridge` service, but nothing consumes it. The sidecar
+also expects points in the **camera** optical frame, metres, float32; the
+base-frame composition stays client-side.
 
 ## PointSO semantic orientation from meshes (no camera)
 

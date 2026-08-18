@@ -12,10 +12,66 @@
 # plugged into the workstation is directly visible inside ros2-bridge if
 # you ever run the camera driver in-container.
 #
-# Port 5666 is left free for the AnyGrasp sidecar; copy its stanza over
-# from the sim repo if hardware grasping needs it.
+# The one exception to "host-networked" is the AnyGrasp sidecar (5666): its
+# license fingerprint hashes the set of MACs `ifconfig` reports, so it runs
+# on its own bridge network with a pinned MAC and a published port. See the
+# header of docker/Dockerfile.anygrasp for why.
 
 services:
+
+  # ======================================================================
+  # grasp: AnyGrasp SDK sidecar (port 5666)
+  #
+  # NOT host-networked, unlike every other service here, and that is
+  # deliberate. AnyGrasp's feature id is sha256 over the sorted set of MAC
+  # addresses `ifconfig` reports; on host networking that set includes
+  # docker0 and the br-*/veth* of whatever else is running, so it changes
+  # out from under the license. Own bridge network + pinned MAC = exactly
+  # one ether line, always the same one.
+  #
+  #   ANYGRASP_MAC  must be the MAC the license was issued for. Set it in
+  #                 .env; normally this workstation's permanent NIC:
+  #                     echo "ANYGRASP_MAC=$(cat /sys/class/net/eno1/address)" >> .env
+  #                 Don't know which MAC? `docker compose run --rm grasp scan ...`
+  # ======================================================================
+  grasp:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.anygrasp
+    image: manip-grasp:latest
+    container_name: AnyGraspServer
+    networks:
+      grasp_net:
+        # 02:… placeholder is intentionally wrong -- an unset ANYGRASP_MAC
+        # should fail the license check loudly, not silently drift.
+        mac_address: ${ANYGRASP_MAC:-02:00:00:00:00:00}
+    ports:
+      # 0.0.0.0 (not 127.0.0.1) so the sim wing on this box can reach it via
+      # its `grasp:host-gateway` alias. Narrow to "127.0.0.1:5666:5666" if
+      # nothing outside this host should see the grasp server.
+      - "5666:5666"
+    cap_add:
+      - NET_ADMIN            # only for `scan`, which rewrites eth0's MAC
+    ipc: host
+    shm_size: '8gb'
+    gpus: all
+    restart: unless-stopped
+    volumes:
+      - ./grasp_server:/opt/grasp_server
+      - ./anygrasp_runtime/license:/opt/anygrasp/grasp_detection/license
+      - ./anygrasp_runtime/checkpoints:/opt/anygrasp/checkpoints
+    environment:
+      - GRASP_PORT=5666
+      - PYTHONPATH=/opt/anygrasp/grasp_detection
+      - GRASP_MAX_WIDTH=0.085          # Robotiq 2F-85 stroke; <= 0.1 (SDK cap)
+      - GRASP_HEIGHT=0.03
+      - NVIDIA_DISABLE_REQUIRE=1
+      - NVIDIA_DRIVER_CAPABILITIES=all
+      - TORCH_CUDA_ARCH_LIST=8.6
+      # Same soft-pin as pose/pointso; delete to roam.
+      # - CUDA_VISIBLE_DEVICES=0
+    stdin_open: true
+    tty: true
 
   # ======================================================================
   # pose: FoundationPose sidecar (port 5667)
@@ -292,3 +348,9 @@ services:
       # - CUDA_VISIBLE_DEVICES=0
     stdin_open: true
     tty: true
+
+networks:
+  # Dedicated bridge for the grasp sidecar. Nothing else joins it; its only
+  # job is to give the container exactly one NIC whose MAC we control.
+  grasp_net:
+    driver: bridge

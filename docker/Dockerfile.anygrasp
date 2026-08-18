@@ -1,0 +1,115 @@
+# =============================================================================
+# manip-grasp : AnyGrasp SDK sidecar (ZMQ grasp proposal server, port 5666)
+#
+# Isolated from everything else because MinkowskiEngine pins torch/numpy hard
+# and needs the CUDA *devel* toolchain (nvcc) to compile.
+#
+# ---------------------------------------------------------------------------
+# LICENSE FINGERPRINT -- read this before changing the network config
+# ---------------------------------------------------------------------------
+# AnyGrasp's feature id is NOT a stable machine UUID. Reconstructed from
+# gsnet.license_tools:
+#
+#     macs = sorted(set(normalize(m) for m in re.findall(
+#                r"(?:ether|HWaddr)\s+([0-9A-Fa-f:.-]{12,17})",
+#                subprocess.check_output("ifconfig").decode())))
+#     feature_id = "N" + f(sha256("mac=" + ",".join(macs)))
+#
+# i.e. it hashes *the entire set of MAC addresses that `ifconfig` reports*,
+# and net-tools `ifconfig` (no -a) reports every interface that is UP.
+#
+# Consequences:
+#   - network_mode: host  -> the container sees eno1 AND docker0 AND every
+#     br-<id> / veth of every other running container. Bring a different set
+#     of sidecars up, create/remove a compose network, plug in a dock or a
+#     VPN, and the MAC set changes -> the feature id changes -> the license
+#     stops validating. This is the drift the sim repo's grasp stanza has.
+#   - default bridge, no pin -> docker assigns a fresh random MAC per
+#     container -> the feature id changes on every `up`.
+#
+# So this service runs on its own bridge network with a PINNED MAC, set to
+# the workstation's permanent NIC MAC (ANYGRASP_MAC in .env). `ifconfig`
+# then reports exactly one ether line, always the same one -- lo has a
+# `loop` line, not `ether`, so it contributes nothing to the hash. The
+# fingerprint stays bound to this physical machine and stops depending on
+# what else docker happens to be running.
+#
+# The SDK commit is pinned for the same reason: the 2026-07-04 SDK
+# ("new license tool", e1a1b31) changed feature-id generation outright, so
+# an unpinned `main` can silently invalidate a working license on rebuild.
+#
+# Interface: ZMQ REP on tcp://*:${GRASP_PORT:-5666}, pickle payloads
+#   in : {points Nx3 f32, colors Nx3 f32, lims [6] | region_steering, ...}
+#   out: {ok, n, translations, rotations, widths, depths, scores}
+# Deliberately pickle and not msgpack, unlike the other sidecars here: this
+# is the wire format manip_sim/perception/grasp_client.py already speaks.
+# =============================================================================
+FROM nvidia/cuda:12.1.1-devel-ubuntu22.04
+
+ARG DEBIAN_FRONTEND=noninteractive
+ENV PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+# net-tools: load-bearing -- the license check shells out to `ifconfig`.
+# iproute2: `ip link set dev eth0 address ...` for the feature-id scan mode.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3.10 python3.10-venv python3-dev \
+        build-essential ninja-build git curl ca-certificates \
+        libopenblas-dev net-tools iproute2 \
+        libx11-6 libgl1 libglu1-mesa libxext6 libxrender1 libgomp1 libsm6 \
+        libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN python3.10 -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH" \
+    CUDA_HOME=/usr/local/cuda
+
+# Torch first -- MinkowskiEngine compiles against it. cu121 wheels run fine
+# on a 12.2+ runtime.
+RUN pip install --upgrade pip && \
+    pip install torch==2.3.1 --index-url https://download.pytorch.org/whl/cu121 && \
+    pip install "numpy<1.23" ninja
+
+# gcc-11 <-> CUDA libcu++ __to_address ambiguity (anygrasp_sdk README fix,
+# documented for CUDA 12.8 but bites on 12.1/12.4 as well).
+RUN sed -i 's/\bauto __raw = __to_address(__r.get());/auto __raw = std::__to_address(__r.get());/' \
+    /usr/include/c++/11/bits/shared_ptr_base.h
+
+# Patched MinkowskiEngine, cuda-12-1 branch (per anygrasp_sdk README).
+# RTX 3090 = Ampere sm_86, same convention as the other sidecars here.
+ENV TORCH_CUDA_ARCH_LIST="8.6" \
+    MAX_JOBS=4
+ARG ME_REF=cuda-12-1
+RUN git clone https://github.com/chenxi-wang/MinkowskiEngine.git /tmp/ME && \
+    cd /tmp/ME && git checkout ${ME_REF} && \
+    python setup.py install --blas=openblas --force_cuda && \
+    rm -rf /tmp/ME
+
+# AnyGrasp SDK, pinned. b8eaafc = 2026-07-13, the "new license tool" line
+# (>= e1a1b31, 2026-07-04) whose region/approach steering API grasp_server
+# uses. Do NOT float this to `main`: a86214a and earlier are the retired
+# license_checker/lib_cxx.so generation and compute a different feature id.
+ARG ANYGRASP_COMMIT=b8eaafc9eca7babd5208e7a5ade3c561060be4c5
+RUN git clone https://github.com/graspnet/anygrasp_sdk.git /opt/anygrasp && \
+    cd /opt/anygrasp && git checkout ${ANYGRASP_COMMIT} && \
+    pip install -r requirements.txt && \
+    cd pointnet2 && python setup.py install
+
+# The SDK ships per-Python-version prebuilt binaries; select the 3.10 one.
+RUN cd /opt/anygrasp/grasp_detection && \
+    cp gsnet_versions/gsnet.cpython-310-x86_64-linux-gnu.so gsnet.so
+
+RUN git clone https://github.com/graspnet/graspnetAPI.git /tmp/graspnetAPI && \
+    pip install /tmp/graspnetAPI && \
+    pip install pyzmq "numpy<1.23" "matplotlib<3.8" "scipy<1.11" && \
+    rm -rf /tmp/graspnetAPI
+
+COPY docker/anygrasp-entrypoint.sh /usr/local/bin/anygrasp-entrypoint.sh
+RUN chmod +x /usr/local/bin/anygrasp-entrypoint.sh
+
+# gsnet resolves `license/` relative to cwd, next to gsnet.so -- so this
+# workdir is load-bearing. license/ and checkpoints/ arrive via volume mounts.
+WORKDIR /opt/anygrasp/grasp_detection
+
+ENTRYPOINT ["/usr/local/bin/anygrasp-entrypoint.sh"]
+CMD ["serve"]
