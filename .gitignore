@@ -29,6 +29,7 @@ __pycache__/
 *.log
 *.bag
 rosbag2_*/
+bags/
 debug/
 outputs/
 
@@ -40,3 +41,4 @@ outputs/
 __pycache__/
 __init__.py
 test/data/
+*.patch

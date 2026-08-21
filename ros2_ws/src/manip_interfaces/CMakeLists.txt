@@ -12,6 +12,9 @@ find_package(geometry_msgs REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
   "srv/GenerateMesh.srv"
+  "srv/Segment.srv"
+  "srv/EstimatePose.srv"
+  "srv/Release.srv"
   DEPENDENCIES sensor_msgs shape_msgs geometry_msgs
 )
 

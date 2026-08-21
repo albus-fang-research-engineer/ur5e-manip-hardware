@@ -2,6 +2,10 @@
 
 Exposes:  /trellis2/generate_mesh   (manip_interfaces/srv/GenerateMesh)
 
+The reply's metric GLB lands on the shared ./trellis2_runtime/outputs mount,
+which the pose and any6d containers see at /data/meshes -- pass
+`metric_glb_path` as `mesh` to /pose/estimate or /any6d/estimate.
+
 Forwards to the trellis2 sidecar over ZMQ REQ. If the request carries depth
 + camera_info, the sidecar also runs similarity registration and the reply
 includes a metric mesh + T_cam_obj (see GenerateMesh.srv).
@@ -19,81 +23,39 @@ import os
 
 import numpy as np
 import rclpy
-import zmq
-import msgpack
-import msgpack_numpy
 from geometry_msgs.msg import Point
 from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
+from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from shape_msgs.msg import Mesh, MeshTriangle
 
 from manip_interfaces.srv import GenerateMesh
 
-msgpack_numpy.patch()
+from .img import camera_info_to_K, image_to_depth_m, image_to_mono, image_to_rgb
+from .zmq_client import SidecarClient, SidecarError
 
 TRELLIS_ADDR = os.environ.get("TRELLIS_ADDR", "tcp://127.0.0.1:5669")
 TIMEOUT_MS = int(float(os.environ.get("TRELLIS_TIMEOUT_S", 240)) * 1000)
 
 
-def _image_to_rgb(msg) -> np.ndarray:
-    h, w = msg.height, msg.width
-    buf = np.frombuffer(bytes(msg.data), dtype=np.uint8)
-    if msg.encoding in ("rgb8", "bgr8"):
-        img = buf.reshape(h, msg.step // 3, 3)[:, :w, :]
-        return img[..., ::-1].copy() if msg.encoding == "bgr8" else img.copy()
-    if msg.encoding in ("rgba8", "bgra8"):
-        img = buf.reshape(h, msg.step // 4, 4)[:, :w, :3]
-        return img[..., ::-1].copy() if msg.encoding == "bgra8" else img.copy()
-    raise ValueError(f"unsupported rgb encoding: {msg.encoding}")
-
-
-def _image_to_mono(msg) -> np.ndarray:
-    if msg.encoding != "mono8":
-        raise ValueError(f"mask must be mono8, got: {msg.encoding}")
-    buf = np.frombuffer(bytes(msg.data), dtype=np.uint8)
-    return buf.reshape(msg.height, msg.step)[:, : msg.width].copy()
-
-
-def _image_to_depth_m(msg) -> np.ndarray:
-    """16UC1 mm or 32FC1 m -> HxW float32 meters."""
-    h, w = msg.height, msg.width
-    if msg.encoding == "16UC1":
-        d = np.frombuffer(bytes(msg.data), dtype=np.uint16)
-        return d.reshape(h, msg.step // 2)[:, :w].astype(np.float32) * 1e-3
-    if msg.encoding == "32FC1":
-        d = np.frombuffer(bytes(msg.data), dtype=np.float32)
-        return d.reshape(h, msg.step // 4)[:, :w].copy()
-    raise ValueError(f"unsupported depth encoding: {msg.encoding}")
-
-
 class Trellis2Bridge(Node):
     def __init__(self):
         super().__init__("trellis2_bridge")
-        self._zctx = zmq.Context()
-        self._sock = None
-        self._connect()
+        self._client = SidecarClient(TRELLIS_ADDR, TIMEOUT_MS)
         self._cbg = MutuallyExclusiveCallbackGroup()
         self.create_service(
             GenerateMesh, "trellis2/generate_mesh", self._on_generate,
             callback_group=self._cbg,
         )
-        self.get_logger().info(f"trellis2 bridge up -> {TRELLIS_ADDR}")
-
-    def _connect(self):
-        # REQ sockets wedge after a timeout; rebuild instead of reusing.
-        if self._sock is not None:
-            self._sock.close(linger=0)
-        self._sock = self._zctx.socket(zmq.REQ)
-        self._sock.setsockopt(zmq.RCVTIMEO, TIMEOUT_MS)
-        self._sock.setsockopt(zmq.SNDTIMEO, 5000)
-        self._sock.setsockopt(zmq.LINGER, 0)
-        self._sock.connect(TRELLIS_ADDR)
+        up = self._client.ping(cmd_key="op")
+        self.get_logger().info(
+            f"trellis2 bridge up -> {TRELLIS_ADDR} ({'sidecar alive' if up else 'sidecar NOT responding'})")
 
     def _on_generate(self, req, res):
         try:
             payload = {
                 "op": "generate",
-                "rgb": _image_to_rgb(req.rgb),
+                "rgb": image_to_rgb(req.rgb),
                 "seed": int(req.seed),
                 "decimation_target": int(req.decimation_target),
                 "texture_size": int(req.texture_size),
@@ -101,28 +63,17 @@ class Trellis2Bridge(Node):
                 "return_glb": False,
             }
             if req.mask.height > 0:
-                payload["mask"] = _image_to_mono(req.mask)
+                payload["mask"] = image_to_mono(req.mask)
             if req.depth.height > 0:
-                payload["depth"] = _image_to_depth_m(req.depth)
-                payload["K"] = np.asarray(req.camera_info.k,
-                                          dtype=np.float64).reshape(3, 3)
+                payload["depth"] = image_to_depth_m(req.depth)
+                payload["K"] = camera_info_to_K(req.camera_info)
 
-            self._sock.send(msgpack.packb(payload, use_bin_type=True))
-            reply = msgpack.unpackb(self._sock.recv(), raw=False)
-        except zmq.error.Again:
-            self._connect()
-            res.success = False
-            res.message = f"trellis2 sidecar timeout after {TIMEOUT_MS} ms"
-            return res
-        except Exception as e:  # noqa: BLE001
-            self._connect()
+            self.get_logger().info("generate_mesh ...")
+            reply = self._client.call(payload)
+        except (TimeoutError, SidecarError, ValueError) as e:
             res.success = False
             res.message = f"{type(e).__name__}: {e}"
-            return res
-
-        if not reply.get("ok", False):
-            res.success = False
-            res.message = reply.get("error", "unknown sidecar error")
+            self.get_logger().error(res.message)
             return res
 
         verts = np.asarray(reply["vertices"], dtype=np.float64)
@@ -136,7 +87,6 @@ class Trellis2Bridge(Node):
         res.gen_time = float(reply["gen_time"])
 
         metric = reply.get("metric")
-        res.metric_valid = bool(metric)
         if metric:
             res.metric_glb_path = metric["glb_path"]
             res.scale = float(metric["scale"])
@@ -152,6 +102,7 @@ class Trellis2Bridge(Node):
             res.object_pose.pose.orientation.w = float(q[3])
 
         res.success = True
+        res.metric_valid = bool(metric) and bool(metric.get("ok", True))
         res.message = (
             f"{len(verts)} verts / {len(faces)} faces in {res.gen_time:.1f}s"
             + (f"; scale={res.scale:.4f} rmse={res.registration_rmse * 1e3:.1f}mm"
@@ -163,8 +114,10 @@ class Trellis2Bridge(Node):
 def main():
     rclpy.init()
     node = Trellis2Bridge()
+    ex = MultiThreadedExecutor()
+    ex.add_node(node)
     try:
-        rclpy.spin(node)
+        ex.spin()
     finally:
         node.destroy_node()
         rclpy.shutdown()

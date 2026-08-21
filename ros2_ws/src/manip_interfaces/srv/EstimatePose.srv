@@ -1,0 +1,24 @@
+# One-shot 6D pose registration from a single RGB-D view + mask. Served by
+# BOTH the FoundationPose bridge (/pose/estimate, needs `mesh`) and the
+# Any6D bridge (/any6d/estimate, `mesh` OR img_to_3d). On success the
+# bridge starts frame-to-frame tracking for `obj` and publishes
+#   <ns>/<obj>/pose   (PoseStamped, cam_T_obj)
+#   TF  camera_optical_frame -> <obj>
+# until /<ns>/release is called.
+
+sensor_msgs/Image rgb
+sensor_msgs/Image depth             # 16UC1 mm or 32FC1 m, aligned to rgb
+sensor_msgs/CameraInfo camera_info
+sensor_msgs/Image mask              # mono8, >0 = object
+string obj                          # session key / TF child frame
+string mesh                         # filename under the sidecar's MESH_DIR
+                                    # (/opt/meshes) OR an absolute path on a
+                                    # mount the sidecar can see (/data/meshes)
+bool img_to_3d false                # Any6D only: generate the mesh from rgb
+int32 refine_iter 5
+---
+bool success
+string message
+geometry_msgs/PoseStamped pose      # cam_T_obj, header from rgb
+float64[] extents                   # scaled-mesh AABB (m), Any6D only
+string mesh_path                    # scaled mesh on the shared mount, Any6D only

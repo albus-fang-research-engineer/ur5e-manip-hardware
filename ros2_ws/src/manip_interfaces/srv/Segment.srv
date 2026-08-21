@@ -1,0 +1,20 @@
+# SAM 3 open-vocabulary instance segmentation. One rgb, one or more prompts.
+# A single prompt maps to the sidecar's "segment"; several map to
+# "segment_multi" (one image encode amortized over all prompts).
+#
+# N == 0 instances for a prompt is a VALID answer (SAM 3's presence token
+# suppresses absent concepts) -- it is not reported as failure.
+
+sensor_msgs/Image rgb           # rgb8/bgr8
+string[] prompts                # open-vocab noun phrases
+float32 threshold 0.0           # <= 0 -> sidecar default (0.5)
+---
+bool success
+string message
+# Flat list of instances across all prompts, each tagged with its prompt.
+# Within a prompt, instances are sorted by score desc, so the first entry
+# whose prompt == p is the best mask for p.
+string[] prompt
+sensor_msgs/Image[] masks       # mono8, 255 = object, header copied from rgb
+float32[] scores
+float32[] boxes_xyxy            # 4 per instance, pixels

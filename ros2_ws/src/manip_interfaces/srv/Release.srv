@@ -1,0 +1,5 @@
+# Stop tracking `obj` and free its session in the sidecar.
+string obj
+---
+bool success
+string message

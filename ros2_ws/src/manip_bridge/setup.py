@@ -24,11 +24,12 @@ setup(
     license="MIT",
     entry_points={
         "console_scripts": [
-            # Migrate the existing loose scripts from ros2_bridge/ into
-            # manip_bridge/ (add a main() if missing) and uncomment:
-            # "pose_bridge = manip_bridge.pose_bridge_node:main",
-            # "pointso_bridge = manip_bridge.pointso_bridge_node:main",
+            "sam3_bridge = manip_bridge.sam3_bridge_node:main",
             "trellis2_bridge = manip_bridge.trellis2_bridge_node:main",
+            "any6d_bridge = manip_bridge.any6d_bridge_node:main",
+            "pose_bridge = manip_bridge.pose_bridge_node:main",
+            "run_scene = manip_bridge.run_scene:main",
+            # still legacy (ros2_bridge/pointso_bridge_node.py via ExecuteProcess)
         ],
     },
 )

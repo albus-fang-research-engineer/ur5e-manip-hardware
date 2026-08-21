@@ -75,10 +75,92 @@ s.send(msgpack.packb({"cmd": "ping"})); print(msgpack.unpackb(s.recv()))
   other Humble machines. Set `ROS_DOMAIN_ID` in your shell env to match.
   The bridge nodes are ZMQ clients only — no CUDA, no model code — so the
   perception environments never see ROS's Python 3.10 pin.
-- **Registration masks**: the pose bridge expects an instance mask on
-  `/pose_bridge/mask`. In sim, publish the ground-truth instance mask; on
-  hardware, front it with your SAM/Florence segmenter (which SoFar already
-  bundles if you later widen the pointso image to full SoFar).
+
+## ROS2 bridge layer (`ros2_ws/`)
+
+Two kinds of node, matching how the sidecars are used in a task:
+
+| kind | node | interface | sidecar |
+|---|---|---|---|
+| service (once per scene) | `sam3_bridge` | `/sam3/segment` `Segment` | sam3 :5670 |
+| service (once per scene) | `trellis2_bridge` | `/trellis2/generate_mesh` `GenerateMesh` | trellis2 :5669 |
+| service + stream | `any6d_bridge` | `/any6d/estimate` `/any6d/release` → `/any6d/<obj>/pose` + TF | any6d :5672 |
+| service + stream | `pose_bridge` | `/pose/estimate` `/pose/release` → `/pose/<obj>/pose` + TF | pose :5667 |
+| legacy topic-JSON | `ros2_bridge/pointso_bridge_node.py` | `/pointso_bridge/*` | pointso :5668 |
+
+`EstimatePose` registers once from a caller-supplied RGB-D + mask; on success
+the node starts tracking that object on every synced camera frame until
+`Release`. The two trackers share `manip_bridge/tracker_bridge.py` (two
+callback groups, two ZMQ sockets, drop-if-busy, frames skipped while an
+estimate is in flight) so FoundationPose and Any6D have identical interfaces
+and can be compared head-to-head.
+
+`mesh` in `EstimatePose` is a filename under the sidecar's `/opt/meshes` **or**
+an absolute path: `./trellis2_runtime/outputs` is mounted read-only at
+`/data/meshes` in the pose and any6d containers, so a TRELLIS.2 metric GLB
+from `/trellis2/generate_mesh` can be passed straight in.
+
+### Build
+
+```bash
+docker compose up -d --build ros2-bridge
+docker exec -it Ros2Bridge bash
+colcon build --symlink-install && exit
+docker compose restart ros2-bridge       # launches bridges.launch.py
+```
+
+### Online test from a rosbag
+
+Put the recording under `./bags` (or set `BAG_DIR` in `.env`); it is mounted
+at `/bags` in `Ros2Bridge`. Everything runs inside that container so
+`ROS_DOMAIN_ID` and DDS config are automatically consistent.
+
+```bash
+docker compose up -d sam3 trellis2 any6d pose        # sidecars you want
+docker exec -it Ros2Bridge bash
+
+ros2 bag info /bags/<name>        # read the ACTUAL topic names + depth encoding
+ros2 bag play /bags/<name> --clock --loop &
+
+ros2 launch manip_bridge bridges.launch.py use_sim_time:=true \
+    rgb_topic:=/camera/camera/color/image_raw \
+    depth_topic:=/camera/camera/aligned_depth_to_color/image_raw \
+    info_topic:=/camera/camera/color/camera_info
+```
+
+Then, in a second shell in the container:
+
+```bash
+ros2 run manip_bridge run_scene --ros-args -p use_sim_time:=true -- \
+    --prompts teapot mug --bg "robot arm" --watch 30
+```
+
+`run_scene` grabs one synced frame, segments, runs TRELLIS.2 (canonical +
+metric), Any6D (`img_to_3d`, or `--any6d-mesh trellis`), FoundationPose on
+the TRELLIS metric mesh, prints a per-object pose table and then reports
+tracking rate / position std / rotation drift for the streaming nodes.
+Artifacts (rgb, depth, masks, overlay, `summary.json`) land in
+`./outputs/runs/<stamp>/`; GLBs in `./trellis2_runtime/outputs`, scaled Any6D
+meshes in `./any6d_runtime/outputs`. `--skip trellis2,any6d` etc. for a
+partial stack.
+
+Things that silently yield *no callbacks* on replay:
+
+- `--clock` without `use_sim_time:=true` (or vice versa): stamps are
+  bag-epoch, sync/TF compare against wall-clock and drop everything.
+- QoS: RealSense topics are best-effort; the bridges subscribe with
+  `qos_profile_sensor_data`. If the bag's `metadata.yaml` recorded reliable
+  QoS that is still compatible, but a reliable subscriber on a best-effort
+  publisher is not.
+- Topic names: the realsense-ros default is `/camera/camera/...` (node name
+  repeated). Older bags may be `/camera/...`. Pass the launch args.
+- No aligned depth in the bag → the pipeline needs depth→color reprojection
+  first; the bridges assume aligned RGB-D with one `K`.
+
+For the hand-eye transform on hardware, add a `static_transform_publisher`
+(from the easy_handeye2 YAML) to the launch file; `rviz2` with
+`use_sim_time` on the host then shows `pose_<obj>` / `any6d_<obj>` frames
+relative to `base_link`.
 
 ## AnyGrasp sidecar (port 5666)
 

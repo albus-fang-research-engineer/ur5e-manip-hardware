@@ -92,6 +92,9 @@ services:
       - ./pose_server:/opt/pose_server
       - ./foundationpose_runtime/weights:/opt/FoundationPose/weights
       - ./foundationpose_runtime/meshes:/opt/meshes
+      # TRELLIS.2 outputs, read-only: pass an absolute /data/meshes/*.glb as
+      # `mesh` to register FoundationPose on a generated metric mesh
+      - ./trellis2_runtime/outputs:/data/meshes:ro
       - /tmp/.X11-unix:/tmp/.X11-unix      # only needed for debug viz
     environment:
       - POSE_PORT=5667
@@ -156,12 +159,20 @@ services:
       # coordinates everything. COLCON_IGNORE keeps colcon from building it.
       - ./ros2_bridge:/root/ros2_ws/src/ros2_bridge
       - ./trellis2_runtime/outputs:/data/meshes
+      - ./any6d_runtime/outputs:/data/any6d:ro
+      # rosbag2 recordings for offline replay:  ros2 bag play /bags/<name> --clock
+      - ${BAG_DIR:-./bags}:/bags:ro
+      # run_scene artifacts (rgb/depth/masks/overlays/summary.json)
+      - ./outputs/runs:/data/runs
     environment:
       - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-0}
       - POSE_ADDR=tcp://127.0.0.1:5667     # host-net: sidecars are localhost
       - POINTSO_ADDR=tcp://127.0.0.1:5668
       - GRASP_ADDR=tcp://127.0.0.1:5666
       - TRELLIS_ADDR=tcp://127.0.0.1:5669
+      - SAM3_ADDR=tcp://127.0.0.1:5670
+      - ANY6D_ADDR=tcp://127.0.0.1:5672
+      - RUN_OUT_DIR=/data/runs
     # Launch all bridges once the workspace has been colcon-built; before the
     # first build, idle in a shell so you can exec in and build:
     #   docker exec -it Ros2Bridge bash
@@ -304,6 +315,7 @@ services:
       # Reference meshes shared with pose (Any6D rescales, so non-metric
       # TRELLIS.2 / InstantMesh outputs are fine here too)
       - ./foundationpose_runtime/meshes:/opt/meshes
+      - ./trellis2_runtime/outputs:/data/meshes:ro   # TRELLIS GLBs as reference meshes
       - ./any6d_runtime/sam2_ckpts:/opt/Any6D/sam2/checkpoints
       - ./any6d_runtime/instantmesh_ckpts:/opt/Any6D/instantmesh/ckpts
       - ./any6d_runtime/outputs:/data/any6d     # scaled meshes out
