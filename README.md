@@ -171,16 +171,59 @@ profile.
 
 ### One-time setup
 
-```bash
-mkdir -p anygrasp_runtime/checkpoints anygrasp_runtime/license
-# checkpoint_detection.tar from the AnyGrasp SDK's Google Drive link
-# license/ = the zip the authors mail back (see below)
+Order matters: the feature id you register has to be the one the *pinned*
+config produces, so pin first, register second, and only bring the service
+up once the license is in place.
 
+```bash
+mkdir -p anygrasp_runtime/{checkpoints,license}
+
+# 1. pin the MAC. Note the sed rather than `echo >>`: .env.example ships an
+#    empty ANYGRASP_MAC=, and appending leaves two lines. Last-wins saves
+#    you until something reorders them, and then you're debugging a silent
+#    placeholder. One line, filled in.
 cp .env.example .env
-echo "ANYGRASP_MAC=$(cat /sys/class/net/eno1/address)" >> .env   # your real NIC
-docker compose up -d --build grasp
+sed -i "s|^ANYGRASP_MAC=$|ANYGRASP_MAC=$(cat /sys/class/net/eno1/address)|" .env
+bash scripts/preflight_anygrasp.sh eno1        # verifies the whole chain
+
+# 2. build and read the id (no license needed for this)
+docker compose build grasp
+docker compose run --rm grasp feature-id
+
+# 3. register that id, wait ~5 working days, then unpack the reply:
+#      license zip      -> anygrasp_runtime/license/
+#      checkpoint .tar  -> anygrasp_runtime/checkpoints/
+docker compose run --rm grasp check
+docker compose up -d grasp
 docker compose logs -f grasp        # wait for "model ready, listening on :5666"
 ```
+
+Record the id you submitted somewhere outside this tree. `anygrasp_runtime/`
+is gitignored, so a `git clean -xdf` takes the license with it, and until
+`licenseCfg.json` exists there is nothing in-repo saying what you registered.
+
+**The weights are not a public download.** The SDK README only says "put
+model weights under `log/`" and links nothing; `checkpoint_detection.tar`
+arrives in the same approval email as the license. Put it directly in
+`anygrasp_runtime/checkpoints/` — no `log/` nesting — since compose maps
+that directory to `/opt/anygrasp/checkpoints`, which is where
+`server.py --checkpoint_path` defaults.
+
+#### If `.env` goes missing
+
+`mac_address: ${ANYGRASP_MAC:-02:00:00:00:00:00}` degrades quietly, and
+`:-` treats an *empty* value the same as unset — so replacing `.env` with
+`.env.example`, or running compose from the wrong directory, silently
+swaps in the placeholder. The entrypoint refuses to serve or print a
+feature id under that MAC for exactly this reason: a placeholder-derived id
+is a constant any machine would reproduce, useless to register and wrong to
+serve with. `scan` is exempt, since rewriting the MAC is its job.
+
+That guard only catches the placeholder. A *different* wrong MAC — a stale
+one from another machine — passes it. `scripts/preflight_anygrasp.sh`
+catches that case by comparing what compose resolved against the NIC
+itself; once the license is mounted, the entrypoint's own
+`feature_id`-vs-`licenseCfg.json` check covers it permanently.
 
 ### The feature-id problem, and why this service isn't host-networked
 
@@ -244,6 +287,34 @@ case) and can't be reproduced from a single pinned interface. Re-register:
 pin `ANYGRASP_MAC` first, take the id from `feature-id`, and submit it at
 the SDK's [registration form](https://forms.gle/XVV3Eip8njTYJEBo6) (~5
 working days). Because the MAC is pinned, that id will not drift again.
+
+### Talking to other services
+
+`grasp` is the only bridged service here, which makes its networking
+asymmetric. Inbound is unaffected: `ros2-bridge` is host-networked so
+`GRASP_ADDR=tcp://127.0.0.1:5666` hits the published port, and the sim wing
+still reaches it via `grasp:host-gateway`.
+
+Outbound is the part that changed. Inside a bridged container `127.0.0.1`
+is the container's own loopback, *not* the host's — so the
+`tcp://127.0.0.1:566x` pattern every other sidecar uses will fail from
+inside `grasp`. Nothing needs it today (`server.py` is a pure REP loop that
+never dials out), but if that changes, add
+`extra_hosts: ["host.docker.internal:host-gateway"]` and address peers
+through that name.
+
+`grasp_bridge_node.py`, when it exists, belongs in `ros2_bridge/` running
+inside `ros2-bridge` alongside the pose and pointso nodes — thin ZMQ
+clients, no CUDA. Don't run ROS inside the grasp container; DDS discovery
+across a NAT bridge isn't worth it.
+
+Port `5666` is published on `0.0.0.0` so the sim wing can reach it from
+another box. `server.py` does `pickle.loads()` on whatever arrives, which
+is arbitrary code execution on deserialization, and Docker's DNAT rules
+bypass `ufw`. Inherited from the sim design, not a regression from the
+bridge move — but if the sim wing runs on this same workstation, narrow the
+mapping to `172.17.0.1:5666:5666` (not `127.0.0.1`, which the
+`host-gateway` path doesn't use).
 
 ### Smoke test
 
