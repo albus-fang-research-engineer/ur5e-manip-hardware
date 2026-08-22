@@ -352,10 +352,32 @@ services:
       - ./trellis2_runtime/outputs:/data/meshes:ro   # TRELLIS GLBs as reference meshes
       - ./any6d_runtime/sam2_ckpts:/opt/Any6D/sam2/checkpoints
       - ./any6d_runtime/instantmesh_ckpts:/opt/Any6D/instantmesh/ckpts
+      # HF cache. Every other model sidecar (sam3, trellis2, oriany) already
+      # has one; any6d was the odd one out, and that is a real bug rather than
+      # an omission: InstantMesh's from_pretrained pulls the Zero123++ BASE
+      # pipeline from the Hub at runtime no matter what is in
+      # instantmesh_ckpts/ -- that dir holds only the finetuned UNet that gets
+      # layered on top. Without this mount those blobs land in the container's
+      # own ~/.cache/huggingface and are destroyed by every --force-recreate,
+      # so each fresh container re-downloads several GB mid-service-call.
+      - ./any6d_runtime/hf_cache:/opt/hf_cache
       - ./any6d_runtime/outputs:/data/any6d     # scaled meshes out
     environment:
       - ANY6D_PORT=5672
       - ANY6D_OUT_DIR=/data/any6d
+      # --- Hugging Face ----------------------------------------------------
+      # Set here rather than in Dockerfile.any6d (where sam3/trellis2/oriany
+      # set theirs) so this takes effect on `up` without a rebuild. Move it
+      # into the Dockerfile if you want it baked.
+      - HF_HOME=/opt/hf_cache
+      - HF_TOKEN=${HF_TOKEN:-}
+      # THE knob behind "Read timed out. (read timeout=10)". Both default to
+      # 10s in huggingface-hub; 10s is a per-read deadline on a multi-GB blob
+      # transfer from the CDN, so any transient stall aborts the whole
+      # download -- and it surfaces as a ZMQ SidecarError five minutes later,
+      # after the retry budget is spent, which reads like a model failure.
+      - HF_HUB_DOWNLOAD_TIMEOUT=120
+      - HF_HUB_ETAG_TIMEOUT=60
       - NVIDIA_DISABLE_REQUIRE=1
       - NVIDIA_DRIVER_CAPABILITIES=all     # nvdiffrast wants graphics caps
       - TORCH_CUDA_ARCH_LIST=8.6
