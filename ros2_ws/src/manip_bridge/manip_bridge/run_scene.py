@@ -4,13 +4,14 @@ orchestrator in embryo, and the manual "does it work, show me" harness.
     1. grab one synced (rgb, depth, camera_info) frame from the camera topics
     2. /sam3/segment            prompts -> masks            (writes overlays)
     3. per object:
-         a. /trellis2/generate_mesh  rgb+mask+depth+K -> canonical + metric GLB
-         b. /any6d/estimate          img_to_3d  (or --any6d-mesh trellis)
-         c. /pose/estimate           mesh = TRELLIS metric GLB   (FP counterpart)
+         a. /oriany/orient           rgb+mask -> az/el/ro + alpha (semantic)
+         b. /trellis2/generate_mesh  rgb+mask+depth+K -> canonical + metric GLB
+         c. /any6d/estimate          img_to_3d  (or --any6d-mesh trellis)
+         d. /pose/estimate           mesh = TRELLIS metric GLB   (FP counterpart)
     4. summary table + summary.json; every artifact under --out/<stamp>/
     5. --watch: keep spinning, print tracked poses as they stream
 
-Every stage is optional (--skip sam3,trellis2,any6d,pose) and tolerant: a
+Every stage is optional (--skip sam3,oriany,trellis2,any6d,pose) and tolerant: a
 failed or absent service is logged and the rest continues, so you can run
 it with a partial sidecar stack.
 
@@ -41,7 +42,7 @@ from geometry_msgs.msg import PoseStamped
 from scipy.spatial.transform import Rotation
 from sensor_msgs.msg import CameraInfo, Image
 
-from manip_interfaces.srv import EstimatePose, GenerateMesh, Segment
+from manip_interfaces.srv import EstimatePose, GenerateMesh, Orient, Segment
 
 from .img import (image_to_depth_m, image_to_mono, image_to_rgb,
                   mono_to_image)
@@ -81,6 +82,7 @@ class SceneRunner(Node):
 
         self.cli = {
             "sam3": self.create_client(Segment, "sam3/segment"),
+            "oriany": self.create_client(Orient, "oriany/orient"),
             "trellis2": self.create_client(GenerateMesh, "trellis2/generate_mesh"),
             "any6d": self.create_client(EstimatePose, "any6d/estimate"),
             "pose": self.create_client(EstimatePose, "pose/estimate"),
@@ -177,7 +179,12 @@ def main():
                     help="SAM3 prompts; each becomes an object (except --bg prompts)")
     ap.add_argument("--bg", nargs="*", default=["robot arm"],
                     help="prompts to segment but NOT reconstruct/pose (masked out of depth)")
-    ap.add_argument("--skip", default="", help="comma list of sam3,trellis2,any6d,pose")
+    ap.add_argument("--skip", default="",
+                    help="comma list of sam3,oriany,trellis2,any6d,pose")
+    ap.add_argument("--oriany-matting", action="store_true",
+                    help="send oriany the FULL frame with an empty mask so the model "
+                         "mattes it itself (upstream demo path) instead of a SAM3 crop. "
+                         "A/B this against the default before trusting either.")
     ap.add_argument("--any6d-mesh", choices=["img_to_3d", "trellis"], default="img_to_3d",
                     help="Any6D mesh source: its own SAM2+InstantMesh, or the TRELLIS metric GLB")
     ap.add_argument("--threshold", type=float, default=0.0)
@@ -263,6 +270,21 @@ def main():
             mask_msg = mono_to_image(masks[obj], rgb_msg.header)
             trellis_metric = ""
 
+            if "oriany" not in skip:
+                req = Orient.Request()
+                req.rgb = rgb_msg
+                req.mask = Image() if args.oriany_matting else mask_msg
+                res = node.call("oriany", req, 180)
+                if res is not None:
+                    q = res.orientation.quaternion
+                    rec["oriany"] = {
+                        "azimuth": res.azimuth, "elevation": res.elevation,
+                        "rotation": res.rotation, "alpha": res.alpha,
+                        "matting": bool(args.oriany_matting),
+                        "bbox_xyxy": list(res.bbox_xyxy),
+                        "R_obj": Rotation.from_quat(
+                            [q.x, q.y, q.z, q.w]).as_matrix().tolist()}
+
             if "trellis2" not in skip:
                 req = GenerateMesh.Request()
                 req.rgb, req.mask, req.depth, req.camera_info = rgb_msg, mask_msg, depth_clean_msg, info
@@ -306,6 +328,13 @@ def main():
         print("\n==== scene summary ====")
         for obj, rec in summary["objects"].items():
             print(f"[{obj}]")
+            o = rec.get("oriany")
+            if o:
+                print(f"  {'oriany':16s} az={o['azimuth']:6.1f} el={o['elevation']:6.1f} "
+                      f"ro={o['rotation']:7.1f} alpha={o['alpha']} "
+                      f"({'matting' if o['matting'] else 'masked crop'})"
+                      + ("   <- alpha != 1: front axis defined only up to a "
+                         "symmetry group" if o["alpha"] != 1 else ""))
             ts = {}
             for k in ("trellis2", "any6d", "pose_on_trellis"):
                 r = rec.get(k)

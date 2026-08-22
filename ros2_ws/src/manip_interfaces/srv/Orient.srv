@@ -1,0 +1,33 @@
+# Semantic orientation of ONE object from a single RGB view (Orient
+# Anything V2). Stateless: no session key, no release, no streaming -- the
+# sidecar holds no per-object state and the answer is a scene-time label,
+# not a per-frame measurement. See oriany_bridge_node.py.
+#
+# Mask convention is GenerateMesh's: an empty (0x0) mask means "let the
+# model matte it itself" (rembg + resize_foreground, i.e. upstream app.py
+# behaviour); a non-empty mask means the bridge crops to the mask bbox,
+# fills the background, pads to the training foreground ratio, and tells
+# the sidecar to skip rembg.
+
+sensor_msgs/Image rgb           # rgb8/bgr8
+sensor_msgs/Image mask          # mono8, >0 = object. Empty (0x0) = matting.
+---
+bool success
+string message
+
+# Model-native discretized outputs (1 deg bins). Coarse semantic init for
+# refine_frame.py, NOT metric ground truth.
+float32 azimuth                 # deg, [0, 360)
+float32 elevation               # deg, [-90, 90]
+float32 rotation                # deg, [-180, 180], in-plane
+
+# Symmetry order of the front-face distribution: 1 / 2 / 4 discrete folds,
+# 0 = no confident single front (continuous symmetry or flat distribution).
+# alpha != 1 means the front axis is only defined up to a symmetry group:
+# widen or drop the corresponding rotational bound rather than trusting the
+# single sampled azimuth.
+int32 alpha
+
+geometry_msgs/QuaternionStamped orientation   # R_obj in the camera frame,
+                                              # header copied from rgb
+int32[4] bbox_xyxy              # crop actually sent; empty when no mask

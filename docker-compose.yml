@@ -172,6 +172,7 @@ services:
       - TRELLIS_ADDR=tcp://127.0.0.1:5669
       - SAM3_ADDR=tcp://127.0.0.1:5670
       - ANY6D_ADDR=tcp://127.0.0.1:5672
+      - ORIANY_ADDR=tcp://127.0.0.1:5673
       - RUN_OUT_DIR=/data/runs
     # Launch all bridges once the workspace has been colcon-built; before the
     # first build, idle in a shell so you can exec in and build:

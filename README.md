@@ -84,6 +84,7 @@ Two kinds of node, matching how the sidecars are used in a task:
 |---|---|---|---|
 | service (once per scene) | `sam3_bridge` | `/sam3/segment` `Segment` | sam3 :5670 |
 | service (once per scene) | `trellis2_bridge` | `/trellis2/generate_mesh` `GenerateMesh` | trellis2 :5669 |
+| service (once per scene) | `oriany_bridge` | `/oriany/orient` `Orient` | oriany :5673 |
 | service + stream | `any6d_bridge` | `/any6d/estimate` `/any6d/release` → `/any6d/<obj>/pose` + TF | any6d :5672 |
 | service + stream | `pose_bridge` | `/pose/estimate` `/pose/release` → `/pose/<obj>/pose` + TF | pose :5667 |
 | legacy topic-JSON | `ros2_bridge/pointso_bridge_node.py` | `/pointso_bridge/*` | pointso :5668 |
@@ -94,6 +95,24 @@ the node starts tracking that object on every synced camera frame until
 callback groups, two ZMQ sockets, drop-if-busy, frames skipped while an
 estimate is in flight) so FoundationPose and Any6D have identical interfaces
 and can be compared head-to-head.
+
+`oriany_bridge` is a service and not a tracker on purpose: the sidecar holds
+no per-object state, and semantic orientation is a scene-time label. Once a
+body frame is registered its orientation is carried per frame by the pose
+tracker, so nothing is gained by re-asking which way the front is at 30 Hz.
+It publishes no TF — the model returns a rotation, and a frame needs an
+origin; compose `R_obj` with a pose sidecar translation client-side.
+
+`Orient` reuses `GenerateMesh`'s mask convention: an **empty (0x0)** mask
+means the model mattes the full frame itself (rembg, upstream `app.py`); a
+**non-empty** mask means the bridge crops to the mask bbox, fills the
+background, and square-pads to `fg_ratio` (0.85) before sending with
+`remove_bkg=false`. That padding is not cosmetic — upstream only runs
+`resize_foreground` inside the rembg path, so a tight bbox crop is a framing
+the model never trained on. `run_scene --oriany-matting` switches to the
+matting path so the two are directly comparable; the `bg_fill` parameter
+(the fill colour under the mask) is *not* verified against upstream and is
+worth sweeping.
 
 `mesh` in `EstimatePose` is a filename under the sidecar's `/opt/meshes` **or**
 an absolute path: `./trellis2_runtime/outputs` is mounted read-only at

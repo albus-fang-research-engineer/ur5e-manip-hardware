@@ -14,6 +14,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "srv/GenerateMesh.srv"
   "srv/Segment.srv"
   "srv/EstimatePose.srv"
+  "srv/Orient.srv"
   "srv/Release.srv"
   DEPENDENCIES sensor_msgs shape_msgs geometry_msgs
 )

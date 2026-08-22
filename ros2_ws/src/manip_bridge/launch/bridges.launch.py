@@ -3,6 +3,7 @@
 Services (called once per scene by an orchestrator, e.g. `run_scene`):
     /sam3/segment              Segment
     /trellis2/generate_mesh    GenerateMesh
+    /oriany/orient             Orient
 Service + streaming tracker (estimate once, then track every camera frame):
     /any6d/estimate  /any6d/release  /any6d/<obj>/pose
     /pose/estimate   /pose/release   /pose/<obj>/pose
@@ -46,6 +47,8 @@ def generate_launch_description():
         Node(package="manip_bridge", executable="sam3_bridge", name="sam3_bridge",
              output="screen", parameters=[{"use_sim_time": use_sim_time}]),
         Node(package="manip_bridge", executable="trellis2_bridge", name="trellis2_bridge",
+             output="screen", parameters=[{"use_sim_time": use_sim_time}]),
+        Node(package="manip_bridge", executable="oriany_bridge", name="oriany_bridge",
              output="screen", parameters=[{"use_sim_time": use_sim_time}]),
         Node(package="manip_bridge", executable="any6d_bridge", name="any6d_bridge",
              output="screen", parameters=[cam]),
