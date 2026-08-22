@@ -149,9 +149,17 @@ services:
     ipc: host                 # DDS shared-memory transport
     # pid: host
     privileged: true          # full /dev access (USB cameras, etc.)
+    # rviz2 ONLY -- the bridge nodes themselves are pure ZMQ clients with no
+    # CUDA and no model code, and that separation is the whole point of this
+    # image. This is here for the `graphics` driver capability (GL library
+    # injection), not for compute. Drop it and rviz falls back to llvmpipe
+    # software rendering, which is usable until you add a PointCloud2 display.
+    gpus: all
     restart: unless-stopped
     working_dir: /root/ros2_ws
     volumes:
+      # rviz2 / rqt. Host side needs, once per login:  xhost +local:docker
+      - /tmp/.X11-unix:/tmp/.X11-unix
       # Dev workspace: edit + colcon build from the host copy. build/ install/
       # log/ land on the host too, so builds survive container recreation.
       - ./ros2_ws:/root/ros2_ws
@@ -168,7 +176,7 @@ services:
       # host dir and mounts it read-only. `ls /bags` then comes back empty with
       # no error anywhere and it looks like the recording vanished. Check what
       # compose actually resolved:   docker compose config | grep -A3 /bags
-      - ${BAG_DIR:-./ros2bags}:/bags:ro
+      - ${BAG_DIR:-./ros2bags}:/bags
       # run_scene artifacts (rgb/depth/masks/overlays/summary.json)
       - ./outputs/runs:/data/runs
     environment:
@@ -188,6 +196,17 @@ services:
       - RGB_TOPIC=${RGB_TOPIC:-/camera/camera/color/image_raw}
       - DEPTH_TOPIC=${DEPTH_TOPIC:-/camera/camera/aligned_depth_to_color/image_raw}
       - INFO_TOPIC=${INFO_TOPIC:-/camera/camera/color/camera_info}
+      # --- rviz2 / rqt ----------------------------------------------------
+      # DISPLAY is inherited from the shell that runs `docker compose`; an
+      # unset value degrades to an empty string and rviz2 exits with
+      # "cannot connect to X server". Over ssh, use `ssh -X` and check that
+      # $DISPLAY is set BEFORE compose, not inside the container.
+      - DISPLAY=${DISPLAY}
+      - QT_X11_NO_MITSHM=1
+      # `graphics` -- not just utility/compute -- is what makes hardware GL
+      # work. Every other service in this file uses `all`; this one is
+      # explicit because the list is the entire reason `gpus: all` is here.
+      - NVIDIA_DRIVER_CAPABILITIES=graphics,utility,compute
     # Launch all bridges once the workspace has been colcon-built; before the
     # first build, idle in a shell so you can exec in and build:
     #   docker exec -it Ros2Bridge bash

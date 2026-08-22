@@ -39,6 +39,40 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-opencv \
     && rm -rf /var/lib/apt/lists/*
 
+# ---------------------------------------------------------------------------
+# GUI / debugging tools.
+#
+# A SEPARATE layer on purpose. Appending these to the block above would
+# invalidate its cache and rebuild every layer after it; this way the slow,
+# stable base install stays cached and only this layer rebuilds when the GUI
+# package set changes.
+#
+# rviz2 only -- NOT ros-humble-desktop. desktop pulls several GB of demos,
+# tutorials and simulation packages that have no business in a bridge image
+# whose entire job is thin rclpy ZMQ clients. rviz2 + its Qt/OGRE deps is
+# already ~800MB.
+#
+# libgl1-mesa-dri is the software-GL fallback (llvmpipe). With the NVIDIA
+# runtime and NVIDIA_DRIVER_CAPABILITIES=graphics the driver's own GL is
+# injected and this goes unused -- but without it, a host missing that setup
+# gives a black viewport rather than a slow one, which is a much worse thing
+# to debug.
+#
+# zstd: `ros2 bag play` on a *.mcap.zstd decompresses to a sibling file inside
+# the bag directory, which fails with errno(30) EROFS on the read-only /bags
+# mount. The message says "failed to open ... for binary writing", which reads
+# like a corrupt bag and isn't. Decompress once by hand instead:
+#     zstd -d mug_0.mcap.zstd && rm mug_0.mcap.zstd
+#     # then drop the .zstd suffix from relative_file_paths in metadata.yaml
+#     # and blank out compression_format / compression_mode
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ros-humble-rviz2 \
+    ros-humble-rqt-image-view \
+    ros-humble-rqt-graph \
+    libgl1-mesa-dri \
+    zstd \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN pip3 install --no-cache-dir pyzmq msgpack msgpack-numpy numpy scipy opencv-python-headless
 
 # Auto-source ROS and the workspace overlay (if built) in every interactive shell
