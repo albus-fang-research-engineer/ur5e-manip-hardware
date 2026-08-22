@@ -161,7 +161,14 @@ services:
       - ./trellis2_runtime/outputs:/data/meshes
       - ./any6d_runtime/outputs:/data/any6d:ro
       # rosbag2 recordings for offline replay:  ros2 bag play /bags/<name> --clock
-      - ${BAG_DIR:-./bags}:/bags:ro
+      #
+      # This default must stay in sync with .env.example. `:-` also treats an
+      # EMPTY BAG_DIR as unset, and Docker auto-creates a missing bind-mount
+      # source -- so a stale, empty, or absent .env silently creates an empty
+      # host dir and mounts it read-only. `ls /bags` then comes back empty with
+      # no error anywhere and it looks like the recording vanished. Check what
+      # compose actually resolved:   docker compose config | grep -A3 /bags
+      - ${BAG_DIR:-./ros2bags}:/bags:ro
       # run_scene artifacts (rgb/depth/masks/overlays/summary.json)
       - ./outputs/runs:/data/runs
     environment:
