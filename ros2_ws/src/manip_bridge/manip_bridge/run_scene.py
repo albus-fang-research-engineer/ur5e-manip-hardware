@@ -44,6 +44,7 @@ from sensor_msgs.msg import CameraInfo, Image
 
 from manip_interfaces.srv import EstimatePose, GenerateMesh, Orient, Segment
 
+from . import DEPTH_TOPIC, INFO_TOPIC, RGB_TOPIC
 from .img import (image_to_depth_m, image_to_mono, image_to_rgb,
                   mono_to_image)
 
@@ -63,10 +64,9 @@ class SceneRunner(Node):
     def __init__(self, args):
         super().__init__("run_scene")
         self.args = args
-        self.declare_parameter("rgb_topic", "/camera/camera/color/image_raw")
-        self.declare_parameter("depth_topic",
-                               "/camera/camera/aligned_depth_to_color/image_raw")
-        self.declare_parameter("info_topic", "/camera/camera/color/camera_info")
+        self.declare_parameter("rgb_topic", RGB_TOPIC)
+        self.declare_parameter("depth_topic", DEPTH_TOPIC)
+        self.declare_parameter("info_topic", INFO_TOPIC)
         gp = lambda n: self.get_parameter(n).value  # noqa: E731
 
         self.frame = None
@@ -111,6 +111,14 @@ class SceneRunner(Node):
             f"frame {rgb.width}x{rgb.height} rgb={rgb.encoding} depth={depth.encoding} "
             f"stamp={rgb.header.stamp.sec}.{rgb.header.stamp.nanosec:09d} "
             f"frame_id={rgb.header.frame_id}")
+        if (rgb.header.frame_id and depth.header.frame_id
+                and rgb.header.frame_id != depth.header.frame_id):
+            self.get_logger().error(
+                f"depth frame_id '{depth.header.frame_id}' != rgb "
+                f"'{rgb.header.frame_id}' -- this depth stream is NOT aligned to "
+                "colour. It decodes fine and pairs with the colour K, so every "
+                "pose below will look plausible and be wrong. Re-record with "
+                "align_depth.enable:=true, or register depth to colour first.")
         return self.frame
 
     # ---- service helper ----------------------------------------------------
@@ -226,6 +234,10 @@ def main():
                             "frame_id": rgb_msg.header.frame_id,
                             "K": np.asarray(info.k).reshape(3, 3).tolist(),
                             "depth_valid_frac": float((depth > 0).mean())}
+        if summary["frame"]["depth_valid_frac"] < 0.2:
+            log.warn(f"only {100 * summary['frame']['depth_valid_frac']:.0f}% of "
+                     "depth pixels are valid -- wrong depth topic, or a bag "
+                     "recorded before the sensor settled?")
 
         # ---- SAM3 ----------------------------------------------------------
         masks = {}

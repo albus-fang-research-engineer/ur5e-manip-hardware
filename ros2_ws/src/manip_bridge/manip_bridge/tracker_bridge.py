@@ -37,6 +37,7 @@ from tf2_ros import TransformBroadcaster
 
 from manip_interfaces.srv import EstimatePose, Release
 
+from . import DEPTH_TOPIC, INFO_TOPIC, RGB_TOPIC
 from .img import (camera_info_to_K, image_to_depth_m, image_to_mono,
                   image_to_rgb, T_to_pose, T_to_tf)
 from .zmq_client import SidecarClient, SidecarError
@@ -53,10 +54,9 @@ class TrackerBridge(Node):
 
     def __init__(self, node_name):
         super().__init__(node_name)
-        self.declare_parameter("rgb_topic", "/camera/camera/color/image_raw")
-        self.declare_parameter("depth_topic",
-                               "/camera/camera/aligned_depth_to_color/image_raw")
-        self.declare_parameter("info_topic", "/camera/camera/color/camera_info")
+        self.declare_parameter("rgb_topic", RGB_TOPIC)
+        self.declare_parameter("depth_topic", DEPTH_TOPIC)
+        self.declare_parameter("info_topic", INFO_TOPIC)
         self.declare_parameter("sync_slop", 0.034)
         self.declare_parameter("track_refine_iter", 2)
         self.declare_parameter("publish_tf", True)
@@ -68,6 +68,7 @@ class TrackerBridge(Node):
         self.K = None
         self.tracked: dict[str, object] = {}    # obj -> PoseStamped publisher
         self._state_lock = threading.Lock()
+        self._frame_checked = False
         self._estimating = threading.Event()
         self._track_busy = threading.Lock()
 
@@ -165,7 +166,23 @@ class TrackerBridge(Node):
             self.get_logger().info(f"camera_info: {msg.width}x{msg.height}")
         self.K = camera_info_to_K(msg)
 
+    def check_alignment(self, rgb_msg, depth_msg):
+        """The one silent-wrong-answer mode on replay: an UNALIGNED depth
+        stream decodes fine (16UC1 either way) and pairs happily with the
+        colour camera_info, so every pose comes back plausible and wrong.
+        The frame_id is the cheap tell."""
+        self._frame_checked = True
+        a, b = rgb_msg.header.frame_id, depth_msg.header.frame_id
+        if a and b and a != b:
+            self.get_logger().error(
+                f"depth frame_id '{b}' != rgb '{a}' -- this depth stream is NOT "
+                "aligned to colour. It will be paired with the colour K and "
+                "every pose will be silently wrong. Re-record with "
+                "align_depth.enable:=true, or register depth to colour first.")
+
     def on_frame(self, rgb_msg, depth_msg):
+        if not self._frame_checked:
+            self.check_alignment(rgb_msg, depth_msg)
         with self._state_lock:
             objs = list(self.tracked)
         if not objs or self.K is None or self._estimating.is_set():

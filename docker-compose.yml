@@ -174,6 +174,13 @@ services:
       - ANY6D_ADDR=tcp://127.0.0.1:5672
       - ORIANY_ADDR=tcp://127.0.0.1:5673
       - RUN_OUT_DIR=/data/runs
+      # Camera topics for THIS bag / camera. Read them off `ros2 bag info`.
+      # Used as the parameter defaults by bridges.launch.py AND by run_scene
+      # (which is `ros2 run` and does not inherit launch arguments), so this
+      # is the single place to set them. Launch args still override.
+      - RGB_TOPIC=${RGB_TOPIC:-/camera/camera/color/image_raw}
+      - DEPTH_TOPIC=${DEPTH_TOPIC:-/camera/camera/aligned_depth_to_color/image_raw}
+      - INFO_TOPIC=${INFO_TOPIC:-/camera/camera/color/camera_info}
     # Launch all bridges once the workspace has been colcon-built; before the
     # first build, idle in a shell so you can exec in and build:
     #   docker exec -it Ros2Bridge bash

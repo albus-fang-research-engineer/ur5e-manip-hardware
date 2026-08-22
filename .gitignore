@@ -30,6 +30,7 @@ __pycache__/
 *.bag
 rosbag2_*/
 bags/
+ros2bags/
 debug/
 outputs/
 
@@ -39,6 +40,10 @@ outputs/
 .idea/
 
 __pycache__/
-__init__.py
+# NOTE: a bare `__init__.py` used to be ignored here. It was harmless only
+# because manip_bridge/__init__.py was already tracked -- any NEW python
+# package added to this repo would have had its __init__ silently dropped,
+# and the package would fail to import in the container with no diff to
+# show for it.
 test/data/
 *.patch

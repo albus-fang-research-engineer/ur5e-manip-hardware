@@ -11,9 +11,13 @@ Legacy (still topic-JSON, not yet promoted): pointso.
 
 Launch args:
     use_sim_time   true when driving from `ros2 bag play --clock`
-    rgb_topic / depth_topic / info_topic   camera topics; defaults match the
-                   current realsense-ros naming (node name repeated). Read
-                   them off `ros2 bag info` and override if they differ.
+    rgb_topic / depth_topic / info_topic   camera topics. Defaults come from
+                   the RGB_TOPIC / DEPTH_TOPIC / INFO_TOPIC container env
+                   (set once in .env for a given bag), falling back to the
+                   current realsense-ros naming. Read the real names off
+                   `ros2 bag info`. Setting them in .env also covers
+                   `run_scene`, which is `ros2 run` and so does NOT inherit
+                   these launch arguments.
     camera_frame   (informational) optical frame the poses are expressed in
 
 Sidecar addresses come from the container environment (docker-compose.yml).
@@ -39,10 +43,12 @@ def generate_launch_description():
     }
     return LaunchDescription([
         DeclareLaunchArgument("use_sim_time", default_value="false"),
-        DeclareLaunchArgument("rgb_topic", default_value="/camera/camera/color/image_raw"),
-        DeclareLaunchArgument("depth_topic",
-                              default_value="/camera/camera/aligned_depth_to_color/image_raw"),
-        DeclareLaunchArgument("info_topic", default_value="/camera/camera/color/camera_info"),
+        DeclareLaunchArgument("rgb_topic", default_value=os.environ.get(
+            "RGB_TOPIC", "/camera/camera/color/image_raw")),
+        DeclareLaunchArgument("depth_topic", default_value=os.environ.get(
+            "DEPTH_TOPIC", "/camera/camera/aligned_depth_to_color/image_raw")),
+        DeclareLaunchArgument("info_topic", default_value=os.environ.get(
+            "INFO_TOPIC", "/camera/camera/color/camera_info")),
 
         Node(package="manip_bridge", executable="sam3_bridge", name="sam3_bridge",
              output="screen", parameters=[{"use_sim_time": use_sim_time}]),
