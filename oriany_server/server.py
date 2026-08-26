@@ -25,9 +25,14 @@ Wire protocol (msgpack + msgpack_numpy, REQ/REP):
                                   # distribution: 1 / 2 / 4 discrete folds,
                                   # 0 = no confident single front (continuous
                                   # symmetry or flat distribution)
-          "R_obj": 3x3 float32}   # object rotation matrix in the camera
-                                  # frame, via upstream
-                                  # azi_ele_rot_to_Obj_Rmatrix_batch
+          "up_cam":      3 float32,  # object canonical up, OpenCV camera
+          "front_cam":   3 float32,  #   frame (x right, y down, z fwd)
+          "lateral_cam": 3 float32,  # up x front
+          "R_blender": 3x3 float32}  # upstream azi_ele_rot_to_Obj_Rmatrix_batch:
+                                     # Rx(rot)Ry(ele)Rz(-azi), the Euler the
+                                     # demo feeds its Blender gizmo. NOT a
+                                     # camera-frame rotation; kept for parity
+                                     # with app.py only.
 
   {"cmd": "orient_rel",
    "image_ref": HxWx3 uint8,
@@ -35,10 +40,17 @@ Wire protocol (msgpack + msgpack_numpy, REQ/REP):
    "remove_bkg": True}
       -> {"ok": True, ...all "orient" fields for the ref view...,
           "rel_azimuth": float, "rel_elevation": float,
-          "rel_rotation": float,                       # tgt w.r.t. ref, deg
-          "R_rel": 3x3 float32}
+          "rel_rotation": float}                       # tgt w.r.t. ref, deg
 
   {"cmd": "ping"} -> {"ok": True}
+
+Angle semantics (Orient Anything): elevation = camera height above the
+object's horizontal plane, azimuth = camera bearing around the object's up
+axis measured from its front face, rotation = in-plane roll. up_cam /
+front_cam are these angles re-expressed as unit vectors in the *image's*
+camera frame, which is what refine_frame.py and the /tf_static composition
+want. ORIANY_AZ_SIGN (+1 default / -1) fixes the azimuth handedness; verify
+once on an alpha == 1 object with a visible handle and pin it.
 
 Angles are the model's native discretized outputs (1 deg bins); treat them
 as a coarse semantic init for refine_frame.py, not as metric ground truth --
@@ -72,6 +84,7 @@ from utils.app_utils import (
 from utils.utils import azi_ele_rot_to_Obj_Rmatrix_batch
 
 PORT = int(os.environ.get("ORIANY_PORT", "5673"))
+AZ_SIGN = float(os.environ.get("ORIANY_AZ_SIGN", "1"))
 
 HF_REPO = "Viglong/OriAnyV2_ckpt"
 HF_FILE = "demo_ckpts/rotmod_realrotaug_best.pt"
@@ -121,14 +134,33 @@ def angles_to_R(az, el, ro):
     return R.cpu().numpy().astype(np.float32)
 
 
+def angles_to_cam_axes(az, el, ro):
+    """(az, el, ro) deg -> (up, front, lateral) unit vectors in the OpenCV
+    camera frame of the input image. el=0: up = -y_cam (image up);
+    el=90: up = -z_cam (toward camera). front at az=0 is the horizontal
+    direction toward the camera; AZ_SIGN sets which way positive az turns."""
+    az, el, ro = np.radians([az, el, ro])
+    up = np.array([0.0, -np.cos(el), -np.sin(el)])
+    h = np.array([0.0, np.sin(el), -np.cos(el)])
+    lat = np.cross(up, h)
+    front = np.cos(az) * h + AZ_SIGN * np.sin(az) * lat
+    c, s = np.cos(ro), np.sin(ro)
+    Rz = np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]])
+    up, front = Rz @ up, Rz @ front
+    return (up.astype(np.float32), front.astype(np.float32),
+            np.cross(up, front).astype(np.float32))
+
+
 def ref_fields(ans):
     az = float(ans["ref_az_pred"])
     el = float(ans["ref_el_pred"])
     ro = float(ans["ref_ro_pred"])
+    up, front, lat = angles_to_cam_axes(az, el, ro)
     return {
         "azimuth": az, "elevation": el, "rotation": ro,
         "alpha": int(ans["ref_alpha_pred"]),
-        "R_obj": angles_to_R(az, el, ro),
+        "up_cam": up, "front_cam": front, "lateral_cam": lat,
+        "R_blender": angles_to_R(az, el, ro),
     }
 
 
@@ -166,8 +198,7 @@ def main():
                 rro = float(ans["rel_ro_pred"])
                 rep = {"ok": True, **ref_fields(ans),
                        "rel_azimuth": raz, "rel_elevation": rel,
-                       "rel_rotation": rro,
-                       "R_rel": angles_to_R(raz, rel, rro)}
+                       "rel_rotation": rro}
 
             else:
                 rep = {"ok": False, "error": f"unknown cmd {cmd!r}"}
