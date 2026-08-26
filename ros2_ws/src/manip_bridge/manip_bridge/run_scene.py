@@ -294,7 +294,7 @@ def main():
                         "rotation": res.rotation, "alpha": res.alpha,
                         "matting": bool(args.oriany_matting),
                         "bbox_xyxy": list(res.bbox_xyxy),
-                        "R_obj": Rotation.from_quat(
+                        "R_cam": Rotation.from_quat(
                             [q.x, q.y, q.z, q.w]).as_matrix().tolist()}
 
             if "trellis2" not in skip:

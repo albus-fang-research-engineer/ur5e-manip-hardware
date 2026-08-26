@@ -9,8 +9,9 @@ per-frame by the pose tracker, so re-answering "which way is the front"
 every frame buys nothing. Same shape as sam3 / trellis2.
 
 No TF is published: the model returns a rotation only, and a TF frame
-needs an origin. Compose R_obj with the pose sidecar's translation
-client-side if you want a frame.
+needs an origin. `orientation` is the sidecar's R_cam (columns front,
+lateral, up in the OpenCV camera frame of `rgb`); compose it with the pose
+sidecar's translation client-side if you want a frame.
 
 CROPPING lives here rather than in the caller, because getting it wrong is
 silent. Upstream runs resize_foreground(img, 0.85) *inside* the
@@ -23,10 +24,9 @@ Mask convention matches GenerateMesh:
     empty (0x0) mask -> whole image, remove_bkg=True   (upstream app.py)
     non-empty mask   -> masked square crop, remove_bkg=False
 
-`bg_fill` is the one number here that is NOT verified against upstream --
-rembg emits RGBA and the demo's compositing colour isn't legible from the
-server wrapper. It is a parameter for that reason; sweep it against the
-matting path (`run_scene --oriany-matting`) before trusting either.
+`bg_fill` default 255 matches upstream: preprocess_images() alpha-composites
+the rembg RGBA onto (255, 255, 255) before the pad, so white is the fill the
+model trained against. Left as a parameter for sweeps only.
 
 Env:
     ORIANY_ADDR        tcp://127.0.0.1:5673
@@ -118,7 +118,7 @@ class OrianyBridge(Node):
         res.bbox_xyxy = [int(v) for v in bbox]
 
         q = Rotation.from_matrix(
-            np.asarray(rep["R_obj"], np.float64).reshape(3, 3)).as_quat()
+            np.asarray(rep["R_cam"], np.float64).reshape(3, 3)).as_quat()
         qs = QuaternionStamped()
         qs.header = req.rgb.header
         (qs.quaternion.x, qs.quaternion.y,

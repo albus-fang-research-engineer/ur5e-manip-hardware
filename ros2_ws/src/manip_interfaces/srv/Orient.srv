@@ -28,6 +28,8 @@ float32 rotation                # deg, [-180, 180], in-plane
 # single sampled azimuth.
 int32 alpha
 
-geometry_msgs/QuaternionStamped orientation   # R_obj in the camera frame,
+geometry_msgs/QuaternionStamped orientation   # R_cam: object canonical
+                                              # (x=front, y=lateral, z=up)
+                                              # in rgb's OpenCV camera frame;
                                               # header copied from rgb
 int32[4] bbox_xyxy              # crop actually sent; empty when no mask

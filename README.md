@@ -101,7 +101,9 @@ no per-object state, and semantic orientation is a scene-time label. Once a
 body frame is registered its orientation is carried per frame by the pose
 tracker, so nothing is gained by re-asking which way the front is at 30 Hz.
 It publishes no TF — the model returns a rotation, and a frame needs an
-origin; compose `R_obj` with a pose sidecar translation client-side.
+origin; compose the `orientation` quaternion (`R_cam`, see
+[Orient Anything V2](#orient-anything-v2-sidecar-port-5673)) with a pose
+sidecar translation client-side.
 
 `Orient` reuses `GenerateMesh`'s mask convention: an **empty (0x0)** mask
 means the model mattes the full frame itself (rembg, upstream `app.py`); a
@@ -110,9 +112,8 @@ background, and square-pads to `fg_ratio` (0.85) before sending with
 `remove_bkg=false`. That padding is not cosmetic — upstream only runs
 `resize_foreground` inside the rembg path, so a tight bbox crop is a framing
 the model never trained on. `run_scene --oriany-matting` switches to the
-matting path so the two are directly comparable; the `bg_fill` parameter
-(the fill colour under the mask) is *not* verified against upstream and is
-worth sweeping.
+matting path so the two are directly comparable. `bg_fill` defaults to 255,
+which is what upstream `preprocess_images` composites the rembg RGBA onto.
 
 `mesh` in `EstimatePose` is a filename under the sidecar's `/opt/meshes` **or**
 an absolute path: `./trellis2_runtime/outputs` is mounted read-only at
@@ -180,6 +181,80 @@ For the hand-eye transform on hardware, add a `static_transform_publisher`
 (from the easy_handeye2 YAML) to the launch file; `rviz2` with
 `use_sim_time` on the host then shows `pose_<obj>` / `any6d_<obj>` frames
 relative to `base_link`.
+
+## Orient Anything V2 sidecar (port 5673)
+
+Category-free canonical **up / front** from one RGB crop. It is the
+semantic init for `refine_frame.py` (the geometry refinement owns the
+sub-degree regime); its `alpha` head is why V2 is here: `alpha != 1` means
+the front axis is only defined up to a symmetry group and the corresponding
+TSR rotational bound should widen or drop.
+
+### Frame convention (read before trusting an overlay)
+
+The model emits `(azimuth, elevation, rotation)` in 1° bins. Upstream never
+states a handedness in text; the only place it commits to one is the demo
+overlay, `utils/axis_renderer.py`, which sets a Blender gizmo to
+`R_blender = Rx(rot) Ry(ele) Rz(-azi)` and renders it from the camera in
+`assets/axis_render.blend` (world `(100, 0, 0)`, Euler XYZ `(90°, 0, 90°)`:
+looking `-X`, `Z` up, so image-right = `+Y_w`, image-up = `+Z_w`). Gizmo
+canonical is `x = front`, `y = lateral`, `z = up`, with front facing that
+camera at `az = 0`.
+
+The sidecar therefore serves
+
+```
+R_cam = BLENDER_TO_CAM @ R_blender,   BLENDER_TO_CAM = [[0, 1, 0], [0, 0, -1], [-1, 0, 0]]
+up_cam / front_cam / lateral_cam = R_cam[:, 2] / R_cam[:, 0] / R_cam[:, 1]
+```
+
+in the OpenCV frame of the input image (x right, y down, z forward). That
+is a fixed change of basis, not a fitted sign; there is no `AZ_SIGN` knob.
+(The first cut of the server hand-rolled these vectors and had the image-x
+sign of both `az` and `ro` mirrored w.r.t. the gizmo, i.e. front drawn on
+the wrong side of the object whenever `az != 0`. If you have overlays from
+before that fix, mirror front/lateral about the image's vertical axis to
+read them.)
+
+What "front" *names* on a given category (handle or anti-handle on a mug,
+spout on a teapot) is the model's Objaverse-side labelling, not something
+this repo defines. Pin it once per category on the `compile_tsr` side
+(canonical up/front/lateral symbols are caller-supplied) after looking at
+an `alpha == 1` overlay; do not flip signs in the sidecar to make one
+object look right.
+
+### Run the bag demo (no ROS needed)
+
+```bash
+docker compose up -d oriany sam3          # sam3 optional: without it pass --bbox
+pip install mcap-ros2-support pyzmq msgpack msgpack-numpy pillow   # host venv
+
+python test/oriany_bag_demo.py ros2bags/mug/mug_0.mcap --out outputs/oriany
+python test/oriany_bag_demo.py ros2bags/mug/mug_0.mcap --frame 40 --prompt mug
+python test/oriany_bag_demo.py ros2bags/mug/mug_0.mcap --bbox 300 200 420 340  # no sam3
+```
+
+Writes `frame.png`, `crop.png`, `crop_masked.png` (sam3 path, square-padded
+to `--fg-ratio 0.85` exactly like `oriany_bridge_node.square_crop`),
+`overlay.png` and `result.json` under `--out`, and prints `az/el/ro/alpha`
+for both the rembg and the sam3-mask path. The overlay draws `up` (blue),
+`front` (red), `lateral` (green) at the mask's 3D centroid with the bag's
+`K` and aligned depth; the `az= el= ro= alpha=` line top-left is part of the
+evidence — keep it in screenshots. Read `alpha` first: `0` → judge only
+`up`; `2`/`4` → front is one of that many equivalent modes; `1` → front is a
+committed prediction.
+
+Sharp edges:
+
+- Top-down views (you can see into the mug) are the ill-conditioned regime
+  for azimuth by construction — the front face is foreshortened to a rim.
+  Prefer a frame with `el` around 30–50° when deciding the category
+  convention.
+- The two background paths should agree within a few bins. If they don't,
+  the crop framing is the suspect, not the model: compare `crop_masked.png`
+  against upstream's `resize_foreground(0.85)` output before anything else.
+- `/oriany/orient` over ROS (`ros2 run manip_bridge run_scene ...`) goes
+  through the same `R_cam`; `summary.json` now carries `R_cam`, not `R_obj`.
 
 ## AnyGrasp sidecar (port 5666)
 

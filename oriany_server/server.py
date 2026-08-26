@@ -28,11 +28,14 @@ Wire protocol (msgpack + msgpack_numpy, REQ/REP):
           "up_cam":      3 float32,  # object canonical up, OpenCV camera
           "front_cam":   3 float32,  #   frame (x right, y down, z fwd)
           "lateral_cam": 3 float32,  # up x front
+          "R_cam":     3x3 float32,  # columns (front, lateral, up) in the
+                                     # OpenCV camera frame: a proper
+                                     # camera-frame rotation of the object's
+                                     # canonical (x=front, y=lateral, z=up)
           "R_blender": 3x3 float32}  # upstream azi_ele_rot_to_Obj_Rmatrix_batch:
-                                     # Rx(rot)Ry(ele)Rz(-azi), the Euler the
-                                     # demo feeds its Blender gizmo. NOT a
-                                     # camera-frame rotation; kept for parity
-                                     # with app.py only.
+                                     # Rx(rot)Ry(ele)Rz(-azi), the gizmo
+                                     # rotation in the demo's z-up Blender
+                                     # world. Kept for parity with app.py.
 
   {"cmd": "orient_rel",
    "image_ref": HxWx3 uint8,
@@ -46,11 +49,21 @@ Wire protocol (msgpack + msgpack_numpy, REQ/REP):
 
 Angle semantics (Orient Anything): elevation = camera height above the
 object's horizontal plane, azimuth = camera bearing around the object's up
-axis measured from its front face, rotation = in-plane roll. up_cam /
-front_cam are these angles re-expressed as unit vectors in the *image's*
-camera frame, which is what refine_frame.py and the /tf_static composition
-want. ORIANY_AZ_SIGN (+1 default / -1) fixes the azimuth handedness; verify
-once on an alpha == 1 object with a visible handle and pin it.
+axis measured from its front face, rotation = in-plane roll.
+
+Camera-frame axes are NOT hand-rolled from the angles. The only place
+upstream commits to a handedness is the demo overlay: utils/axis_renderer.py
+sets the gizmo's Blender rotation to R_blender (ZYX Euler = (rot, ele,
+-azi)) and renders it with the camera in assets/axis_render.blend, which
+sits at world (100, 0, 0) with rotation_euler XYZ (90deg, 0, 90deg): it
+looks down -X with Z up, so image-right = +Y_w and image-up = +Z_w. The
+gizmo at identity has front = +X_w (facing that camera at az = 0) and
+up = +Z_w. Re-expressing those world axes in the OpenCV frame of the same
+camera is the fixed change of basis BLENDER_TO_CAM below; up_cam / front_cam
+are the columns of BLENDER_TO_CAM @ R_blender. A previous hand-rolled
+mapping here had the image-x sign of both azimuth and roll mirrored relative
+to that gizmo (front drawn on the wrong side of the object for az != 0),
+which is why it is gone and why there is no sign knob.
 
 Angles are the model's native discretized outputs (1 deg bins); treat them
 as a coarse semantic init for refine_frame.py, not as metric ground truth --
@@ -84,7 +97,13 @@ from utils.app_utils import (
 from utils.utils import azi_ele_rot_to_Obj_Rmatrix_batch
 
 PORT = int(os.environ.get("ORIANY_PORT", "5673"))
-AZ_SIGN = float(os.environ.get("ORIANY_AZ_SIGN", "1"))
+
+# Blender world of assets/axis_render.blend -> OpenCV camera frame of its
+# camera (at +X_w looking -X_w, Z_w up): x_cam = +Y_w, y_cam = -Z_w,
+# z_cam = -X_w. det = +1.
+BLENDER_TO_CAM = np.array([[0.0, 1.0, 0.0],
+                           [0.0, 0.0, -1.0],
+                           [-1.0, 0.0, 0.0]], np.float32)
 
 HF_REPO = "Viglong/OriAnyV2_ckpt"
 HF_FILE = "demo_ckpts/rotmod_realrotaug_best.pt"
@@ -134,33 +153,26 @@ def angles_to_R(az, el, ro):
     return R.cpu().numpy().astype(np.float32)
 
 
-def angles_to_cam_axes(az, el, ro):
-    """(az, el, ro) deg -> (up, front, lateral) unit vectors in the OpenCV
-    camera frame of the input image. el=0: up = -y_cam (image up);
-    el=90: up = -z_cam (toward camera). front at az=0 is the horizontal
-    direction toward the camera; AZ_SIGN sets which way positive az turns."""
-    az, el, ro = np.radians([az, el, ro])
-    up = np.array([0.0, -np.cos(el), -np.sin(el)])
-    h = np.array([0.0, np.sin(el), -np.cos(el)])
-    lat = np.cross(up, h)
-    front = np.cos(az) * h + AZ_SIGN * np.sin(az) * lat
-    c, s = np.cos(ro), np.sin(ro)
-    Rz = np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]])
-    up, front = Rz @ up, Rz @ front
-    return (up.astype(np.float32), front.astype(np.float32),
-            np.cross(up, front).astype(np.float32))
+def blender_to_cam_axes(R_blender):
+    """R_blender (gizmo rotation, z-up Blender world) -> (up, front, lateral,
+    R_cam) in the OpenCV camera frame. Gizmo canonical: x = front, y =
+    lateral, z = up; R_cam keeps that column order."""
+    R_cam = (BLENDER_TO_CAM @ np.asarray(R_blender, np.float32)).astype(np.float32)
+    front, lat, up = R_cam[:, 0], R_cam[:, 1], R_cam[:, 2]
+    return up, front, lat, R_cam
 
 
 def ref_fields(ans):
     az = float(ans["ref_az_pred"])
     el = float(ans["ref_el_pred"])
     ro = float(ans["ref_ro_pred"])
-    up, front, lat = angles_to_cam_axes(az, el, ro)
+    R_blender = angles_to_R(az, el, ro)
+    up, front, lat, R_cam = blender_to_cam_axes(R_blender)
     return {
         "azimuth": az, "elevation": el, "rotation": ro,
         "alpha": int(ans["ref_alpha_pred"]),
         "up_cam": up, "front_cam": front, "lateral_cam": lat,
-        "R_blender": angles_to_R(az, el, ro),
+        "R_cam": R_cam, "R_blender": R_blender,
     }
 
 

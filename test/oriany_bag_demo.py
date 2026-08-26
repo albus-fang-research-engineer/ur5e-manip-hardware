@@ -6,12 +6,20 @@ Crop comes from the sam3 sidecar (prompt "mug") if it answers, else --bbox.
   python oriany_bag_demo.py ros2bags/mug/mug_0.mcap --out outputs/oriany
   python oriany_bag_demo.py ros2bags/mug/mug_0.mcap --frame 40 --bbox 300 200 420 340
 
-Writes <out>/frame.png, crop.png, crop_masked.png (if sam3), overlay.png
-and prints azimuth/elevation/rotation/alpha for both background paths.
+Writes <out>/frame.png, crop.png, crop_masked.png (if sam3), overlay.png,
+result.json and prints azimuth/elevation/rotation/alpha for both background
+paths. The masked path is square-padded to --fg-ratio exactly like
+oriany_bridge_node.square_crop (upstream only pads inside the rembg path,
+so a tight bbox crop is off-distribution).
 
-Overlay draws up_cam (blue) / front_cam (red) as served. If front points
-away from the handle on a frame where alpha == 1, restart oriany with
-ORIANY_AZ_SIGN=-1 and pin it in compose.
+Overlay draws up_cam (blue) / front_cam (red) / lateral_cam (green) as
+served, anchored at the mask's 3D centroid, plus az/el/ro/alpha top-left --
+keep that text when screenshotting. Read it as: alpha == 1 -> front is a
+committed single mode; alpha in {2, 4} -> front is one of alpha equivalent
+modes; alpha == 0 -> only up is meaningful on this frame. Which physical
+feature "front" names (handle vs. anti-handle on a mug) is the model's
+Objaverse-side convention, not ours; bind it once per category on the
+compile_tsr side.
 """
 import argparse, json, os, sys
 import numpy as np
@@ -51,6 +59,20 @@ def decode_image(m):
     raise ValueError(f"unhandled encoding {enc}")
 
 
+def square_pad(rgb, mask, fg_ratio, bg_fill):
+    """Mask bbox -> background-filled square whose foreground occupies
+    fg_ratio of the side. Same as oriany_bridge_node.square_crop."""
+    ys, xs = np.nonzero(mask)
+    x0, y0, x1, y1 = xs.min(), ys.min(), xs.max() + 1, ys.max() + 1
+    fg = rgb[y0:y1, x0:x1].copy(); fg[~mask[y0:y1, x0:x1]] = bg_fill
+    h, w = fg.shape[:2]
+    side = max(int(round(max(h, w) / max(fg_ratio, 1e-3))), max(h, w))
+    out = np.full((side, side, 3), bg_fill, np.uint8)
+    oy, ox = (side - h) // 2, (side - w) // 2
+    out[oy:oy + h, ox:ox + w] = fg
+    return out
+
+
 def read_frame(path, frame_idx):
     rgbs, deps, info = [], [], None
     for r in read_ros2_messages(path, topics=[RGB_T, DEP_T, INFO_T]):
@@ -85,6 +107,8 @@ def main():
     ap.add_argument("--sam3", default="tcp://127.0.0.1:5670")
     ap.add_argument("--out", default="outputs/oriany")
     ap.add_argument("--pad", type=int, default=20)
+    ap.add_argument("--fg-ratio", type=float, default=0.85,
+                    help="foreground fraction of the padded square on the masked path")
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
 
@@ -121,7 +145,7 @@ def main():
     results = {}
     results["rembg"] = zmq_call(a.oriany, {"cmd": "orient", "image": crop, "remove_bkg": True})
     if mask is not None:
-        masked = crop.copy(); masked[~mask[y0:y1, x0:x1]] = 255
+        masked = square_pad(rgb, mask, a.fg_ratio, 255)
         Image.fromarray(masked).save(f"{a.out}/crop_masked.png")
         results["sam3mask"] = zmq_call(a.oriany, {"cmd": "orient", "image": masked, "remove_bkg": False})
     for k, r in results.items():
@@ -156,7 +180,8 @@ def main():
     im = Image.fromarray(rgb); d = ImageDraw.Draw(im)
     d.rectangle([x0, y0, x1, y1], outline=(255, 255, 0))
     o = proj(P)
-    for key, col, name in [("up_cam", (0, 128, 255), "up"), ("front_cam", (255, 0, 0), "front")]:
+    for key, col, name in [("up_cam", (0, 128, 255), "up"), ("front_cam", (255, 0, 0), "front"),
+                           ("lateral_cam", (0, 200, 0), "lat")]:
         e = proj(P + 0.06 * np.asarray(r[key], np.float64))
         d.line([o, e], fill=col, width=3); d.text(e, name, fill=col)
     d.text((10, 10), f"az={r['azimuth']:.0f} el={r['elevation']:.0f} ro={r['rotation']:.0f} alpha={r['alpha']}",
