@@ -14,10 +14,23 @@ Points are expected in the CAMERA frame, metres, float32 (SDK requirement).
 On hardware that means the depth-camera optical frame; whatever composes the
 grasp into the base frame does so on the client side.
 """
-import os, pickle, argparse
+import io, os, pickle, argparse
 import numpy as np
 import zmq
 from gsnet import create_detector
+
+
+class _Unpickler(pickle.Unpickler):
+    """Clients on numpy>=2 pickle arrays under numpy._core; this venv is pinned
+    numpy<1.23 where that module does not exist. Same objects, old path."""
+    def find_class(self, module, name):
+        if module.startswith("numpy._core"):
+            module = "numpy.core" + module[len("numpy._core"):]
+        return super().find_class(module, name)
+
+
+def loads(b):
+    return _Unpickler(io.BytesIO(b)).load()
 
 
 def main():
@@ -42,13 +55,15 @@ def main():
     print(f"[grasp_server] model ready, listening on :{port}", flush=True)
 
     while True:
-        req = pickle.loads(sock.recv())
-
-        if req.get("cmd") == "ping":
-            sock.send(pickle.dumps({"ok": True, "service": "anygrasp"}))
-            continue
-
+        raw = sock.recv()
         try:
+            # inside the try: a request this process cannot decode must get an
+            # error reply, not take the server down and leave the client hanging
+            req = loads(raw)
+            if req.get("cmd") == "ping":
+                sock.send(pickle.dumps({"ok": True, "service": "anygrasp"}))
+                continue
+
             points = req["points"].astype(np.float32)
 
             # lims -> region_steering mask (workspace filtering moved into the mask API)
