@@ -247,16 +247,19 @@ committed prediction.
 
 ### Watch the axes in rviz2 (bag replay)
 
-`ros2_bridge/oriany_bag_viz.py` is the ROS twin of the demo: same sam3 →
-square-pad → oriany path, but publishes instead of drawing. Inside
-`Ros2Bridge` (`xhost +local:docker` on the host first):
+`ros2 run manip_bridge oriany_viz` is the ROS twin of the demo: same sam3 →
+square-pad → oriany path, but publishes instead of drawing. It talks to the
+sidecars directly, so `bridges.launch.py` need not be up. Inside
+`Ros2Bridge` (`xhost +local:docker` on the host first; `colcon build` once
+after pulling):
 
 ```bash
 docker compose up -d sam3 oriany
 docker exec -it Ros2Bridge bash
+colcon build --symlink-install && . install/setup.bash
 ros2 bag play /bags/mug --clock --loop &
-python3 src/ros2_bridge/oriany_bag_viz.py --ros-args -p use_sim_time:=true -- --prompt mug --once
-rviz2 --ros-args -p use_sim_time:=true &
+ros2 run manip_bridge oriany_viz --ros-args -p use_sim_time:=true -- --prompt mug --once &
+rviz2 --ros-args -p use_sim_time:=true
 ```
 
 In rviz2: Fixed Frame = `camera_color_optical_frame` (the rgb `frame_id`),
@@ -267,7 +270,8 @@ marker carries `az/el/ro/alpha`. When `alpha == 0` the front/lateral arrows
 are drawn half-length as a visual flag that they are not committed. The TF
 frame `oriany_<prompt>` is `R_cam` (x = front, y = lateral, z = up) at the
 centroid — static under `--once` so it survives bag loops; otherwise
-re-broadcast every `--every` rgb frames.
+re-broadcast every `--every` rgb frames. The centroid is on the visible
+surface (median mask depth), not the body centre.
 
 Sharp edges:
 

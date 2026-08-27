@@ -29,6 +29,7 @@ setup(
             "any6d_bridge = manip_bridge.any6d_bridge_node:main",
             "pose_bridge = manip_bridge.pose_bridge_node:main",
             "oriany_bridge = manip_bridge.oriany_bridge_node:main",
+            "oriany_viz = manip_bridge.oriany_viz_node:main",
             "run_scene = manip_bridge.run_scene:main",
             # still legacy (ros2_bridge/pointso_bridge_node.py via ExecuteProcess)
         ],

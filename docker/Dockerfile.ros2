@@ -36,6 +36,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ros-humble-rosbag2-storage-default-plugins \
     ros-humble-rosbag2-storage-mcap \
     ros-humble-tf2-tools \
+    ros-humble-visualization-msgs \
     python3-opencv \
     && rm -rf /var/lib/apt/lists/*
 
