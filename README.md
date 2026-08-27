@@ -227,7 +227,8 @@ object look right.
 
 ```bash
 docker compose up -d oriany sam3          # sam3 optional: without it pass --bbox
-pip install mcap-ros2-support pyzmq msgpack msgpack-numpy pillow   # host venv
+python3 -m venv .venv && . .venv/bin/activate     # host: `python` may be 2.7
+pip install mcap-ros2-support pyzmq msgpack msgpack-numpy pillow numpy
 
 python test/oriany_bag_demo.py ros2bags/mug/mug_0.mcap --out outputs/oriany
 python test/oriany_bag_demo.py ros2bags/mug/mug_0.mcap --frame 40 --prompt mug
@@ -243,6 +244,30 @@ for both the rembg and the sam3-mask path. The overlay draws `up` (blue),
 evidence — keep it in screenshots. Read `alpha` first: `0` → judge only
 `up`; `2`/`4` → front is one of that many equivalent modes; `1` → front is a
 committed prediction.
+
+### Watch the axes in rviz2 (bag replay)
+
+`ros2_bridge/oriany_bag_viz.py` is the ROS twin of the demo: same sam3 →
+square-pad → oriany path, but publishes instead of drawing. Inside
+`Ros2Bridge` (`xhost +local:docker` on the host first):
+
+```bash
+docker compose up -d sam3 oriany
+docker exec -it Ros2Bridge bash
+ros2 bag play /bags/mug --clock --loop &
+python3 src/ros2_bridge/oriany_bag_viz.py --ros-args -p use_sim_time:=true -- --prompt mug --once
+rviz2 --ros-args -p use_sim_time:=true &
+```
+
+In rviz2: Fixed Frame = `camera_color_optical_frame` (the rgb `frame_id`),
+add **PointCloud2** on `/camera/camera/depth/color/points`, **MarkerArray**
+on `/oriany/axes`, and **TF** with `oriany_mug` ticked. Arrows are front
+(red) / lateral (green) / up (blue) from the mask's 3D centroid; the text
+marker carries `az/el/ro/alpha`. When `alpha == 0` the front/lateral arrows
+are drawn half-length as a visual flag that they are not committed. The TF
+frame `oriany_<prompt>` is `R_cam` (x = front, y = lateral, z = up) at the
+centroid — static under `--once` so it survives bag loops; otherwise
+re-broadcast every `--every` rgb frames.
 
 Sharp edges:
 
