@@ -23,7 +23,10 @@ on the visible surface, not the body centre. Good for judging directions;
 not a body frame.
 
 rviz2: Fixed Frame = camera_color_optical_frame; add PointCloud2 on the
-cloud topic, MarkerArray on /oriany/axes, TF with oriany_<prompt> ticked.
+cloud topic (Reliability: Best Effort), MarkerArray on /oriany/axes
+(Durability: Transient Local -- the publisher is latched and rviz's default
+volatile subscriber never sees a --once message published before it
+subscribed), TF with oriany_<prompt> ticked.
 
 Env:
     SAM3_ADDR     tcp://127.0.0.1:5670
@@ -40,6 +43,7 @@ from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, qos_profile_sensor_data
 from scipy.spatial.transform import Rotation
 from sensor_msgs.msg import CameraInfo, Image
+from std_msgs.msg import Header
 from tf2_ros import StaticTransformBroadcaster, TransformBroadcaster
 from visualization_msgs.msg import Marker, MarkerArray
 
@@ -116,6 +120,11 @@ class OrianyViz(Node):
                  f"ro={rep['rotation']:.0f} alpha={alpha}")
         self.get_logger().info(f"frame #{self.i} {label} centroid={np.round(P, 3)}")
 
+        # Zero stamp = "latest transform": under `bag play --loop` sim time
+        # wraps every few seconds and a bag-stamped marker falls out of
+        # rviz's TF window almost immediately. The TF below keeps the real
+        # stamp (a static TF ignores it anyway).
+        hdr = Header(frame_id=msg.header.frame_id)
         ma = MarkerArray()
         ma.markers.append(Marker(action=Marker.DELETEALL))
         axes = [("front", R[:, 0], (1.0, 0.0, 0.0), alpha != 0),
@@ -123,7 +132,7 @@ class OrianyViz(Node):
                 ("up", R[:, 2], (0.0, 0.5, 1.0), True)]
         for k, (_, d, col, committed) in enumerate(axes):
             m = Marker()
-            m.header = msg.header
+            m.header = hdr
             m.ns, m.id, m.type, m.action = "oriany", k, Marker.ARROW, Marker.ADD
             L = self.a.length * (1.0 if committed else 0.5)
             q = P + L * d
@@ -133,7 +142,7 @@ class OrianyViz(Node):
             m.color.r, m.color.g, m.color.b, m.color.a = *col, 1.0
             ma.markers.append(m)
         t = Marker()
-        t.header = msg.header
+        t.header = hdr
         t.ns, t.id, t.type, t.action = "oriany", 3, Marker.TEXT_VIEW_FACING, Marker.ADD
         t.pose.position.x, t.pose.position.y, t.pose.position.z = (
             float(P[0]), float(P[1] - 0.08), float(P[2]))

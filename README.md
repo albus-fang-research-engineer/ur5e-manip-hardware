@@ -263,8 +263,11 @@ rviz2 --ros-args -p use_sim_time:=true
 ```
 
 In rviz2: Fixed Frame = `camera_color_optical_frame` (the rgb `frame_id`),
-add **PointCloud2** on `/camera/camera/depth/color/points`, **MarkerArray**
-on `/oriany/axes`, and **TF** with `oriany_mug` ticked. Arrows are front
+add **PointCloud2** on `/camera/camera/depth/color/points` (Reliability →
+Best Effort; the bag replays sensor QoS), **MarkerArray** on `/oriany/axes`
+(Durability → Transient Local; the publisher is latched and a volatile
+subscriber never sees the single `--once` message), and **TF** with
+`oriany_mug` ticked. Arrows are front
 (red) / lateral (green) / up (blue) from the mask's 3D centroid; the text
 marker carries `az/el/ro/alpha`. When `alpha == 0` the front/lateral arrows
 are drawn half-length as a visual flag that they are not committed. The TF
