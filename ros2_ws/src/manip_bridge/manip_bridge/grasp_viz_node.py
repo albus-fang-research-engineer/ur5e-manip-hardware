@@ -1,8 +1,12 @@
 """Live RGB-D -> sam3 mask -> AnyGrasp sidecar -> rviz2 grippers + PoseArray.
 
     ros2 run manip_bridge grasp_viz --ros-args -p use_sim_time:=true -- --prompt mug --once
+    ros2 run manip_bridge grasp_viz -- --run /data/runs/20260822_213318 --prompt mug
 
-Twin of oriany_viz_node: same sam3 path, then the masked pixels are
+--run replays a run_scene directory (rgb.png, depth_mm.png, mask_<prompt>.png,
+summary.json for K + frame_id): no bag, no sam3 sidecar, same mask every time,
+so grasp-side changes are the only variable. Live mode below is the twin of
+oriany_viz_node: same sam3 path, then the masked pixels are
 back-projected with the colour intrinsics into the camera optical frame,
 which is the frame the SDK requires (metres, float32, z forward).
 
@@ -34,8 +38,10 @@ Env:
 """
 
 import argparse
+import json
 import os
 
+import cv2
 import numpy as np
 import rclpy
 from geometry_msgs.msg import Point, Pose, PoseArray
@@ -93,20 +99,35 @@ class GraspViz(Node):
         super().__init__("grasp_viz")
         self.a, self.i = a, 0
         self.K, self.depth = None, None
-        self.sam3 = SidecarClient(SAM3_ADDR, 60_000)
         self.grasp = SidecarClient(GRASP_ADDR, 120_000, codec="pickle")
+        self.sam3 = None if a.run else SidecarClient(SAM3_ADDR, 60_000)
         self.get_logger().info(
-            f"sam3 {SAM3_ADDR} {'alive' if self.sam3.ping() else 'NOT responding'}; "
-            f"grasp {GRASP_ADDR} {'alive' if self.grasp.ping() else 'NOT responding'}")
+            f"grasp {GRASP_ADDR} {'alive' if self.grasp.ping() else 'NOT responding'}"
+            + ("" if a.run else
+               f"; sam3 {SAM3_ADDR} {'alive' if self.sam3.ping() else 'NOT responding'}"))
         latched = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
         tag = a.prompt.replace(" ", "_")
         self.pub_poses = self.create_publisher(PoseArray, f"/grasp/{tag}/poses", latched)
         self.pub_mark = self.create_publisher(MarkerArray, "/grasp/markers", latched)
         self.pub_cloud = self.create_publisher(PointCloud2, f"/grasp/{tag}/cloud", latched)
+        if a.run:
+            self.sub = None
+            self.replay_run(a.run, tag)
+            return
         self.create_subscription(CameraInfo, a.info, self.on_info, qos_profile_sensor_data)
         self.create_subscription(Image, a.depth, self.on_depth, qos_profile_sensor_data)
         self.sub = self.create_subscription(Image, a.rgb, self.on_rgb, qos_profile_sensor_data)
         self.get_logger().info(f"waiting for {a.rgb} + {a.depth} + {a.info}")
+
+    def replay_run(self, run, tag):
+        with open(f"{run}/summary.json") as f:
+            fr = json.load(f)["frame"]
+        rgb = cv2.imread(f"{run}/rgb.png")[..., ::-1].copy()          # run_scene writes BGR
+        depth = cv2.imread(f"{run}/depth_mm.png", cv2.IMREAD_UNCHANGED).astype(np.float32) * 1e-3
+        mask = cv2.imread(f"{run}/mask_{tag}.png", cv2.IMREAD_GRAYSCALE) > 127
+        self.get_logger().info(f"replaying {run}: frame_id={fr['frame_id']} mask={int(mask.sum())}px")
+        self.process(rgb, depth, np.asarray(fr["K"], np.float64), mask, fr["frame_id"])
+        self.get_logger().info("latched; leave running for rviz2, Ctrl-C to exit")
 
     def on_info(self, msg):
         self.K = camera_info_to_K(msg)
@@ -137,12 +158,17 @@ class GraspViz(Node):
         except (TimeoutError, SidecarError) as e:
             self.get_logger().error(f"sam3 {type(e).__name__}: {e}")
             return
+        if self.process(rgb, depth, K, mask, msg.header.frame_id) and self.a.once:
+            self.destroy_subscription(self.sub)
+            self.get_logger().info("latched; leave running for rviz2, Ctrl-C to exit")
 
+    def process(self, rgb, depth, K, mask, frame_id):
+        """Mask + RGB-D -> sidecar -> publish. Returns True on success."""
         valid = (depth > 0.05) & (depth < 3.0)
         obj_pts, _ = backproject(depth, K, valid & mask)
         if len(obj_pts) < 50:
             self.get_logger().warn(f"only {len(obj_pts)} valid depth px under mask")
-            return
+            return False
         lo, hi = obj_pts.min(0) - self.a.margin, obj_pts.max(0) + self.a.margin
         lims = [float(x) for x in (lo[0], hi[0], lo[1], hi[1], lo[2], hi[2])]
 
@@ -155,7 +181,10 @@ class GraspViz(Node):
                                    "collision_detection": True})
         except (TimeoutError, SidecarError) as e:
             self.get_logger().error(f"grasp {type(e).__name__}: {e}")
-            return
+            if self.a.once and self.sub is not None:
+                self.destroy_subscription(self.sub)
+                self.get_logger().error("--once: giving up after sidecar error")
+            return False
 
         n = min(self.a.top, int(rep["n"]))
         self.get_logger().info(
@@ -165,7 +194,7 @@ class GraspViz(Node):
 
         # Zero stamp: under `bag play --loop` sim time wraps and a bag-stamped
         # marker leaves rviz's TF window almost immediately.
-        hdr = Header(frame_id=msg.header.frame_id)
+        hdr = Header(frame_id=frame_id)
         self.pub_cloud.publish(xyzrgb_to_cloud(pts, cols, hdr))
 
         pa, ma = PoseArray(header=hdr), MarkerArray()
@@ -192,10 +221,7 @@ class GraspViz(Node):
             ma.markers.append(m)
         self.pub_poses.publish(pa)
         self.pub_mark.publish(ma)
-
-        if self.a.once:
-            self.destroy_subscription(self.sub)
-            self.get_logger().info("latched; leave running for rviz2, Ctrl-C to exit")
+        return True
 
 
 def main():
@@ -210,6 +236,7 @@ def main():
     p.add_argument("--top", type=int, default=20, help="grasps to publish/draw")
     p.add_argument("--margin", type=float, default=0.03, help="lims padding around mask bbox, m")
     p.add_argument("--crop", action="store_true", help="send masked points only (A/B)")
+    p.add_argument("--run", help="run_scene output dir: replay its rgb/depth/mask, no bag, no sam3")
     a = p.parse_args(rclpy.utilities.remove_ros_args()[1:])
     rclpy.init()
     try:
