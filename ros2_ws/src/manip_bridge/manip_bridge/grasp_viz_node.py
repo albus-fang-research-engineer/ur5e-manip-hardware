@@ -10,11 +10,14 @@ oriany_viz_node: same sam3 path, then the masked pixels are
 back-projected with the colour intrinsics into the camera optical frame,
 which is the frame the SDK requires (metres, float32, z forward).
 
-The FULL scene cloud is sent; the mask only sets the sidecar's `lims` box
-(3D bbox of the masked points + --margin). The server turns lims into a
-region-steering mask, so candidates are confined to the object while
-collision_detection still sees the table. --crop sends masked points only,
-which lets AnyGrasp propose grasps through the tabletop; it is here for A/B.
+The cloud sent is the 3D bbox of the masked points grown by --context
+(0.15 m default): enough table around the object for collision_detection to
+see it, without the ~800k-point full frame that OOMs the sidecar (collision
+checking is O(grasps x points); the SDK demo pre-filters by lims for the
+same reason). --margin (0.03 m) is the tighter `lims` box the server turns
+into a region-steering mask, so candidates stay on the object. --context 0
+sends the masked points only (grasps through the tabletop; A/B only);
+--context -1 sends the full frame.
 
 Publishes, in rgb.header.frame_id, latched:
   /grasp/<prompt>/poses   PoseArray     top-K grasps, AnyGrasp frame:
@@ -172,9 +175,22 @@ class GraspViz(Node):
         lo, hi = obj_pts.min(0) - self.a.margin, obj_pts.max(0) + self.a.margin
         lims = [float(x) for x in (lo[0], hi[0], lo[1], hi[1], lo[2], hi[2])]
 
-        sel = valid & mask if self.a.crop else valid
+        if self.a.context < 0:
+            sel = valid
+        elif self.a.context == 0:
+            sel = valid & mask
+        else:
+            all_pts, (v, u) = backproject(depth, K, valid)
+            inside = np.all((all_pts >= lo - self.a.context) &
+                            (all_pts <= hi + self.a.context), axis=1)
+            sel = np.zeros_like(valid)
+            sel[v[inside], u[inside]] = True
         pts, (v, u) = backproject(depth, K, sel)
         cols = (rgb[v, u].astype(np.float32) / 255.0)
+        # Log BEFORE the call: an OOM reply carries no point count.
+        self.get_logger().info(
+            f"sending {len(pts)} pts (context={self.a.context} m, "
+            f"{int(valid.sum())} valid in frame) lims={np.round(lims, 3).tolist()}")
 
         try:
             rep = self.grasp.call({"points": pts, "colors": cols, "lims": lims,
@@ -235,7 +251,8 @@ def main():
     p.add_argument("--once", action="store_true", help="one frame, then latch")
     p.add_argument("--top", type=int, default=20, help="grasps to publish/draw")
     p.add_argument("--margin", type=float, default=0.03, help="lims padding around mask bbox, m")
-    p.add_argument("--crop", action="store_true", help="send masked points only (A/B)")
+    p.add_argument("--context", type=float, default=0.15,
+                   help="send points within mask bbox +/- this, m; 0 = mask only, -1 = full frame")
     p.add_argument("--run", help="run_scene output dir: replay its rgb/depth/mask, no bag, no sam3")
     a = p.parse_args(rclpy.utilities.remove_ros_args()[1:])
     rclpy.init()

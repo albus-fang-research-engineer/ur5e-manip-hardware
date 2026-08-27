@@ -87,6 +87,9 @@ def main():
                                            np.pi / 6 if cfgs.top_down_grasp else np.pi),
             }
 
+            print(f"[grasp_server] get_grasp: {len(points)} pts, "
+                  f"{int(region_steering.sum()) if region_steering is not None else 'all'} in lims",
+                  flush=True)
             gg = detector.get_grasp(points, optional_params)
 
             if gg is None or len(gg) == 0:
@@ -102,6 +105,13 @@ def main():
                 "widths": gg.widths, "depths": gg.depths, "scores": gg.scores,
             }))
         except Exception as e:
+            # Release the caching allocator's fragments now, or the failed
+            # call's blocks make the *next* request fail at a lower threshold.
+            try:
+                import torch
+                torch.cuda.empty_cache()
+            except Exception:
+                pass
             sock.send(pickle.dumps({"ok": False, "error": repr(e)}))
 
 
