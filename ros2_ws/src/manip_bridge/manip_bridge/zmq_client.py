@@ -6,6 +6,7 @@ send/recv, so a service callback and a streaming subscriber in the same
 node must each own their own SidecarClient, not share one.
 """
 
+import pickle
 import threading
 
 import msgpack
@@ -20,7 +21,16 @@ class SidecarError(RuntimeError):
 
 
 class SidecarClient:
-    def __init__(self, addr: str, timeout_ms: int):
+    def __init__(self, addr: str, timeout_ms: int, codec: str = "msgpack"):
+        """codec: "msgpack" (every sidecar) or "pickle" (grasp_server only --
+        it predates the msgpack contract). Same socket semantics either way."""
+        if codec == "msgpack":
+            self._enc = lambda o: msgpack.packb(o, use_bin_type=True)
+            self._dec = lambda b: msgpack.unpackb(b, raw=False)
+        elif codec == "pickle":
+            self._enc, self._dec = pickle.dumps, pickle.loads
+        else:
+            raise ValueError(f"unknown codec {codec!r}")
         self.addr = addr
         self.timeout_ms = int(timeout_ms)
         self._ctx = zmq.Context.instance()
@@ -44,8 +54,8 @@ class SidecarClient:
             if timeout_ms is not None:
                 self._sock.setsockopt(zmq.RCVTIMEO, int(timeout_ms))
             try:
-                self._sock.send(msgpack.packb(payload, use_bin_type=True))
-                rep = msgpack.unpackb(self._sock.recv(), raw=False)
+                self._sock.send(self._enc(payload))
+                rep = self._dec(self._sock.recv())
             except zmq.error.Again:
                 self._connect()
                 name = payload.get("cmd", payload.get("op"))
