@@ -40,12 +40,67 @@ Wire protocol (msgpack + msgpack_numpy, REQ/REP):
   {"cmd": "esdf",
    "voxel_size": 0.02,                # optional; rescales spacing on the
                                       #   FIXED grid -> coverage scales too
-   "origin": [x, y, z]}               # optional override (sliding window)
+   "origin": [x, y, z],               # optional override (sliding window)
+   "sparse_below": 0.04,              # optional: return only voxels with
+                                      #   esdf <= this (indices + values)
+                                      #   instead of the dense tensor
+   "slice_z": 0.10}                   # optional: also return the dense 2D
+                                      #   layer nearest this z (map frame)
       -> {"ok": True,
           "esdf": float32 tensor,     # signed distance (m); reshape w/ grid_shape
           "grid_shape": [nx, ny, nz], # X slowest, Z fastest (VoxelGrid conv.)
           "low": [x,y,z], "high": [x,y,z],
           "voxel_size": float, "dims": [x,y,z]}
+
+  {"cmd": "load_robot",
+   "seg_threshold": 0.06,             # optional; env CUROBO_SEG_THRESHOLD
+   "force_rebuild": false}            # re-fit spheres even if the yml exists
+      -> {"ok": True, "joint_names": [...], "n_spheres": int, "yml": str}
+
+  Robot self-masking: once load_robot has run, an "integrate" request may
+  carry the arm state and the robot is REMOVED from the depth before TSDF
+  integration (RobotSegmenter: FK spheres vs. backprojected pixels):
+
+  {"cmd": "integrate", ...as above...,
+   "q": [6] float,                    # joint positions
+   "joint_names": [...],              # names for q; reordered to kinematics
+   "T_base_cam": 4x4 float32}         # camera in ROBOT BASE frame; omit to
+                                      #   reuse "pose" (map frame == base)
+      -> {"ok": True, "n_masked": int}
+
+  {"cmd": "robot_mask",               # debug: mask only, no integration
+   "depth": HxW float32 (m), "intrinsics": 3x3,
+   "T_base_cam": 4x4, "q": [...], "joint_names": [...]}
+      -> {"ok": True, "mask": HxW bool, "n_masked": int}
+
+  {"cmd": "plan",                     # MotionPlanner vs. the LIVE ESDF
+   "q": [6] float, "joint_names": [...],
+   "T_base_goal": 4x4 float32}        # tool0 goal in base frame
+      -> {"ok": True, "success": bool,
+          "joint_names": [...],
+          "positions": Nxdof f32, "velocities": Nxdof f32,
+          "dt": float,               # interpolation dt of the trajectory
+          "ee_path": Nx3 f32,        # tool positions along the trajectory
+          "position_error": float, "rotation_error": float,
+          "solve_time": float}
+
+  FRAME CONTRACT for masking + planning: the map frame IS the robot base
+  frame (base_link at the map origin). The planner plans in base frame and
+  reads the mapper's VoxelGrid coordinates as-is; the segmenter needs the
+  camera in base frame. Send "pose" = T_base_cam on integrate and the same
+  matrix serves the mapper, the segmenter, and the planner. If your map
+  frame is elsewhere, pass "T_base_cam" separately for masking -- but the
+  planner will still treat map coords as base coords, so don't plan in that
+  configuration. NOTE: enable masking from the FIRST integrated frame (or
+  send "reset" after load_robot) -- arm surfaces already baked into the TSDF
+  are not retroactively removed.
+
+  The MotionPlanner is built lazily on the first "plan" (against the current
+  ESDF grid buffer -- later compute_esdf calls refresh it in place, the
+  upstream live-mapping pattern) and pays IK/trajopt warmup + CUDA-graph
+  capture once. "configure" invalidates the planner (grid buffer is
+  reallocated); the robot/segmenter survive configure but assume a fixed
+  depth image shape once used.
 
   {"cmd": "reset"}                              -> {"ok": True}
   {"cmd": "clear_region", "min": [..], "max": [..]} -> {"ok": True, "n_cleared": int}
@@ -83,6 +138,15 @@ from curobo.types import CameraObservation, Pose
 
 PORT = int(os.environ.get("CUROBO_PORT", "5671"))
 BLOCKS_DIR = os.environ.get("CUROBO_BLOCKS_DIR", "/data/tsdf_blocks")
+
+# Robot config: a prebuilt yml, or the ur5e_curobo_config builder module dir
+# (compose mounts test/curobo_incontainer there). The builder writes the yml
+# into ROBOT_YML's directory via CUROBO_TEST_CACHE, so the sphere fit runs
+# once and persists across restarts.
+ROBOT_YML = os.environ.get("CUROBO_ROBOT_YML", "/data/robot/ur5e.yml")
+ROBOT_BUILDER_DIR = os.environ.get("CUROBO_ROBOT_BUILDER_DIR", "/opt/robot_builder")
+SEG_THRESHOLD = float(os.environ.get("CUROBO_SEG_THRESHOLD", "0.06"))
+PLAN_CUDA_GRAPH = os.environ.get("CUROBO_PLAN_CUDA_GRAPH", "1") == "1"
 
 logging.basicConfig(level=logging.INFO, format="[curobo-server] %(message)s")
 log = logging.getLogger(__name__)
@@ -184,6 +248,172 @@ def _sidecar_path(path):
     return path + ".cfg.json"
 
 
+# ------------------------------------------------------------ robot / planner
+def _robot_config(force_rebuild=False):
+    """Prebuilt yml if present, else run the ur5e_curobo_config builder
+    (single source of truth, lives in test/curobo_incontainer) with its cache
+    pointed at ROBOT_YML's directory."""
+    from curobo._src.util_file import load_yaml
+
+    if os.path.isfile(ROBOT_YML) and not force_rebuild:
+        return load_yaml(ROBOT_YML)
+
+    import sys
+    if ROBOT_BUILDER_DIR not in sys.path:
+        sys.path.insert(0, ROBOT_BUILDER_DIR)
+    os.environ["CUROBO_TEST_CACHE"] = os.path.dirname(ROBOT_YML)
+    try:
+        from ur5e_curobo_config import build_ur5e_config
+    except ImportError as e:
+        raise RuntimeError(
+            f"no robot yml at {ROBOT_YML} and ur5e_curobo_config not importable "
+            f"from {ROBOT_BUILDER_DIR} (mount test/curobo_incontainer there): {e}"
+        )
+    log.info("fitting UR5e collision spheres (one-time, cached to %s)...",
+             ROBOT_YML)
+    return build_ur5e_config(force=force_rebuild)
+
+
+def _load_robot(state, seg_threshold=None, force_rebuild=False):
+    from curobo.perception import RobotSegmenter
+
+    cfg = _robot_config(force_rebuild)
+    seg = RobotSegmenter.from_robot_file(
+        cfg,
+        distance_threshold=float(seg_threshold if seg_threshold is not None
+                                 else SEG_THRESHOLD),
+        use_cuda_graph=True,   # streaming path: fixed depth shape per session
+    )
+    state["robot_cfg"] = cfg
+    state["segmenter"] = seg
+    n = sum(len(v) for v in
+            cfg["kinematics"].get("collision_spheres", {}).values())
+    return {"ok": True, "joint_names": list(seg._kinematics.joint_names),
+            "n_spheres": n, "yml": ROBOT_YML}
+
+
+def _joint_state(q, joint_names, target_names):
+    from curobo.types import JointState
+
+    name_to_q = dict(zip(list(joint_names), [float(x) for x in np.asarray(q).ravel()]))
+    missing = [n for n in target_names if n not in name_to_q]
+    if missing:
+        raise ValueError(f"joint state lacks {missing}; has {list(name_to_q)}")
+    t = torch.tensor([name_to_q[n] for n in target_names],
+                     dtype=torch.float32, device="cuda").unsqueeze(0)
+    return JointState.from_position(t, joint_names=list(target_names))
+
+
+def _robot_mask(state, depth_np, K_np, T_base_cam_np, q, joint_names):
+    """(mask bool HxW on GPU, filtered depth 1xHxW on GPU)."""
+    from curobo.types import CameraObservation, Pose
+
+    seg = state["segmenter"]
+    depth = torch.as_tensor(np.ascontiguousarray(depth_np),
+                            dtype=torch.float32, device="cuda")
+    if depth.ndim == 2:
+        depth = depth.unsqueeze(0)
+    K = torch.as_tensor(np.ascontiguousarray(K_np), dtype=torch.float32,
+                        device="cuda").reshape(-1, 3, 3)
+    T = torch.as_tensor(np.ascontiguousarray(T_base_cam_np),
+                        dtype=torch.float32, device="cuda").reshape(4, 4)
+    cam = CameraObservation(depth_image=depth, intrinsics=K,
+                            pose=Pose.from_matrix(T), depth_to_meter=1.0)
+    js = _joint_state(q, joint_names, seg._kinematics.joint_names)
+    mask, filtered = seg.get_robot_mask(cam, js)
+    return mask, filtered
+
+
+def _get_planner(state):
+    """Build MotionPlanner once against the mapper's live ESDF VoxelGrid.
+    compute_esdf() writes into the same buffer afterwards (upstream
+    live_volumetric_mapping pattern), so refreshing the world is just a
+    compute_esdf before each plan."""
+    if state.get("planner") is not None:
+        return state["planner"]
+
+    from curobo.motion_planner import MotionPlanner, MotionPlannerCfg
+    from curobo.scene import Scene
+
+    if state.get("robot_cfg") is None:
+        _load_robot(state)
+    mapper, cfg = state["mapper"], state["cfg"]
+    grid = mapper.compute_esdf(esdf_voxel_size=float(cfg.esdf_voxel_size))
+
+    log.info("building MotionPlanner (IK/trajopt warmup + graph capture)...")
+    pcfg = MotionPlannerCfg.create(
+        robot=state["robot_cfg"],
+        scene_model=Scene(voxel=[grid]),
+        use_cuda_graph=PLAN_CUDA_GRAPH,
+    )
+    planner = MotionPlanner(pcfg)
+    planner.warmup()
+    state["planner"] = planner
+    log.info("planner ready: tool=%s dof=%d",
+             planner.tool_frames, planner.action_dim)
+    return planner
+
+
+def _plan(state, msg):
+    from curobo.types import GoalToolPose, Pose
+
+    planner = _get_planner(state)
+    mapper, cfg = state["mapper"], state["cfg"]
+    # refresh the aliased ESDF buffer to the latest integrated scene, at the
+    # resolution the planner captured (defeat any sticky viz-time rescale)
+    mapper.compute_esdf(esdf_voxel_size=float(cfg.esdf_voxel_size))
+
+    js = _joint_state(msg["q"], msg["joint_names"], planner.joint_names)
+    T = np.asarray(msg["T_base_goal"], np.float32).reshape(4, 4)
+    g = Pose.from_matrix(torch.as_tensor(T, dtype=torch.float32,
+                                         device="cuda"))
+    goal = Pose(position=g.position.view(1, 3),
+                quaternion=g.quaternion.view(1, 4))
+    tool = planner.tool_frames[0]
+    goal_tool = GoalToolPose.from_poses(
+        {tool: goal}, ordered_tool_frames=planner.tool_frames, num_goalset=1)
+
+    res = planner.plan_pose(goal_tool, js)
+    ok = bool(res is not None and res.success is not None
+              and bool(res.success.any()))
+    if not ok:
+        return {"ok": True, "success": False,
+                "error": "planning failed (IK or trajopt unsuccessful)"}
+
+    traj = res.interpolated_trajectory
+    pos = traj.position
+    vel = traj.velocity if traj.velocity is not None else torch.zeros_like(pos)
+    # squeeze any leading batch/seed dims down to [steps, dof]
+    while pos.ndim > 2:
+        pos, vel = pos[0], vel[0]
+    if res.interpolated_last_tstep is not None:
+        last = int(res.interpolated_last_tstep.ravel()[0])
+        if last > 0:
+            pos, vel = pos[:last], vel[:last]
+
+    # tool positions along the trajectory, for RViz path display
+    from curobo.types import JointState as _JS
+    traj_js = _JS.from_position(pos.contiguous(),
+                                joint_names=list(planner.joint_names))
+    kin = planner.compute_kinematics(traj_js)
+    ee = kin.tool_poses.get_link_pose(tool).position.reshape(-1, 3)
+
+    def f(t):
+        return None if t is None else float(torch.as_tensor(t).ravel()[0])
+
+    return {
+        "ok": True, "success": True,
+        "joint_names": list(planner.joint_names),
+        "positions": pos.detach().cpu().numpy().astype(np.float32),
+        "velocities": vel.detach().cpu().numpy().astype(np.float32),
+        "dt": float(planner.config.trajopt_solver_config.interpolation_dt),
+        "ee_path": ee.detach().cpu().numpy().astype(np.float32),
+        "position_error": f(res.position_error),
+        "rotation_error": f(res.rotation_error),
+        "solve_time": float(res.solve_time or 0.0),
+    }
+
+
 def handle(msg, state):
     cmd = msg.get("cmd")
     mapper, cfg = state["mapper"], state["cfg"]
@@ -196,11 +426,42 @@ def handle(msg, state):
         kw.update({k: msg[k] for k in kw if k in msg})
         state["mapper"], state["cfg"] = build_mapper(**kw)
         state["cfg_kwargs"] = kw
+        # the planner holds an alias of the OLD mapper's ESDF buffer
+        state["planner"] = None
         return {"ok": True, "memory_mb": state["mapper"].memory_usage_mb()}
 
     if cmd == "integrate":
+        n_masked = None
+        if msg.get("q") is not None:
+            if state.get("segmenter") is None:
+                _load_robot(state)
+            T_bc = msg.get("T_base_cam", msg["pose"])  # map==base default
+            mask, filtered = _robot_mask(
+                state, msg["depth"], msg["intrinsics"], T_bc,
+                msg["q"], msg["joint_names"])
+            n_masked = int(mask.sum().item())
+            msg = dict(msg)
+            msg["depth"] = filtered.squeeze(0).detach().cpu().numpy()
         mapper.integrate(camera_observation=make_observation(msg, cfg))
-        return {"ok": True}
+        rep = {"ok": True}
+        if n_masked is not None:
+            rep["n_masked"] = n_masked
+        return rep
+
+    if cmd == "load_robot":
+        return _load_robot(state, msg.get("seg_threshold"),
+                           msg.get("force_rebuild", False))
+
+    if cmd == "robot_mask":
+        if state.get("segmenter") is None:
+            _load_robot(state)
+        mask, _ = _robot_mask(state, msg["depth"], msg["intrinsics"],
+                              msg["T_base_cam"], msg["q"], msg["joint_names"])
+        m = mask.squeeze(0).detach().cpu().numpy().astype(bool)
+        return {"ok": True, "mask": m, "n_masked": int(m.sum())}
+
+    if cmd == "plan":
+        return _plan(state, msg)
 
     if cmd == "esdf":
         origin = msg.get("origin")
@@ -213,15 +474,31 @@ def handle(msg, state):
         vs = float(vs) if vs is not None else float(cfg.esdf_voxel_size)
         grid = mapper.compute_esdf(esdf_origin=origin, esdf_voxel_size=vs)
         grid_shape, low, high = grid.get_grid_shape()
-        return {
+        rep = {
             "ok": True,
-            "esdf": grid.feature_tensor.float().cpu().numpy(),
             "grid_shape": grid_shape,
             "low": low,
             "high": high,
             "voxel_size": float(grid.voxel_size),
             "dims": [float(d) for d in grid.dims],
         }
+        f = grid.feature_tensor.float().reshape(grid_shape)
+        thr = msg.get("sparse_below")
+        if thr is not None:
+            sel = f <= float(thr)
+            idx = sel.nonzero().to(torch.int32)
+            rep["sparse_idx"] = idx.cpu().numpy()
+            rep["sparse_vals"] = f[sel].cpu().numpy().astype(np.float32)
+        z = msg.get("slice_z")
+        if z is not None:
+            gvs = float(grid.voxel_size)
+            k = int(np.clip(round((float(z) - low[2]) / gvs - 0.5),
+                            0, grid_shape[2] - 1))
+            rep["slice"] = f[:, :, k].cpu().numpy().astype(np.float32)
+            rep["slice_k"] = k
+        if thr is None and z is None:
+            rep["esdf"] = grid.feature_tensor.float().cpu().numpy()
+        return rep
 
     if cmd == "reset":
         mapper.reset()

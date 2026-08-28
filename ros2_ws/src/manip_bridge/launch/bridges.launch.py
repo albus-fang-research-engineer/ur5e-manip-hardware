@@ -60,6 +60,13 @@ def generate_launch_description():
              output="screen", parameters=[cam]),
         Node(package="manip_bridge", executable="pose_bridge", name="foundationpose_bridge",
              output="screen", parameters=[cam]),
+        Node(package="manip_bridge", executable="curobo_bridge", name="curobo_bridge",
+             output="screen", parameters=[{
+                 "depth_topic": LaunchConfiguration("depth_topic"),
+                 "info_topic": LaunchConfiguration("info_topic"),
+                 "use_sim_time": use_sim_time,
+             }]),
+
 
         ExecuteProcess(
             cmd=["python3", os.path.join(LEGACY_DIR, "pointso_bridge_node.py")],

@@ -307,6 +307,8 @@ services:
       - ./curobo_server:/opt/curobo_server
       - ./curobo_runtime/kernel_cache:/opt/kernel_cache   # warp JIT cache; ~30-60s cold without it
       - ./curobo_runtime/checkpoints:/data/tsdf_blocks    # mapper.save_blocks() output (resume across restarts)
+      - ./test/curobo_incontainer:/opt/robot_builder:ro   # ur5e_curobo_config builder (single source of truth)
+      - ./curobo_runtime/robot:/data/robot                # built ur5e.yml (sphere fit runs once, persists)
     environment:
       - CUROBO_PORT=5671
       - NVIDIA_DISABLE_REQUIRE=1
@@ -319,6 +321,13 @@ services:
       - CUROBO_IMAGE_HEIGHT=480            # RealSense D4xx depth at 480p
       - CUROBO_IMAGE_WIDTH=848
       - CUROBO_NUM_CAMERAS=1
+      # Robot self-masking + planning: prebuilt yml wins; else the builder
+      # module mounted at /opt/robot_builder fits spheres once and caches
+      # the yml under /data/robot (see curobo_runtime/robot mount above).
+      - CUROBO_ROBOT_YML=/data/robot/ur5e.yml
+      - CUROBO_ROBOT_BUILDER_DIR=/opt/robot_builder
+      - CUROBO_SEG_THRESHOLD=0.06          # segmenter distance threshold (m)
+      # - CUROBO_PLAN_CUDA_GRAPH=0         # debug-only; ~5x slower plans
       # viser debug viz (server started only if CUROBO_VISUALIZE=1); host-net,
       # so http://localhost:8080 -- same port family as nothing else here.
       # - CUROBO_VISUALIZE=1

@@ -1,0 +1,105 @@
+# RViz2 config for the curobo bridge: ESDF obstacle shell + slice heatmap,
+# planned EE path, TF. Fixed Frame is base_link per the bridge/server frame
+# contract (map frame == robot base). Both clouds color by the "esdf" field
+# (signed distance, meters): on the shell, dark = inside obstacles; on the
+# slice, the gradient is the distance field itself.
+#
+#   rviz2 -d test/curobo_esdf.rviz
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+    Property Tree Widget:
+      Expanded:
+        - /ESDF shell1
+        - /ESDF slice1
+  - Class: rviz_common/Views
+    Name: Views
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Name: Grid
+      Enabled: true
+      Cell Size: 0.1
+      Plane Cell Count: 20
+      Reference Frame: <Fixed Frame>
+    - Class: rviz_default_plugins/TF
+      Name: TF
+      Enabled: true
+      Show Names: true
+      Marker Scale: 0.3
+    - Class: rviz_default_plugins/PointCloud2
+      Name: ESDF shell
+      Enabled: true
+      Topic:
+        Value: /curobo/esdf_cloud
+        Depth: 1
+        Durability Policy: Volatile
+        Reliability Policy: Reliable
+      Style: Boxes
+      Size (m): 0.01
+      Color Transformer: Intensity
+      Channel Name: esdf
+      Autocompute Intensity Bounds: false
+      Min Intensity: -0.05
+      Max Intensity: 0.03
+      Invert Rainbow: false
+      Use rainbow: true
+      Decay Time: 0
+    - Class: rviz_default_plugins/PointCloud2
+      Name: ESDF slice
+      Enabled: false
+      Topic:
+        Value: /curobo/esdf_slice
+        Depth: 1
+        Durability Policy: Volatile
+        Reliability Policy: Reliable
+      Style: Flat Squares
+      Size (m): 0.01
+      Color Transformer: Intensity
+      Channel Name: esdf
+      Autocompute Intensity Bounds: false
+      Min Intensity: -0.05
+      Max Intensity: 0.5
+      Use rainbow: true
+      Decay Time: 0
+    - Class: rviz_default_plugins/Path
+      Name: EE path
+      Enabled: true
+      Topic:
+        Value: /curobo/ee_path
+        Depth: 1
+      Line Style: Billboards
+      Line Width: 0.005
+      Color: 25; 255; 0
+    - Class: rviz_default_plugins/Pose
+      Name: Goal pose
+      Enabled: true
+      Topic:
+        Value: /curobo/goal_pose
+        Depth: 1
+      Shape: Axes
+      Axes Length: 0.1
+      Axes Radius: 0.01
+  Global Options:
+    Background Color: 48; 48; 48
+    Fixed Frame: base_link
+    Frame Rate: 30
+  Tools:
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+    - Class: rviz_default_plugins/SetInitialPose
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Name: Current View
+      Distance: 1.8
+      Focal Point:
+        X: 0.3
+        Y: 0.0
+        Z: 0.2
+      Pitch: 0.5
+      Yaw: 0.8
+Window Geometry:
+  Height: 900
+  Width: 1400

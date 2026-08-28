@@ -32,6 +32,7 @@ setup(
             "oriany_viz = manip_bridge.oriany_viz_node:main",
             "grasp_viz = manip_bridge.grasp_viz_node:main",
             "run_scene = manip_bridge.run_scene:main",
+            "curobo_bridge = manip_bridge.curobo_bridge_node:main",
             # still legacy (ros2_bridge/pointso_bridge_node.py via ExecuteProcess)
         ],
     },
