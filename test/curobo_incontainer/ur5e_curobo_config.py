@@ -61,8 +61,13 @@ def _generate_ur5e_urdf(out_path: Path) -> Path:
     for joint in root.iter("joint"):
         name = joint.get("name", "")
         if name in UR5E_ORIGINS:
-            xyz, rpy = UR5E_ORIGINS[name]
             origin = joint.find("origin")
+            if origin is None:
+                # <transmission> blocks (in newer upstream ur10e.urdf) hold a
+                # <joint name=.../> reference with no kinematics -- skip; the
+                # real revolute joint of the same name follows.
+                continue
+            xyz, rpy = UR5E_ORIGINS[name]
             origin.set("xyz", xyz)
             if rpy is not None:
                 origin.set("rpy", rpy)
