@@ -68,12 +68,32 @@ docker compose run --rm -v $PWD/test:/opt/test curobo \
 
 `ur5e_curobo_config.py` generates a UR5e config on first run (cuRoboV2 ships
 UR5e meshes but only a ur10e config): ur10e.urdf with the six UR5e kinematic
-lengths substituted, then `RobotBuilder.fit_collision_spheres()` on the real
+lengths substituted **and** the five link mesh origins (`UR5E_LINK_ORIGINS` —
+ur_description places each link's mesh via `shoulder_offset`/`elbow_offset`
+and the wrist `visual_offset`s, which are separate constants from the DH
+table and do not follow from the joint origins), then
+`RobotBuilder.fit_collision_spheres()` on the real
 link meshes — which is itself the robot-sphere-approximation test. Cached in
 `/tmp/ur5e_curobo` (`CUROBO_TEST_CACHE` to move it, `CUROBO_TEST_FIT_TYPE=
 morphit` for the deploy-quality fit; default `voxel` for test speed). Do not
 reuse this config for inverse-dynamics/torque features — inertials are still
 ur10e values.
+
+To eyeball the fit rather than assert on it, `visualize_ur5e_fit.py` serves
+the saved config in viser (the container is host-net, so viser lands on
+`localhost:8080`; over ssh, `ssh -L 8080:localhost:8080 <box>`):
+
+```bash
+docker exec -it CuroboServer bash -lc \
+    "CUROBO_TEST_CACHE=/data/robot python /opt/robot_builder/visualize_ur5e_fit.py"
+```
+
+`--refit` ignores the saved yml and fits fresh (also skips the ~1 min
+link-pair pruning pass, so prefer it when iterating). Note that both cached
+artifacts are reused unconditionally — `build_ur5e_config` returns early if
+`ur5e.yml` exists and `--refit` regenerates `ur5e.urdf` only when missing —
+so after changing the generator, delete both or you will keep viewing the
+old fit.
 
 The self-masking test evaluates the base yaw at 0 and π and reports which
 wins: robosuite's UR5e MJCF and ur_description can disagree by the

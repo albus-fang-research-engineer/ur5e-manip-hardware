@@ -18,7 +18,19 @@ does not affect the spheres).
 What to look for: spheres SHOULD protrude (over-approximation is the point).
 The failure mode is the opposite -- link mesh poking out un-sphered,
 especially wrist_3/tool0, where both the self-mask and self-collision
-checking care most. Toggle mesh/sphere visibility in the viser GUI.
+checking care most. Toggle sphere visibility in the viser GUI.
+
+The arm you see is drawn by ViserVisualizer.__init__, which loads the visual
+meshes through ViserUrdf and poses every link by forward kinematics. That is
+the view you want and it is always on.
+
+RobotBuilder.visualize(show_meshes=True) adds a SECOND, independent set of
+geometry on top: the collision STLs, added with transform_with_pose=True,
+which applies only each mesh's origin within its own link frame and runs no
+FK. All of them therefore land stacked at the world origin -- a white mass
+of unposed arm solids beside the base, easily mistaken for a stray object in
+the scene. It is a duplicate of geometry ViserUrdf already drew correctly,
+so it is off by default here; --collision-overlay opts back in.
 """
 
 import argparse
@@ -68,7 +80,9 @@ def main():
     ap.add_argument("--fit-type", default=os.environ.get(
         "CUROBO_TEST_FIT_TYPE", "voxel"), help="refit only")
     ap.add_argument("--density", type=float, default=1.0, help="refit only")
-    ap.add_argument("--hide-meshes", action="store_true")
+    ap.add_argument("--collision-overlay", action="store_true",
+                    help="also add the collision STLs at the world origin "
+                         "(unposed -- see module docstring; off by default)")
     ap.add_argument("--hide-spheres", action="store_true")
     ap.add_argument("--port", type=int, default=8080)
     args = ap.parse_args()
@@ -89,7 +103,7 @@ def main():
 
     builder.visualize(
         port=args.port,
-        show_meshes=not args.hide_meshes,
+        show_meshes=args.collision_overlay,
         show_spheres=not args.hide_spheres,
     )
     print(f"viser: http://localhost:{args.port}  (Ctrl+C to stop)")
