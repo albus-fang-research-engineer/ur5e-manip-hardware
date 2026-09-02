@@ -19,6 +19,15 @@ wrist_3 d6):
     ur10e: 0.1807  -0.6127  -0.57155/0.17415  0.11985  0.11655
     ur5e:  0.1625  -0.425   -0.3922 /0.1333   0.0997   0.0996
 
+Substituted SEPARATELY (UR5E_LINK_ORIGINS): the per-link visual/collision
+<origin> offsets that place each MESH inside its own frame. ur_description
+derives these from shoulder_offset/elbow_offset and the wrist visual_offset
+entries, not from the DH table, so they do not follow from the joint origins
+above and must be patched in their own pass:
+
+    ur10e: 0.1762  0.0393  -0.135   -0.12    -0.1168
+    ur5e:  0.138   0.007   -0.127   -0.0997  -0.0989
+
 Left as-is on purpose: link inertials (ur10e values — irrelevant for
 kinematics/spheres/segmentation; do NOT reuse this config for the
 inverse-dynamics / torque-limit features) and joint effort limits (same
@@ -52,6 +61,25 @@ UR5E_ORIGINS = {
     "wrist_3_joint": ("0 0.0996 0", None),
 }
 
+# link name -> visual/collision <origin> xyz (rpy is size-independent, kept).
+# These place each link's MESH inside its own frame and are a separate set of
+# constants from the joint origins above -- patching only the joints leaves
+# ur5e meshes positioned by ur10e offsets, which visibly disconnects the arm
+# and silently misplaces every fitted collision sphere.
+#
+# Source: UniversalRobots/Universal_Robots_ROS2_Description @ ros2,
+# config/ur5e/physical_parameters.yaml (shoulder_offset 0.138, elbow_offset
+# 0.007) and config/ur5e/visual_parameters.yaml (wrist_{1,2,3} visual_offset
+# -0.127, -0.0997, -0.0989); urdf/ur_macro.xacro consumes them as the
+# upper_arm/forearm and wrist link origins respectively.
+UR5E_LINK_ORIGINS = {
+    "upper_arm_link": "0 0 0.138",
+    "forearm_link": "0 0 0.007",
+    "wrist_1_link": "0 0 -0.127",
+    "wrist_2_link": "0 0 -0.0997",
+    "wrist_3_link": "0 0 -0.0989",
+}
+
 
 def _generate_ur5e_urdf(out_path: Path) -> Path:
     src = Path(get_assets_path()) / "robot" / "ur_description" / "ur10e.urdf"
@@ -72,6 +100,18 @@ def _generate_ur5e_urdf(out_path: Path) -> Path:
             if rpy is not None:
                 origin.set("rpy", rpy)
 
+    # link mesh placement: ur10e -> ur5e (<inertial> left alone; see module
+    # docstring -- the inertials are ur10e values on purpose)
+    for link in root.findall("link"):
+        xyz = UR5E_LINK_ORIGINS.get(link.get("name") or "")
+        if xyz is None:
+            continue
+        for tag in ("visual", "collision"):
+            for el in link.findall(tag):
+                origin = el.find("origin")
+                if origin is not None:
+                    origin.set("xyz", xyz)
+
     # meshes/ur10e/... -> meshes/ur5e/... (same filenames both dirs)
     for mesh in root.iter("mesh"):
         fn = mesh.get("filename", "")
@@ -90,7 +130,13 @@ def _generate_ur5e_urdf(out_path: Path) -> Path:
 
 def _inject_attached_object(kin: dict) -> None:
     """Mirror the franka.yml attached_object pattern onto the built config."""
-    kin.setdefault("collision_link_names", [])
+    # builder.save() emits collision_link_names as a YAML anchor and
+    # mesh_link_names as an alias to it, so load_yaml hands back ONE shared
+    # list -- appending to collision_link_names also registers the virtual
+    # attachment link as a mesh link (drawn by visualize(), iterated by the
+    # self-mask segmenter). Copy both before mutating.
+    kin["collision_link_names"] = list(kin.get("collision_link_names") or [])
+    kin["mesh_link_names"] = list(kin.get("mesh_link_names") or [])
     if "attached_object" not in kin["collision_link_names"]:
         kin["collision_link_names"].append("attached_object")
     kin["extra_collision_spheres"] = {"attached_object": N_ATTACHED_SPHERES}

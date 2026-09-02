@@ -49,7 +49,13 @@ from curobo.kinematics import Kinematics, KinematicsCfg  # noqa: E402
 from curobo.sphere_fit import estimate_sphere_count, fit_spheres_to_mesh  # noqa: E402
 from curobo.types import JointState, Pose  # noqa: E402
 
-from ur5e_curobo_config import N_ATTACHED_SPHERES, build_ur5e_config  # noqa: E402
+from ur5e_curobo_config import (  # noqa: E402
+    CACHE,
+    N_ATTACHED_SPHERES,
+    UR5E_LINK_ORIGINS,
+    _generate_ur5e_urdf,
+    build_ur5e_config,
+)
 
 if not torch.cuda.is_available():
     pytest.skip("cuRobo needs CUDA", allow_module_level=True)
@@ -364,3 +370,73 @@ def test_attach_respects_world_pose_offset(kin, packet, ur5e_cfg):
         assert np.linalg.norm(centroid - t_tool) > 0.03
     finally:
         am.detach()
+
+
+# --------------------------------------------------------- urdf/config hygiene
+def test_link_mesh_origins_are_ur5e_not_ur10e(tmp_path):
+    """Joint origins alone are not enough: ur_description also places each
+    link's MESH inside its own frame via shoulder_offset/elbow_offset and the
+    wrist visual_offsets. Patching only the joints leaves ur5e meshes at
+    ur10e offsets -- a visibly disconnected arm and, worse, a sphere fit run
+    over misplaced geometry (up to ~38 mm at the elbow).
+    """
+    import xml.etree.ElementTree as ET
+
+    from curobo._src.util_file import get_assets_path
+
+    gen = _generate_ur5e_urdf(tmp_path / "ur5e.urdf")
+    src = Path(get_assets_path()) / "robot" / "ur_description" / "ur10e.urdf"
+
+    def origins(path):
+        out = {}
+        for link in ET.parse(path).getroot().findall("link"):
+            for tag in ("visual", "collision"):
+                el = link.find(tag)
+                if el is None or el.find("origin") is None:
+                    continue
+                out[(link.get("name"), tag)] = el.find("origin").get("xyz")
+        return out
+
+    got, ur10e = origins(gen), origins(src)
+    for link, want in UR5E_LINK_ORIGINS.items():
+        for tag in ("visual", "collision"):
+            key = (link, tag)
+            assert key in got, f"{link} lost its <{tag}> origin"
+            assert got[key] == want, f"{link}/{tag}: {got[key]} != {want}"
+            assert got[key] != ur10e.get(key), \
+                f"{link}/{tag} still carries the ur10e offset {ur10e.get(key)}"
+
+    # <inertial> is ur10e on purpose (see module docstring) -- don't touch it
+    for link in ET.parse(gen).getroot().findall("link"):
+        if link.get("name") not in UR5E_LINK_ORIGINS:
+            continue
+        inertial = link.find("inertial")
+        if inertial is None or inertial.find("origin") is None:
+            continue
+        src_link = ET.parse(src).getroot().find(f"./link[@name='{link.get('name')}']")
+        assert inertial.find("origin").get("xyz") == \
+            src_link.find("inertial").find("origin").get("xyz")
+
+
+def test_attached_object_is_a_collision_link_but_not_a_mesh_link(ur5e_cfg):
+    """builder.save() writes mesh_link_names as a YAML alias of
+    collision_link_names, so a naive append registers the virtual attachment
+    link as a mesh link too -- it then renders as a stray blob in
+    visualize() and enters the self-mask segmenter's link set.
+    """
+    kin = ur5e_cfg["kinematics"]
+    assert "attached_object" in kin["collision_link_names"]
+    assert "attached_object" not in kin["mesh_link_names"], \
+        "attached_object leaked into mesh_link_names (shared-list alias)"
+    assert kin["collision_link_names"] is not kin["mesh_link_names"]
+
+
+def test_saved_config_has_no_shared_link_name_alias():
+    """Guard the on-disk artifact, not just the in-memory dict."""
+    from curobo._src.util_file import load_yaml
+
+    yml = CACHE / "ur5e.yml"
+    if not yml.exists():
+        build_ur5e_config()
+    kin = load_yaml(str(yml))["kinematics"]
+    assert "attached_object" not in kin["mesh_link_names"]
