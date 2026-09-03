@@ -47,3 +47,4 @@ __pycache__/
 # show for it.
 test/data/
 *.patch
+*.rviz*

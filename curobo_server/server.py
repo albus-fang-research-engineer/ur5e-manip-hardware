@@ -284,6 +284,10 @@ def _load_robot(state, seg_threshold=None, force_rebuild=False):
                                  else SEG_THRESHOLD),
         use_cuda_graph=True,   # streaming path: fixed depth shape per session
     )
+    # cuRobo main regression: default ops_dtype=bfloat16 fails its own
+    # fp16/fp32 tensor check during graph-capture warmup, and
+    # from_robot_file doesn't forward ops_dtype. Force fp32.
+    seg._ops_dtype = torch.float32
     state["robot_cfg"] = cfg
     state["segmenter"] = seg
     n = sum(len(v) for v in
