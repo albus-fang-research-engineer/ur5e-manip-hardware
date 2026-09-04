@@ -52,6 +52,11 @@ CACHE = Path(os.environ.get("CUROBO_TEST_CACHE", "/tmp/ur5e_curobo"))
 N_ATTACHED_SPHERES = 16
 UR5E_HOME = [0.0, -1.57, 1.57, -1.57, -1.57, 0.0]
 
+# Attach the frozen Robotiq 2F-85 (rigid at open) to tool0 before fitting.
+# Default ON for the hardware stack; set 0 for an arm-only config (e.g. a
+# checkout without the vendored artifact). See robotiq_attach.py.
+ATTACH_ROBOTIQ = os.environ.get("CUROBO_ATTACH_ROBOTIQ", "1") == "1"
+
 # joint name -> (origin xyz, origin rpy or None to keep)
 UR5E_ORIGINS = {
     "shoulder_pan_joint": ("0 0 0.1625", None),
@@ -172,8 +177,21 @@ def build_ur5e_config(force: bool = False) -> dict:
     from curobo.robot_builder import RobotBuilder
 
     urdf = _generate_ur5e_urdf(CACHE / "ur5e.urdf")
+    if ATTACH_ROBOTIQ:
+        # sibling module (stdlib-only); same dir is on sys.path wherever this
+        # module itself is importable (server inserts ROBOT_BUILDER_DIR)
+        from robotiq_attach import attach_robotiq
+
+        tree = ET.parse(urdf)
+        attach_robotiq(tree.getroot())
+        urdf = CACHE / "ur5e_robotiq.urdf"
+        tree.write(urdf)
+
     asset_root = str(Path(get_assets_path()) / "robot" / "ur_description")
 
+    # Arm meshes resolve RELATIVE to asset_path; the vendored gripper meshes
+    # are ABSOLUTE container paths, which cuRobo's join_path passes through
+    # untouched -- two mesh roots, one URDF, no parser changes.
     builder = RobotBuilder(str(urdf), asset_path=asset_root, tool_frames=["tool0"])
     fit_name = os.environ.get("CUROBO_TEST_FIT_TYPE", "voxel").upper()
     builder.fit_collision_spheres(
@@ -188,6 +206,12 @@ def build_ur5e_config(force: bool = False) -> dict:
 
     data = load_yaml(str(yml))
     kin = data["kinematics"]
+    if ATTACH_ROBOTIQ:
+        # _fit_single_link SKIPS links whose meshes didn't resolve and the
+        # build still "succeeds" -- an invisible gripper. Fail loudly instead.
+        from robotiq_attach import assert_gripper_spheres
+
+        assert_gripper_spheres(kin.get("collision_spheres", {}) or {})
     _inject_attached_object(kin)
     if "cspace" in kin:
         kin["cspace"]["default_joint_position"] = list(UR5E_HOME)

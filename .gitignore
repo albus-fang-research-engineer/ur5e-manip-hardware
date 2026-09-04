@@ -39,7 +39,6 @@ outputs/
 .vscode/
 .idea/
 
-__pycache__/
 # NOTE: a bare `__init__.py` used to be ignored here. It was harmless only
 # because manip_bridge/__init__.py was already tracked -- any NEW python
 # package added to this repo would have had its __init__ silently dropped,
@@ -48,3 +47,5 @@ __pycache__/
 test/data/
 *.patch
 *.rviz*
+# vendored Robotiq meshes: binary, regenerable via scripts/vendor_robotiq.sh
+test/curobo_incontainer/robotiq/meshes/
