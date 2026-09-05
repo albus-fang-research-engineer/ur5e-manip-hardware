@@ -57,7 +57,7 @@ def _reorder(q_dh: np.ndarray, target_names) -> np.ndarray:
     """(..., 6) in DH order -> (..., 6) in cuRobo's joint order."""
     q_dh = np.asarray(q_dh, dtype=np.float32)
     idx = [DH_JOINT_ORDER.index(n) for n in target_names]
-    return q_dh[..., idx]
+    return np.ascontiguousarray(q_dh[..., idx])      # cuRobo kernels reject non-contiguous input
 
 
 def _reorder_back(q_curobo: np.ndarray, source_names) -> np.ndarray:
@@ -103,7 +103,7 @@ class CuroboCollision:
         Q = np.atleast_2d(np.asarray(Q_dh, dtype=np.float32))
         # cuRobo wants [batch, horizon, dof]; independent configs = horizon 1
         q = torch.as_tensor(_reorder(Q, self.joint_names), dtype=torch.float32,
-                            device="cuda").unsqueeze(1)
+                            device="cuda").unsqueeze(1).contiguous()
         d_scene, d_self = self.rsc.get_scene_self_collision_distance_from_joints(q)
         self.n_calls += 1
         return (d_scene.detach().float().reshape(-1).cpu().numpy(),
@@ -172,8 +172,10 @@ class CuroboIK:
             T = np.concatenate([T, np.repeat(T[-1:], pad, axis=0)], axis=0)
         quat_xyzw = Rotation.from_matrix(T[:, :3, :3]).as_quat()
         quat_wxyz = np.concatenate([quat_xyzw[:, 3:4], quat_xyzw[:, :3]], axis=1)
-        pose = Pose(position=torch.as_tensor(T[:, :3, 3], dtype=torch.float32, device="cuda"),
-                    quaternion=torch.as_tensor(quat_wxyz, dtype=torch.float32, device="cuda"))
+        pose = Pose(position=torch.as_tensor(np.ascontiguousarray(T[:, :3, 3]),
+                                             dtype=torch.float32, device="cuda"),
+                    quaternion=torch.as_tensor(np.ascontiguousarray(quat_wxyz),
+                                               dtype=torch.float32, device="cuda"))
         goal = GoalToolPose.from_poses({self.tool: pose},
                                        ordered_tool_frames=list(self.ik.tool_frames),
                                        num_goalset=1)
@@ -182,7 +184,7 @@ class CuroboIK:
             qs = _reorder(np.asarray(q_seed_dh, dtype=np.float32)[None], self.joint_names)
             qs = np.repeat(qs, self.max_batch, axis=0)
             current = JointState.from_position(
-                torch.as_tensor(qs, dtype=torch.float32, device="cuda"),
+                torch.as_tensor(np.ascontiguousarray(qs), dtype=torch.float32, device="cuda"),
                 joint_names=self.joint_names)
         res = self.ik.solve_pose(goal, current_state=current, return_seeds=1)
 
