@@ -164,12 +164,12 @@ def test_signed_penetration_and_clearance_margin(kin_curobo, collision):
     pen_gt = np.array([box_penetration(spheres_at(kin_curobo, q)) for q in Q])
     pen, _ = collision.signed_penetration(Q)
     eta = collision.activation
-    live = pen_gt > -eta + 1e-3                     # inside the band or penetrating
+    live = pen_gt > -eta                            # inside the band or penetrating: cost > 0
     err = np.abs(pen[live] - pen_gt[live])
     print(f"\n  signed_penetration vs geometry on {live.sum()} unsaturated configs: "
           f"max err {err.max():.5f} m; saturated configs report {pen[~live].min():+.3f}..{pen[~live].max():+.3f}")
     assert err.max() < 1e-3
-    assert np.all(pen[~live] <= -eta + 1e-6)
+    assert np.all(pen[~live] <= -eta + 1e-6)     # beyond the band the cost is 0 -> reports exactly -eta
 
     for m in (0.0, 0.01, 0.03):
         collision.clearance_margin = m
