@@ -314,7 +314,13 @@ services:
       - ./curobo_runtime/checkpoints:/data/tsdf_blocks    # mapper.save_blocks() output (resume across restarts)
       - ./test/curobo_incontainer:/opt/robot_builder:ro   # ur5e_curobo_config builder (single source of truth)
       - ./curobo_runtime/robot:/data/robot                # built ur5e.yml (sphere fit runs once, persists)
+      # TSR geometry + CBiRRT planner libraries (sibling checkouts, read-only;
+      # same convention as ros2-bridge). The planner's fk/jacobian inner loop
+      # is numpy (manip_cbirrt.DHChain); only collision and IK come from cuRobo.
+      - ../manip-tsr:/opt/manip-tsr:ro
+      - ../manip-cbirrt:/opt/manip-cbirrt:ro
     environment:
+      - PYTHONPATH=/opt/manip-tsr:/opt/manip-cbirrt
       - CUROBO_PORT=5671
       - NVIDIA_DISABLE_REQUIRE=1
       - NVIDIA_DRIVER_CAPABILITIES=all
