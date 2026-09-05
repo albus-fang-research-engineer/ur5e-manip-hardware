@@ -3,8 +3,8 @@
   <name>manip_interfaces</name>
   <version>0.1.0</version>
   <description>
-    Service/message interfaces for the perception sidecars (trellis2, and
-    eventually pose/pointso once their topic-JSON interfaces are promoted).
+    Service/message interfaces for the perception sidecars (sam3, trellis2,
+    oriany, any6d, pose) and the planning-side wire types (TSR, GraspArray).
     ament_cmake on purpose: rosidl generation does not work under
     ament_python, so all .srv/.msg for the whole stack live here and the
     Python nodes stay in manip_bridge.
@@ -18,6 +18,7 @@
   <depend>sensor_msgs</depend>
   <depend>shape_msgs</depend>
   <depend>geometry_msgs</depend>
+  <depend>std_msgs</depend>
 
   <exec_depend>rosidl_default_runtime</exec_depend>
   <member_of_group>rosidl_interface_packages</member_of_group>
