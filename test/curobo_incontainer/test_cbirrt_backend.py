@@ -146,7 +146,13 @@ def test_collision_sign_and_agreement(kin_curobo, collision):
     fp = flagged[free & near].mean()
     print(f"  flagged among box-free near-nominal configs (self-collision only): {fp:.2f}")
     assert fp < 0.25, "too many near-nominal postures self-collide: check the yml's self_collision_buffer/ignore"
-    assert not collision.in_collision(Q_NOMINAL), "the nominal posture must be free"
+    # Q_NOMINAL's wrist sits 3 cm past the box's +x face, so the gripper spheres
+    # DO touch it -- agreement with ground truth is the test, not an assumed answer
+    pen_nom = box_penetration(spheres_at(kin_curobo, Q_NOMINAL))
+    self_nom = collision.penetration(Q_NOMINAL[None])[1][0]
+    print(f"  Q_NOMINAL: box penetration {pen_nom:+.4f} m, self {self_nom:+.4f} m, "
+          f"in_collision={collision.in_collision(Q_NOMINAL)}")
+    assert collision.in_collision(Q_NOMINAL) == (pen_nom > 0 or self_nom > 0)
 
 
 def test_single_and_batch_agree(collision):
