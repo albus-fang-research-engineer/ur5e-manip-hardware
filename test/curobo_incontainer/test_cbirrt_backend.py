@@ -198,14 +198,24 @@ def test_ik_reproduces_pose_and_keeps_branch(robot_cfg, scene, kin_curobo):
 def test_cbirrt_plan_around_box(robot_cfg, scene, kin_curobo):
     kin, col = make_kinematics(robot_cfg, scene)
     attached = AttachedObject(T_ee_body=make_pose([0.0, 0.0, 0.12]))
-    upright = TSR(T0_w=np.eye(4), Bw=bounds(x=FREE_TRANS, y=FREE_TRANS, z=FREE_TRANS,
-                                            roll=(-0.26, 0.26), pitch=(-0.26, 0.26), yaw=FREE_ROT),
+    # "Upright" is anchored to the body's orientation AT THE GRASP (sim's
+    # transport_pair: w = the body frame frozen at stage entry), not to the
+    # world identity. At Q_NOMINAL the gripper points down; a T0_w = I upright
+    # TSR would demand body z UP and the projector would obligingly flip the
+    # wrist 180 deg into the box. Verified offline: with this w the projection
+    # is the identity at both pan-sweep endpoints.
+    R_body_nom = attached.body_pose(kin.fk(Q_NOMINAL))[:3, :3]
+    upright = TSR(T0_w=make_pose(rot=R_body_nom),
+                  Bw=bounds(x=FREE_TRANS, y=FREE_TRANS, z=FREE_TRANS,
+                            roll=(-0.26, 0.26), pitch=(-0.26, 0.26), yaw=FREE_ROT),
                   name="upright")
     rng = np.random.default_rng(3)
 
     def on_manifold_and_free(q0):
         q, ok = project_config(kin, attached, [upright], q0, tol=TOL)
         assert ok, "projection onto upright failed at a pan-sweep endpoint"
+        assert np.linalg.norm(q - q0) < 1e-6, \
+            f"pan-sweep endpoint should already be on the manifold, projection moved it by {np.linalg.norm(q - q0):.3f}"
         assert not kin.in_collision(q) and box_penetration(spheres_at(kin_curobo, q)) < -0.02, \
             "pan-sweep endpoint is not clear of the box"
         return q
