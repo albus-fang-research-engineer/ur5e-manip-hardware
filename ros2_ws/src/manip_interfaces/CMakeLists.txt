@@ -18,6 +18,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "srv/Orient.srv"
   "srv/Release.srv"
   "msg/TSR.msg"
+  "msg/Grasp.msg"
   "msg/GraspArray.msg"
   DEPENDENCIES sensor_msgs shape_msgs geometry_msgs std_msgs
 )

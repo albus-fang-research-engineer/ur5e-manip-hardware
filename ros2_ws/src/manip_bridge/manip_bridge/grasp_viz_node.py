@@ -25,11 +25,11 @@ Publishes, in rgb.header.frame_id, latched:
                                         y = closing (width), z = normal.
                                         Order = score desc. Base-frame
                                         composition is the consumer's job.
-  /grasp/<prompt>/grasps  GraspArray    the same K poses plus the per-grasp
-                                        scores / widths / depths PoseArray
-                                        drops, index-aligned. This is what
-                                        grasp_filter consumes; PoseArray is
-                                        kept for rviz2 and older consumers.
+  /grasp/<prompt>/grasps  GraspArray    the same K poses as Grasp structs
+                                        (pose + score + width + depth), same
+                                        order. This is what grasp_filter
+                                        consumes; PoseArray is kept for
+                                        rviz2 and older consumers.
   /grasp/markers          MarkerArray   gripper outlines, green = best score
                                         in this frame, red = 0, zero-stamped
                                         so they survive `bag play --loop`.
@@ -60,7 +60,7 @@ from sensor_msgs.msg import CameraInfo, Image, PointCloud2, PointField
 from std_msgs.msg import Header
 from visualization_msgs.msg import Marker, MarkerArray
 
-from manip_interfaces.msg import GraspArray
+from manip_interfaces.msg import Grasp, GraspArray
 
 from .img import camera_info_to_K, image_to_depth_m, image_to_rgb
 from .zmq_client import SidecarClient, SidecarError
@@ -241,10 +241,9 @@ class GraspViz(Node):
             (pose.orientation.x, pose.orientation.y,
              pose.orientation.z, pose.orientation.w) = map(float, q)
             pa.poses.append(pose)
-            ga.poses.append(pose)
-            ga.scores.append(float(rep["scores"][k]))
-            ga.widths.append(float(rep["widths"][k]))
-            ga.depths.append(float(rep["depths"][k]))
+            ga.grasps.append(Grasp(pose=pose, score=float(rep["scores"][k]),
+                                   width=float(rep["widths"][k]),
+                                   depth=float(rep["depths"][k])))
 
             m = Marker()
             m.header = hdr
