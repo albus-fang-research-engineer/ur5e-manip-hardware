@@ -23,17 +23,21 @@ Frames: everything in base_link; e = tool0 (attached_object's parent at
 this HEAD). Joint order: the DH chain uses UR's order; cuRobo's
 joint_names are matched by NAME, never by position.
 
-DISTANCE CONVENTION. RobotSceneCollision returns PER-SPHERE values,
-(B, 1, n_spheres) for the scene term. Under cuRobo's v0.7 cost convention a
-value is `activation_distance - signed_distance`, clipped at 0: zero when
-the sphere is farther than the activation band, positive inside it, and
-GREATER THAN activation_distance when actually penetrating. So penetration
-of any sphere by more than `margin` <=> max over spheres > activation +
-margin. `penetration_positive=False` selects the alternative reading
-(values are signed clearances; collision <=> min over spheres < margin).
-test_cbirrt_backend.py decides which reading the data supports against
-geometric ground truth (robot spheres vs a known cuboid); if it disagrees
-with the default here, flip the default -- do not patch the test.
+DISTANCE CONVENTION (read from curobo/_src/geom/collision/wp_collision_common.py
+and wp_collision_kernel.py, and confirmed against geometric ground truth by
+test_cbirrt_backend.py). RobotSceneCollision returns PER-SPHERE costs,
+(B, 1, n_spheres), summed over obstacles. With eta = activation_distance and
+p = a sphere's true penetration (radius - sdf(centre); negative = clearance):
+
+    d = p + eta
+    cost = 0                 if d <= 0        clearance >= eta
+         = 0.5 d^2 / eta     if 0 < d <= eta  inside the band, not touching
+         = d - eta/2         if d > eta       CONTACT: cost = p + eta/2
+
+so a sphere is actually penetrating <=> cost > eta/2, and penetrating by more
+than `margin` <=> cost > eta/2 + margin. in_collision reduces with max over
+spheres and thresholds there. Self-collision cost is the largest sphere-pair
+penetration (positive = overlap), thresholded at 0.
 """
 
 from __future__ import annotations
@@ -82,7 +86,6 @@ class CuroboCollision:
     (B, 6) and costs about as much as one call."""
 
     def __init__(self, robot_cfg: dict, scene, margin: float = 0.0,
-                 penetration_positive: bool = True,
                  collision_activation_distance: float = 0.05,
                  max_collision_distance: float = 1.0):
         from curobo._src.collision.collision_robot_scene import (
@@ -97,16 +100,19 @@ class CuroboCollision:
         self.joint_names = list(self.rsc.kinematics.joint_names)
         self.margin = float(margin)
         self.activation = float(collision_activation_distance)
-        self.penetration_positive = bool(penetration_positive)
         self.n_calls = 0
+
+    @property
+    def contact_threshold(self) -> float:
+        """Per-sphere cost above which the sphere touches an obstacle."""
+        return 0.5 * self.activation
 
     def update_world(self, scene) -> None:
         self.rsc.update_world(scene)
 
     def distances(self, Q_dh: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """(B, 6) DH-order configs -> (scene (B, S), self (B, K)) raw per-sphere
-        (per-pair) values exactly as cuRobo returns them. See class doc for
-        the convention; reduce() turns them into one number per config."""
+        costs exactly as cuRobo returns them (see class doc)."""
         Q = np.atleast_2d(np.asarray(Q_dh, dtype=np.float32))
         B = len(Q)
         # cuRobo wants [batch, horizon, dof]; independent configs = horizon 1
@@ -117,16 +123,16 @@ class CuroboCollision:
         return (d_scene.detach().float().reshape(B, -1).cpu().numpy(),
                 d_self.detach().float().reshape(B, -1).cpu().numpy())
 
-    def reduce(self, per_sphere: np.ndarray) -> np.ndarray:
-        """(B, S) -> (B,) worst sphere under the configured convention."""
-        return per_sphere.max(axis=1) if self.penetration_positive else per_sphere.min(axis=1)
+    def penetration(self, Q_dh: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """(B,) worst-sphere scene penetration in metres (negative values are
+        NOT clearances -- the cost saturates at 0 beyond eta; treat <= 0 as
+        'not touching'), and (B,) worst self-collision penetration."""
+        d_scene, d_self = self.distances(Q_dh)
+        return d_scene.max(axis=1) - self.contact_threshold, d_self.max(axis=1)
 
     def in_collision_batch(self, Q_dh: np.ndarray) -> np.ndarray:
-        d_scene, d_self = self.distances(Q_dh)
-        s, f = self.reduce(d_scene), self.reduce(d_self)
-        if self.penetration_positive:
-            return (s > self.activation + self.margin) | (f > 0.0)
-        return (s < self.margin) | (f < 0.0)
+        pen_scene, pen_self = self.penetration(Q_dh)
+        return (pen_scene > self.margin) | (pen_self > 0.0)
 
     def in_collision(self, q_dh: np.ndarray) -> bool:
         return bool(self.in_collision_batch(np.asarray(q_dh)[None])[0])

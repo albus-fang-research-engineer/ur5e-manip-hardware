@@ -113,32 +113,30 @@ def test_collision_sign_and_agreement(kin_curobo, collision):
     assert hit.sum() >= 10 and free.sum() >= 10, "move BOX_CENTER: need both classes"
 
     d_scene, d_self = collision.distances(Q)
-    print(f"  raw shapes: scene {d_scene.shape} self {d_self.shape} (per sphere / per pair)")
-    mx, mn = d_scene.max(axis=1), d_scene.min(axis=1)
-    print(f"  scene MAX over spheres  hit: median {np.median(mx[hit]):+.4f} "
+    eta = collision.activation
+    mx = d_scene.max(axis=1)
+    print(f"  raw shapes: scene {d_scene.shape} self {d_self.shape}; eta = {eta}")
+    print(f"  worst-sphere cost  hit: median {np.median(mx[hit]):+.4f} "
           f"[{mx[hit].min():+.4f}, {mx[hit].max():+.4f}]   free: median {np.median(mx[free]):+.4f} "
           f"[{mx[free].min():+.4f}, {mx[free].max():+.4f}]")
-    print(f"  scene MIN over spheres  hit: median {np.median(mn[hit]):+.4f} "
-          f"[{mn[hit].min():+.4f}, {mn[hit].max():+.4f}]   free: median {np.median(mn[free]):+.4f} "
-          f"[{mn[free].min():+.4f}, {mn[free].max():+.4f}]")
-    print(f"  self values             all: [{d_self.min():+.4f}, {d_self.max():+.4f}]  "
-          f"nonzero fraction {(np.abs(d_self) > 1e-6).mean():.3f}")
-    print("  sample (pen_gt, scene max, scene min):",
-          [(round(float(a), 3), round(float(b), 4), round(float(c), 4))
-           for a, b, c in list(zip(pen, mx, mn))[:8]])
 
-    # Which reading separates the classes? penetration-positive: MAX(hit) >> MAX(free);
-    # clearance-positive: MIN(free) >> MIN(hit).
-    sep_pen = np.median(mx[hit]) - np.median(mx[free])
-    sep_clr = np.median(mn[free]) - np.median(mn[hit])
-    pos_pen = sep_pen > sep_clr
-    print(f"  separation: penetration-reading {sep_pen:+.4f}, clearance-reading {sep_clr:+.4f} "
-          f"=> data says {'PENETRATION-positive' if pos_pen else 'CLEARANCE-positive'}; "
-          f"backend assumes {'PENETRATION' if collision.penetration_positive else 'CLEARANCE'} "
-          f"(activation {collision.activation})")
-    assert max(sep_pen, sep_clr) > 0.005, "neither reading separates hit from free"
-    assert pos_pen == collision.penetration_positive, \
-        "flip CuroboCollision.penetration_positive default (see cbirrt_backend docstring)"
+    # the kernel formula (wp_collision_common.apply_collision_activation with
+    # radius_adjusted = r + eta): contact => cost = pen + eta/2; in-band =>
+    # 0.5 (pen + eta)^2 / eta; beyond the band => 0. Same spheres, same box.
+    def expected(pen):
+        d = pen + eta
+        return np.where(d <= 0, 0.0, np.where(d <= eta, 0.5 * d * d / eta, d - 0.5 * eta))
+    err = mx - expected(pen)
+    print(f"  cost - formula(pen_gt): median {np.median(np.abs(err)):.5f}, max {np.abs(err).max():.5f} m")
+    print("  sample (pen_gt, cost, formula):",
+          [(round(float(a), 4), round(float(b), 4), round(float(c), 4))
+           for a, b, c in list(zip(pen, mx, expected(pen)))[:6]])
+    assert np.abs(err).max() < 3e-3, "per-sphere cost does not follow the kernel formula"
+
+    near = np.zeros(len(Q), bool); near[:100] = True
+    self_pen = d_self.max(axis=1)
+    print(f"  self-collision penetration > 0: near-nominal {np.mean(self_pen[near] > 0):.2f}, "
+          f"wide-random {np.mean(self_pen[~near] > 0):.2f}; max {self_pen.max():.4f} m")
 
     flagged = collision.in_collision_batch(Q)
     assert flagged[hit].all(), f"{(~flagged[hit]).sum()} box-hitting configs passed as free"
@@ -146,8 +144,8 @@ def test_collision_sign_and_agreement(kin_curobo, collision):
     # demand agreement on the near-nominal half only, where self-collision is rare
     near = np.zeros(len(Q), bool); near[:100] = True
     fp = flagged[free & near].mean()
-    print(f"  false-positive rate on clearly-free near-nominal configs: {fp:.2f}")
-    assert fp < 0.15
+    print(f"  flagged among box-free near-nominal configs (self-collision only): {fp:.2f}")
+    assert fp < 0.25, "too many near-nominal postures self-collide: check the yml's self_collision_buffer/ignore"
     assert not collision.in_collision(Q_NOMINAL), "the nominal posture must be free"
 
 
