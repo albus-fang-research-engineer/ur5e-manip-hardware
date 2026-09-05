@@ -171,6 +171,17 @@ class CuroboIK:
         self.max_batch = int(max_batch)
         self.joint_names = list(self.ik.joint_names)
         self.tool = self.ik.tool_frames[0]
+        self.warmup_time = self._warmup()
+
+    def _warmup(self) -> float:
+        """First solve pays warp JIT + CUDA-graph capture (~30 s observed);
+        do it here, on a reachable dummy pose, so callers see steady-state
+        latency."""
+        import time
+        t0 = time.time()
+        T = np.eye(4); T[:3, 3] = [0.45, 0.0, 0.45]
+        self.solve(T[None])
+        return time.time() - t0
 
     def update_world(self, scene) -> None:
         self.ik.update_world(scene)

@@ -167,6 +167,7 @@ def test_single_and_batch_agree(collision):
 def test_ik_reproduces_pose_and_keeps_branch(robot_cfg, scene, kin_curobo):
     chain = dh_chain()
     ik = CuroboIK(robot_cfg, scene, max_batch=32, num_seeds=32)
+    print(f"\n  IK warmup (JIT + graph capture): {ik.warmup_time:.1f}s")
     rng = np.random.default_rng(2)
     # free, near-nominal configs
     Q = Q_NOMINAL + rng.uniform(-0.6, 0.6, (60, 6))
@@ -175,10 +176,12 @@ def test_ik_reproduces_pose_and_keeps_branch(robot_cfg, scene, kin_curobo):
     T = np.stack([chain.fk(q) for q in Q])
     t0 = time.time()
     res = ik.solve(T, q_seed_dh=Q_NOMINAL)
-    print(f"\n  IK batch of {len(Q)}: {res.success.sum()} solved in {time.time() - t0:.2f}s "
-          f"(solver {res.solve_time:.3f}s); pos err median {np.nanmedian(res.position_error):.4f} "
+    dt = time.time() - t0
+    print(f"  IK batch of {len(Q)} (steady state): {res.success.sum()} solved in {dt:.2f}s; "
+          f"pos err median {np.nanmedian(res.position_error):.4f} "
           f"rot err median {np.nanmedian(res.rotation_error):.4f}")
     assert res.success.mean() >= 0.8
+    assert dt < 5.0, "steady-state IK batch should be well under a second; warmup did not take"
     for q_true, q_sol, ok in zip(Q, res.q, res.success):
         if not ok:
             continue
@@ -200,27 +203,31 @@ def test_cbirrt_plan_around_box(robot_cfg, scene, kin_curobo):
                   name="upright")
     rng = np.random.default_rng(3)
 
-    def free_on_manifold(q0):
+    def on_manifold_and_free(q0):
         q, ok = project_config(kin, attached, [upright], q0, tol=TOL)
-        return q if ok and not kin.in_collision(q) \
-            and box_penetration(spheres_at(kin_curobo, q)) < -0.02 else None
+        assert ok, "projection onto upright failed at a pan-sweep endpoint"
+        assert not kin.in_collision(q) and box_penetration(spheres_at(kin_curobo, q)) < -0.02, \
+            "pan-sweep endpoint is not clear of the box"
+        return q
 
-    starts = [free_on_manifold(Q_NOMINAL + rng.uniform(-0.8, 0.8, 6)) for _ in range(60)]
-    starts = [q for q in starts if q is not None]
-    assert len(starts) >= 2, "no free on-manifold configs near Q_NOMINAL"
-    # pick the pair whose tool positions straddle the box in y, so the straight
-    # line is blocked and the planner has to go around
-    ys = np.array([kin.fk(q)[1, 3] for q in starts])
-    qs, qg = starts[int(np.argmin(ys))], starts[int(np.argmax(ys))]
-    print(f"\n  start tool {kin.fk(qs)[:3, 3].round(3)}  goal tool {kin.fk(qg)[:3, 3].round(3)}")
+    # start/goal differ ONLY in shoulder pan (same elbow/wrist branch by
+    # construction); the pan = 0 midpoint puts the wrist inside the box, so the
+    # straight joint-space line is blocked and the planner must detour.
+    q_lo, q_hi, q_mid = Q_NOMINAL.copy(), Q_NOMINAL.copy(), Q_NOMINAL.copy()
+    q_lo[0], q_hi[0] = -1.0, +1.0
+    qs, qg = on_manifold_and_free(q_lo), on_manifold_and_free(q_hi)
+    assert box_penetration(spheres_at(kin_curobo, q_mid)) > 0.0, "midpoint must be blocked"
+    print(f"\n  start tool {kin.fk(qs)[:3, 3].round(3)}  goal tool {kin.fk(qg)[:3, 3].round(3)}  "
+          f"(midpoint pan=0 penetrates box by {box_penetration(spheres_at(kin_curobo, q_mid)):+.3f} m)")
 
     col.n_calls = 0
     t0 = time.time()
-    res = plan_constrained(kin, attached, [upright], qs, qg, timeout=120.0, eps=0.12,
+    res = plan_constrained(kin, attached, [upright], qs, qg, timeout=180.0, eps=0.12,
                            constraint_tol=TOL, rng=rng)
     dt = time.time() - t0
     print(f"  plan: ok={res.ok} {res.reason} in {dt:.1f}s, {len(res.path) if res.ok else 0} "
-          f"waypoints, {col.n_calls} collision calls, tree sizes {res.stats.get('tree_sizes')}")
+          f"waypoints, {col.n_calls} collision calls ({1e3 * dt / max(col.n_calls, 1):.2f} ms/call), "
+          f"tree sizes {res.stats.get('tree_sizes')}")
     assert res.ok, res.reason
     assert res.max_excess <= TOL
     pens = [box_penetration(spheres_at(kin_curobo, q)) for q in res.path]
