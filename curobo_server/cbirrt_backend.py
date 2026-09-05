@@ -23,12 +23,17 @@ Frames: everything in base_link; e = tool0 (attached_object's parent at
 this HEAD). Joint order: the DH chain uses UR's order; cuRobo's
 joint_names are matched by NAME, never by position.
 
-DISTANCE SIGN. RobotSceneCollision returns per-config scene and self
-"distances". Whether a positive value means PENETRATION (cuRobo v0.7 cost
-convention) or CLEARANCE is fixed by `penetration_positive`; the default
-follows v0.7 and test_cbirrt_backend.py checks it against geometric ground
-truth (robot spheres vs a known cuboid). If that test says the sign is
-flipped, flip the default here -- do not patch the test.
+DISTANCE CONVENTION. RobotSceneCollision returns PER-SPHERE values,
+(B, 1, n_spheres) for the scene term. Under cuRobo's v0.7 cost convention a
+value is `activation_distance - signed_distance`, clipped at 0: zero when
+the sphere is farther than the activation band, positive inside it, and
+GREATER THAN activation_distance when actually penetrating. So penetration
+of any sphere by more than `margin` <=> max over spheres > activation +
+margin. `penetration_positive=False` selects the alternative reading
+(values are signed clearances; collision <=> min over spheres < margin).
+test_cbirrt_backend.py decides which reading the data supports against
+geometric ground truth (robot spheres vs a known cuboid); if it disagrees
+with the default here, flip the default -- do not patch the test.
 """
 
 from __future__ import annotations
@@ -91,6 +96,7 @@ class CuroboCollision:
         self.rsc = RobotSceneCollision(cfg)
         self.joint_names = list(self.rsc.kinematics.joint_names)
         self.margin = float(margin)
+        self.activation = float(collision_activation_distance)
         self.penetration_positive = bool(penetration_positive)
         self.n_calls = 0
 
@@ -98,22 +104,29 @@ class CuroboCollision:
         self.rsc.update_world(scene)
 
     def distances(self, Q_dh: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        """(B, 6) DH-order configs -> (scene_distance (B,), self_distance (B,))
-        exactly as cuRobo returns them (sign NOT normalised; see class doc)."""
+        """(B, 6) DH-order configs -> (scene (B, S), self (B, K)) raw per-sphere
+        (per-pair) values exactly as cuRobo returns them. See class doc for
+        the convention; reduce() turns them into one number per config."""
         Q = np.atleast_2d(np.asarray(Q_dh, dtype=np.float32))
+        B = len(Q)
         # cuRobo wants [batch, horizon, dof]; independent configs = horizon 1
         q = torch.as_tensor(_reorder(Q, self.joint_names), dtype=torch.float32,
                             device="cuda").unsqueeze(1).contiguous()
         d_scene, d_self = self.rsc.get_scene_self_collision_distance_from_joints(q)
         self.n_calls += 1
-        return (d_scene.detach().float().reshape(-1).cpu().numpy(),
-                d_self.detach().float().reshape(-1).cpu().numpy())
+        return (d_scene.detach().float().reshape(B, -1).cpu().numpy(),
+                d_self.detach().float().reshape(B, -1).cpu().numpy())
+
+    def reduce(self, per_sphere: np.ndarray) -> np.ndarray:
+        """(B, S) -> (B,) worst sphere under the configured convention."""
+        return per_sphere.max(axis=1) if self.penetration_positive else per_sphere.min(axis=1)
 
     def in_collision_batch(self, Q_dh: np.ndarray) -> np.ndarray:
         d_scene, d_self = self.distances(Q_dh)
+        s, f = self.reduce(d_scene), self.reduce(d_self)
         if self.penetration_positive:
-            return (d_scene > self.margin) | (d_self > 0.0)
-        return (d_scene < self.margin) | (d_self < 0.0)
+            return (s > self.activation + self.margin) | (f > 0.0)
+        return (s < self.margin) | (f < 0.0)
 
     def in_collision(self, q_dh: np.ndarray) -> bool:
         return bool(self.in_collision_batch(np.asarray(q_dh)[None])[0])

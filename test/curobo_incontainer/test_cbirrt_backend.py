@@ -113,19 +113,30 @@ def test_collision_sign_and_agreement(kin_curobo, collision):
     assert hit.sum() >= 10 and free.sum() >= 10, "move BOX_CENTER: need both classes"
 
     d_scene, d_self = collision.distances(Q)
-    print(f"  raw scene distance  hit: median {np.median(d_scene[hit]):+.4f} "
-          f"[{d_scene[hit].min():+.4f}, {d_scene[hit].max():+.4f}]   "
-          f"free: median {np.median(d_scene[free]):+.4f} "
-          f"[{d_scene[free].min():+.4f}, {d_scene[free].max():+.4f}]")
-    print(f"  raw self distance   all: [{d_self.min():+.4f}, {d_self.max():+.4f}]")
-    print("  sample (pen_gt, d_scene, d_self):",
+    print(f"  raw shapes: scene {d_scene.shape} self {d_self.shape} (per sphere / per pair)")
+    mx, mn = d_scene.max(axis=1), d_scene.min(axis=1)
+    print(f"  scene MAX over spheres  hit: median {np.median(mx[hit]):+.4f} "
+          f"[{mx[hit].min():+.4f}, {mx[hit].max():+.4f}]   free: median {np.median(mx[free]):+.4f} "
+          f"[{mx[free].min():+.4f}, {mx[free].max():+.4f}]")
+    print(f"  scene MIN over spheres  hit: median {np.median(mn[hit]):+.4f} "
+          f"[{mn[hit].min():+.4f}, {mn[hit].max():+.4f}]   free: median {np.median(mn[free]):+.4f} "
+          f"[{mn[free].min():+.4f}, {mn[free].max():+.4f}]")
+    print(f"  self values             all: [{d_self.min():+.4f}, {d_self.max():+.4f}]  "
+          f"nonzero fraction {(np.abs(d_self) > 1e-6).mean():.3f}")
+    print("  sample (pen_gt, scene max, scene min):",
           [(round(float(a), 3), round(float(b), 4), round(float(c), 4))
-           for a, b, c in list(zip(pen, d_scene, d_self))[:8]])
+           for a, b, c in list(zip(pen, mx, mn))[:8]])
 
-    # the two classes must be separable by sign of d_scene, in ONE direction
-    pos_pen = np.median(d_scene[hit]) > np.median(d_scene[free])
-    print(f"  => distances are {'PENETRATION-positive' if pos_pen else 'CLEARANCE-positive'}; "
-          f"backend assumes {'PENETRATION' if collision.penetration_positive else 'CLEARANCE'}")
+    # Which reading separates the classes? penetration-positive: MAX(hit) >> MAX(free);
+    # clearance-positive: MIN(free) >> MIN(hit).
+    sep_pen = np.median(mx[hit]) - np.median(mx[free])
+    sep_clr = np.median(mn[free]) - np.median(mn[hit])
+    pos_pen = sep_pen > sep_clr
+    print(f"  separation: penetration-reading {sep_pen:+.4f}, clearance-reading {sep_clr:+.4f} "
+          f"=> data says {'PENETRATION-positive' if pos_pen else 'CLEARANCE-positive'}; "
+          f"backend assumes {'PENETRATION' if collision.penetration_positive else 'CLEARANCE'} "
+          f"(activation {collision.activation})")
+    assert max(sep_pen, sep_clr) > 0.005, "neither reading separates hit from free"
     assert pos_pen == collision.penetration_positive, \
         "flip CuroboCollision.penetration_positive default (see cbirrt_backend docstring)"
 
