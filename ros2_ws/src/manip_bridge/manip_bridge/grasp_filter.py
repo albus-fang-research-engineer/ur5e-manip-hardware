@@ -124,6 +124,32 @@ def grasps_from_anygrasp(rotations, translations, scores, widths, depths,
     return out
 
 
+# ------------------------------------------------------------------ wire
+
+
+def tsr_from_flat(t0_w, tw_e, bw, name: str = "",
+                  T_ref_frame: np.ndarray | None = None) -> TSR:
+    """manip_interfaces/TSR fields (row-major float64[16], [16], [12]) ->
+    manip_tsr.TSR. `T_ref_frame` is the pose of the message's
+    header.frame_id in the frame the filter evaluates in (base); identity
+    when the TSR is already expressed there. For a grasp TSR that frame is
+    the tracked OBJECT frame and t0_w is the object's canonical frame
+    (Orient Anything up/front) anchored at the call-#2 interaction point,
+    expressed in the tracker's body frame -- see grasp_filter_node."""
+    T0_w = np.asarray(t0_w, dtype=float).reshape(4, 4)
+    Tw_e = np.asarray(tw_e, dtype=float).reshape(4, 4)
+    Bw = np.asarray(bw, dtype=float).reshape(6, 2)
+    if T_ref_frame is not None:
+        T0_w = np.asarray(T_ref_frame, dtype=float) @ T0_w
+    return TSR(T0_w=T0_w, Tw_e=Tw_e, Bw=Bw, name=name)
+
+
+def tsr_to_flat(tsr: TSR) -> tuple[list[float], list[float], list[float]]:
+    """Inverse of tsr_from_flat (producers, tests)."""
+    return (tsr.T0_w.reshape(-1).tolist(), tsr.Tw_e.reshape(-1).tolist(),
+            tsr.Bw.reshape(-1).tolist())
+
+
 # ------------------------------------------------------------------- filter
 
 

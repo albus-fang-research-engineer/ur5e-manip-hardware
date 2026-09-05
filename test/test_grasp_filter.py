@@ -24,6 +24,7 @@ from manip_tsr import TSR, bounds, displacement_to_pose, make_pose  # noqa: E402
 from manip_bridge.grasp_filter import (                                # noqa: E402
     AG_TO_E, E_TO_AG, ROUTE_CONTAINED, ROUTE_DISTANCE, ROUTE_EMPTY,
     Grasp, anygrasp_to_e, e_to_anygrasp, filter_grasps, grasps_from_anygrasp,
+    tsr_from_flat, tsr_to_flat,
 )
 
 RNG = np.random.default_rng(0)
@@ -217,3 +218,28 @@ def test_report_is_json_safe_and_complete():
     assert [p["kept"] for p in d["proposals"]] == [True] * 3 + [False] * 4
     assert d["survivor_indices"] == [0, 1, 2]
     assert "3 contained -> 3 kept [tsr_contained]" in res.summary()
+
+
+# --------------------------------------------------------------------- wire
+
+
+def test_tsr_flat_roundtrip_and_reference_frame():
+    tsr = grasp_tsr()
+    t0, te, bw = tsr_to_flat(tsr)
+    assert len(t0) == 16 and len(te) == 16 and len(bw) == 12
+    back = tsr_from_flat(t0, te, bw, tsr.name)
+    np.testing.assert_allclose(back.T0_w, tsr.T0_w)
+    np.testing.assert_allclose(back.Tw_e, tsr.Tw_e)
+    np.testing.assert_allclose(back.Bw, tsr.Bw)
+    assert back.name == tsr.name
+
+    # object-frame authoring: t0_w = T_body_w, header.frame_id = object;
+    # composing with T_base_obj must reproduce the base-frame TSR exactly
+    T_base_obj = random_pose(RNG)
+    T_body_w = np.linalg.inv(T_base_obj) @ tsr.T0_w
+    rooted = tsr_from_flat(T_body_w.reshape(-1), te, bw, tsr.name, T_ref_frame=T_base_obj)
+    np.testing.assert_allclose(rooted.T0_w, tsr.T0_w, atol=1e-12)
+    poses = inside(tsr, RNG, 4) + junk(RNG, 4)
+    a = filter_grasps(tsr, as_grasps(poses, np.linspace(1, .3, 8)))
+    b = filter_grasps(rooted, as_grasps(poses, np.linspace(1, .3, 8)))
+    assert [g.index for g in a.survivors] == [g.index for g in b.survivors]
