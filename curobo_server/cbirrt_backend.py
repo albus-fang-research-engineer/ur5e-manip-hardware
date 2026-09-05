@@ -154,8 +154,9 @@ class IKResult:
 
 
 class CuroboIK:
-    """Batched IK on tool0. Built for a fixed max batch (CUDA graphs want
-    fixed shapes); solve() pads/truncates to it."""
+    """Batched IK on tool0. Built for a fixed max batch and a fixed goal-buffer
+    structure (CUDA graphs cannot be re-captured in this build): solve() pads
+    every call to max_batch and always supplies a current_state."""
 
     def __init__(self, robot_cfg: dict, scene=None, max_batch: int = 64,
                  num_seeds: int = 32, position_tolerance: float = 0.005,
@@ -209,13 +210,18 @@ class CuroboIK:
         goal = GoalToolPose.from_poses({self.tool: pose},
                                        ordered_tool_frames=list(self.ik.tool_frames),
                                        num_goalset=1)
-        current = None
+        # ALWAYS pass a current_state: GoalManager.update_goal_buffer treats
+        # current_js going None -> present as a structural change and resets
+        # the CUDA graph, which this build cannot do. Seed = caller's config
+        # in cuRobo order, else the solver's retract/default posture.
         if q_seed_dh is not None:
             qs = _reorder(np.asarray(q_seed_dh, dtype=np.float32)[None], self.joint_names)
-            qs = np.repeat(qs, self.max_batch, axis=0)
-            current = JointState.from_position(
-                torch.as_tensor(np.ascontiguousarray(qs), dtype=torch.float32, device="cuda"),
-                joint_names=self.joint_names)
+        else:
+            qs = self.ik.default_joint_state.position.detach().float().cpu().numpy().reshape(1, -1)
+        qs = np.repeat(qs, self.max_batch, axis=0)
+        current = JointState.from_position(
+            torch.as_tensor(np.ascontiguousarray(qs), dtype=torch.float32, device="cuda"),
+            joint_names=self.joint_names)
         res = self.ik.solve_pose(goal, current_state=current, return_seeds=1)
 
         succ = res.success.detach().reshape(-1).cpu().numpy().astype(bool)[:n]
