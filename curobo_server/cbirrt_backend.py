@@ -101,7 +101,9 @@ class CuroboCollision:
         """(B, 6) DH-order configs -> (scene_distance (B,), self_distance (B,))
         exactly as cuRobo returns them (sign NOT normalised; see class doc)."""
         Q = np.atleast_2d(np.asarray(Q_dh, dtype=np.float32))
-        q = torch.as_tensor(_reorder(Q, self.joint_names), dtype=torch.float32, device="cuda")
+        # cuRobo wants [batch, horizon, dof]; independent configs = horizon 1
+        q = torch.as_tensor(_reorder(Q, self.joint_names), dtype=torch.float32,
+                            device="cuda").unsqueeze(1)
         d_scene, d_self = self.rsc.get_scene_self_collision_distance_from_joints(q)
         self.n_calls += 1
         return (d_scene.detach().float().reshape(-1).cpu().numpy(),
