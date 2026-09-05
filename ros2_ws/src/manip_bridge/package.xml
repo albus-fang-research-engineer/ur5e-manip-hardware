@@ -18,6 +18,7 @@
   <depend>message_filters</depend>
   <depend>python3-scipy</depend>
   <depend>python3-opencv</depend>
+  <depend>python3-yaml</depend>
 
   <exec_depend>ros2launch</exec_depend>
 

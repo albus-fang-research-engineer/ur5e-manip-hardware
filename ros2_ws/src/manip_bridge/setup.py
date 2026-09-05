@@ -15,6 +15,8 @@ setup(
         (f"share/{package_name}", ["package.xml"]),
         (os.path.join("share", package_name, "launch"),
          glob("launch/*.launch.py")),
+        (os.path.join("share", package_name, "config"),
+         glob("config/*.yaml")),
     ],
     install_requires=["setuptools"],
     zip_safe=True,
@@ -32,6 +34,7 @@ setup(
             "oriany_viz = manip_bridge.oriany_viz_node:main",
             "grasp_viz = manip_bridge.grasp_viz_node:main",
             "grasp_filter = manip_bridge.grasp_filter_node:main",
+            "tsr_from_yaml = manip_bridge.tsr_from_yaml_node:main",
             "run_scene = manip_bridge.run_scene:main",
             "curobo_bridge = manip_bridge.curobo_bridge_node:main",
             # still legacy (ros2_bridge/pointso_bridge_node.py via ExecuteProcess)

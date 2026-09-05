@@ -1,0 +1,36 @@
+# Hand-authored stage-1 grasp TSR for grasp_filter, published latched by
+#   ros2 run manip_bridge tsr_from_yaml -- <this file>
+# This is the HAND arm: what a compiled emission will replace. Edit the
+# numbers; keep the shape. Schema: manip_bridge/tsr_spec.py.
+#
+# frame_id is the frame t0_w is expressed in. For a real run it is the
+# tracked object frame ("mug": FoundationPose/Any6D TF child) and t0_w is
+# the object's canonical frame anchored at the grasp point, in that body
+# frame. For a quick bag test with no tracker running, author in the
+# camera optical frame instead -- grasp_filter roots ANY frame_id through
+# TF into base_link, so a camera-frame TSR works the same way; read the
+# anchor xyz off the /grasp/<obj>/cloud in rviz2.
+name: grasp/handle
+frame_id: mug
+topic: /tsr/mug/grasp
+
+# w: canonical axes (z up, x front) at the grasp anchor, in frame_id.
+t0_w:
+  xyz: [0.0, 0.06, 0.05]
+  rpy_deg: [0.0, 0.0, 0.0]
+
+# e nominal in w: +z approach, +x closing. Identity = approach along w's z
+# (from above if w's z is up). Rotate to taste, e.g. rpy_deg: [0, 90, 0]
+# for a horizontal approach along w's +x.
+tw_e:
+  xyz: [0.0, 0.0, 0.0]
+  rpy_deg: [0.0, 0.0, 0.0]
+
+# Bw in w, metres and degrees. free = unbounded. Missing axes pin to 0.
+bw:
+  x: [-0.01, 0.01]
+  y: [-0.01, 0.01]
+  z: [-0.02, 0.02]
+  roll: [-10, 10]
+  pitch: [-10, 10]
+  yaw: free
