@@ -79,7 +79,10 @@ RUN pip3 install --no-cache-dir pyzmq msgpack msgpack-numpy numpy scipy opencv-p
 # Auto-source ROS and the workspace overlay (if built) in every interactive shell
 RUN echo 'source /opt/ros/humble/setup.bash' >> /root/.bashrc && \
     echo '[ -f /root/ros2_ws/install/setup.bash ] && source /root/ros2_ws/install/setup.bash' >> /root/.bashrc
-
+# end of docker/Dockerfile.ros2-bridge
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ros-humble-robotiq-description && \
+    rm -rf /var/lib/apt/lists/*
 # Workspace is a bind mount -- created here only so WORKDIR exists image-side
 WORKDIR /root/ros2_ws
 
