@@ -179,6 +179,10 @@ services:
       - ${BAG_DIR:-./ros2bags}:/bags
       # run_scene artifacts (rgb/depth/masks/overlays/summary.json)
       - ./outputs/runs:/data/runs
+      # TSR geometric core (github.com/albus-fang-research-engineer/manip-tsr),
+      # sibling checkout, read-only. Same bind-mount convention as the ros2_ws
+      # and robot_builder mounts: edit on host, no rebuild.
+      - ../manip-tsr:/opt/manip-tsr:ro
     environment:
       - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-0}
       - POSE_ADDR=tcp://127.0.0.1:5667     # host-net: sidecars are localhost
@@ -207,6 +211,7 @@ services:
       # work. Every other service in this file uses `all`; this one is
       # explicit because the list is the entire reason `gpus: all` is here.
       - NVIDIA_DRIVER_CAPABILITIES=graphics,utility,compute
+      - PYTHONPATH=/opt/manip-tsr
     # Launch all bridges once the workspace has been colcon-built; before the
     # first build, idle in a shell so you can exec in and build:
     #   docker exec -it Ros2Bridge bash
