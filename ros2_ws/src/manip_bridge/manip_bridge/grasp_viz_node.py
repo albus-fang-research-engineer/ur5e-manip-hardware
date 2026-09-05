@@ -25,6 +25,11 @@ Publishes, in rgb.header.frame_id, latched:
                                         y = closing (width), z = normal.
                                         Order = score desc. Base-frame
                                         composition is the consumer's job.
+  /grasp/<prompt>/grasps  GraspArray    the same K poses plus the per-grasp
+                                        scores / widths / depths PoseArray
+                                        drops, index-aligned. This is what
+                                        grasp_filter consumes; PoseArray is
+                                        kept for rviz2 and older consumers.
   /grasp/markers          MarkerArray   gripper outlines, green = best score
                                         in this frame, red = 0, zero-stamped
                                         so they survive `bag play --loop`.
@@ -55,6 +60,8 @@ from sensor_msgs.msg import CameraInfo, Image, PointCloud2, PointField
 from std_msgs.msg import Header
 from visualization_msgs.msg import Marker, MarkerArray
 
+from manip_interfaces.msg import GraspArray
+
 from .img import camera_info_to_K, image_to_depth_m, image_to_rgb
 from .zmq_client import SidecarClient, SidecarError
 
@@ -71,12 +78,19 @@ def backproject(depth, K, valid):
     return np.stack([x, y, z], 1).astype(np.float32), (v, u)
 
 
-def gripper_lines(t, R, width, depth, height=0.02):
-    """Wireframe in the AnyGrasp grasp frame: U of fingers along +x, tail = approach."""
+def gripper_lines(t, R, width, depth, depth_base=0.024, tail=0.04):
+    """Wireframe in the AnyGrasp grasp frame, matching graspnetAPI's
+    plot_gripper_pro_max: t is the grasp CENTRE (a surface point), the
+    fingers run from x = -depth_base (= depth_base 0.02 + finger_width
+    0.004 upstream) to x = +depth, the crossbar sits at -depth_base and
+    the tail behind it. The previous glyph put the crossbar AT t and drew
+    fingers 0..depth, which reads as "t is the palm" -- it is not, and the
+    2.4 cm matters when eyeballing a TSR's pad_offset in rviz2."""
     w = width / 2
-    p = [(-height, -w, 0), (0, -w, 0), (0, -w, 0), (0, w, 0), (0, w, 0), (-height, w, 0),
-         (0, -w, 0), (depth, -w, 0), (0, w, 0), (depth, w, 0),
-         (-height, 0, 0), (-height - 0.02, 0, 0)]
+    b = -depth_base
+    p = [(b, -w, 0), (b, w, 0),                        # crossbar
+         (b, -w, 0), (depth, -w, 0), (b, w, 0), (depth, w, 0),   # fingers
+         (b, 0, 0), (b - tail, 0, 0)]                  # tail = -approach
     return [R @ np.array(q) + t for q in p]
 
 
@@ -111,6 +125,7 @@ class GraspViz(Node):
         latched = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
         tag = a.prompt.replace(" ", "_")
         self.pub_poses = self.create_publisher(PoseArray, f"/grasp/{tag}/poses", latched)
+        self.pub_grasps = self.create_publisher(GraspArray, f"/grasp/{tag}/grasps", latched)
         self.pub_mark = self.create_publisher(MarkerArray, "/grasp/markers", latched)
         self.pub_cloud = self.create_publisher(PointCloud2, f"/grasp/{tag}/cloud", latched)
         if a.run:
@@ -214,6 +229,7 @@ class GraspViz(Node):
         self.pub_cloud.publish(xyzrgb_to_cloud(pts, cols, hdr))
 
         pa, ma = PoseArray(header=hdr), MarkerArray()
+        ga = GraspArray(header=hdr)
         ma.markers.append(Marker(action=Marker.DELETEALL))
         smax = float(rep["scores"][0]) if n else 1.0
         for k in range(n):
@@ -225,6 +241,10 @@ class GraspViz(Node):
             (pose.orientation.x, pose.orientation.y,
              pose.orientation.z, pose.orientation.w) = map(float, q)
             pa.poses.append(pose)
+            ga.poses.append(pose)
+            ga.scores.append(float(rep["scores"][k]))
+            ga.widths.append(float(rep["widths"][k]))
+            ga.depths.append(float(rep["depths"][k]))
 
             m = Marker()
             m.header = hdr
@@ -236,6 +256,7 @@ class GraspViz(Node):
                 m.points.append(Point(x=float(p[0]), y=float(p[1]), z=float(p[2])))
             ma.markers.append(m)
         self.pub_poses.publish(pa)
+        self.pub_grasps.publish(ga)
         self.pub_mark.publish(ma)
         return True
 
