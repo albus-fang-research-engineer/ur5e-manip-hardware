@@ -149,10 +149,40 @@ def test_collision_sign_and_agreement(kin_curobo, collision):
     # Q_NOMINAL's wrist sits 3 cm past the box's +x face, so the gripper spheres
     # DO touch it -- agreement with ground truth is the test, not an assumed answer
     pen_nom = box_penetration(spheres_at(kin_curobo, Q_NOMINAL))
-    self_nom = collision.penetration(Q_NOMINAL[None])[1][0]
+    self_nom = collision.signed_penetration(Q_NOMINAL[None])[1][0]
     print(f"  Q_NOMINAL: box penetration {pen_nom:+.4f} m, self {self_nom:+.4f} m, "
           f"in_collision={collision.in_collision(Q_NOMINAL)}")
     assert collision.in_collision(Q_NOMINAL) == (pen_nom > 0 or self_nom > 0)
+
+
+def test_signed_penetration_and_clearance_margin(kin_curobo, collision):
+    """signed_penetration must reproduce geometric penetration wherever the
+    cost has not saturated (clearance < eta); a clearance margin m must flag
+    exactly the configs with clearance < m."""
+    rng = np.random.default_rng(4)
+    Q = random_configs(rng, 200)
+    pen_gt = np.array([box_penetration(spheres_at(kin_curobo, q)) for q in Q])
+    pen, _ = collision.signed_penetration(Q)
+    eta = collision.activation
+    live = pen_gt > -eta + 1e-3                     # inside the band or penetrating
+    err = np.abs(pen[live] - pen_gt[live])
+    print(f"\n  signed_penetration vs geometry on {live.sum()} unsaturated configs: "
+          f"max err {err.max():.5f} m; saturated configs report {pen[~live].min():+.3f}..{pen[~live].max():+.3f}")
+    assert err.max() < 1e-3
+    assert np.all(pen[~live] <= -eta + 1e-6)
+
+    for m in (0.0, 0.01, 0.03):
+        collision.clearance_margin = m
+        flagged = collision.in_collision_batch(Q)
+        should = pen_gt > -m                          # closer than m (or penetrating)
+        # self-collision can add flags; it cannot remove them
+        assert flagged[should].all(), f"m={m}: {(~flagged[should]).sum()} configs within {m} m passed"
+        extra = flagged & ~should
+        print(f"  margin {m:.2f}: {should.sum()} within margin all flagged; "
+              f"{extra.sum()} extra flags (self-collision or box clearance in ({-m:.2f}, ...])")
+    collision.clearance_margin = 0.0
+    with pytest.raises(ValueError):
+        collision.clearance_margin = eta
 
 
 def test_single_and_batch_agree(collision):

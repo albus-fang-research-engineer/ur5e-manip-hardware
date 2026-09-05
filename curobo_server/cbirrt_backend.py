@@ -34,10 +34,20 @@ p = a sphere's true penetration (radius - sdf(centre); negative = clearance):
          = 0.5 d^2 / eta     if 0 < d <= eta  inside the band, not touching
          = d - eta/2         if d > eta       CONTACT: cost = p + eta/2
 
-so a sphere is actually penetrating <=> cost > eta/2, and penetrating by more
-than `margin` <=> cost > eta/2 + margin. in_collision reduces with max over
-spheres and thresholds there. Self-collision cost is the largest sphere-pair
-penetration (positive = overlap), thresholded at 0.
+so a sphere is actually penetrating <=> cost > eta/2. A CLEARANCE margin m
+(flag anything closer than m, 0 <= m < eta) is NOT a linear shift of that
+threshold: inside the band the cost is quadratic in clearance, so
+"clearance < m" <=> cost > 0.5 (eta - m)^2 / eta (which is eta/2 at m = 0).
+in_collision reduces with max over spheres and thresholds there;
+signed_penetration() inverts the formula exactly (saturating at -eta).
+Self-collision cost is the largest sphere-pair penetration (positive =
+overlap), thresholded at 0.
+
+ATTACHED OBJECT. The yml reserves sphere slots on the `attached_object` link
+(parent tool0, identity offset). attach_spheres() writes a grasped body's
+spheres -- given in the tool0 = e frame, i.e. already composed with
+T_ee_body -- into those slots through cuRobo's AttachmentManager, so they
+ride with the gripper in every collision check. detach() clears them.
 """
 
 from __future__ import annotations
@@ -85,7 +95,7 @@ class CuroboCollision:
     is what a batched ConstrainedExtend will use; it is the same kernel on
     (B, 6) and costs about as much as one call."""
 
-    def __init__(self, robot_cfg: dict, scene, margin: float = 0.0,
+    def __init__(self, robot_cfg: dict, scene, clearance_margin: float = 0.0,
                  collision_activation_distance: float = 0.05,
                  max_collision_distance: float = 1.0):
         from curobo._src.collision.collision_robot_scene import (
@@ -98,14 +108,54 @@ class CuroboCollision:
             max_collision_distance=float(max_collision_distance))
         self.rsc = RobotSceneCollision(cfg)
         self.joint_names = list(self.rsc.kinematics.joint_names)
-        self.margin = float(margin)
         self.activation = float(collision_activation_distance)
+        self.clearance_margin = float(clearance_margin)
         self.n_calls = 0
+        self._attach = None
+
+    @property
+    def clearance_margin(self) -> float:
+        return self._clearance_margin
+
+    @clearance_margin.setter
+    def clearance_margin(self, m: float) -> None:
+        if not 0.0 <= m < self.activation:
+            raise ValueError(f"clearance_margin must be in [0, activation={self.activation}), got {m}")
+        self._clearance_margin = float(m)
 
     @property
     def contact_threshold(self) -> float:
         """Per-sphere cost above which the sphere touches an obstacle."""
         return 0.5 * self.activation
+
+    @property
+    def flag_threshold(self) -> float:
+        """Per-sphere cost above which clearance < clearance_margin."""
+        d = self.activation - self._clearance_margin
+        return 0.5 * d * d / self.activation
+
+    # ---- attached object ------------------------------------------------
+    def attach_spheres(self, spheres_e: np.ndarray, q_dh: np.ndarray,
+                       link_name: str = "attached_object") -> int:
+        """Write a grasped body's spheres (N, 4) = (x, y, z, r) IN THE tool0
+        FRAME into the attached_object slots. `q_dh` is only needed by the
+        manager for batching; the spheres are taken as link-local (no world
+        offset). Returns the number of slots available."""
+        from curobo._src.collision.attachment_manager import AttachmentManager
+        from curobo.types import JointState
+        if self._attach is None:
+            self._attach = AttachmentManager(self.rsc.kinematics)
+        sph = torch.as_tensor(np.ascontiguousarray(np.asarray(spheres_e, dtype=np.float32).reshape(-1, 4)),
+                              dtype=torch.float32, device="cuda")
+        q = torch.as_tensor(_reorder(np.asarray(q_dh, dtype=np.float32)[None], self.joint_names),
+                            dtype=torch.float32, device="cuda")
+        js = JointState.from_position(q, joint_names=self.joint_names)
+        self._attach.update(sph, js, link_name=link_name, world_objects_pose_offset=None)
+        return int(self._attach.kinematics_params.get_sphere_index_from_link_name(link_name).shape[0])
+
+    def detach(self, link_name: str = "attached_object") -> None:
+        if self._attach is not None:
+            self._attach.detach(link_name=link_name)
 
     def update_world(self, scene) -> None:
         self.rsc.update_world(scene)
@@ -123,16 +173,20 @@ class CuroboCollision:
         return (d_scene.detach().float().reshape(B, -1).cpu().numpy(),
                 d_self.detach().float().reshape(B, -1).cpu().numpy())
 
-    def penetration(self, Q_dh: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        """(B,) worst-sphere scene penetration in metres (negative values are
-        NOT clearances -- the cost saturates at 0 beyond eta; treat <= 0 as
-        'not touching'), and (B,) worst self-collision penetration."""
+    def signed_penetration(self, Q_dh: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """(B,) worst-sphere scene penetration in metres, exact inverse of the
+        kernel formula: > 0 penetrating, < 0 clearance, saturating at -eta
+        (the cost is 0 beyond the band). And (B,) worst self penetration."""
         d_scene, d_self = self.distances(Q_dh)
-        return d_scene.max(axis=1) - self.contact_threshold, d_self.max(axis=1)
+        c = d_scene.max(axis=1)
+        eta = self.activation
+        pen = np.where(c > 0.5 * eta, c - 0.5 * eta,
+                       np.where(c > 0.0, np.sqrt(2.0 * eta * np.maximum(c, 0.0)) - eta, -eta))
+        return pen, d_self.max(axis=1)
 
     def in_collision_batch(self, Q_dh: np.ndarray) -> np.ndarray:
-        pen_scene, pen_self = self.penetration(Q_dh)
-        return (pen_scene > self.margin) | (pen_self > 0.0)
+        d_scene, d_self = self.distances(Q_dh)
+        return (d_scene.max(axis=1) > self.flag_threshold) | (d_self.max(axis=1) > 0.0)
 
     def in_collision(self, q_dh: np.ndarray) -> bool:
         return bool(self.in_collision_batch(np.asarray(q_dh)[None])[0])
@@ -196,8 +250,14 @@ class CuroboIK:
 
         T = np.asarray(T_targets, dtype=np.float64).reshape(-1, 4, 4)
         n = len(T)
-        if n > self.max_batch:
-            raise ValueError(f"{n} targets > max_batch {self.max_batch}; chunk the call")
+        if n > self.max_batch:                      # chunk transparently
+            parts = [self.solve(T[i:i + self.max_batch], q_seed_dh)
+                     for i in range(0, n, self.max_batch)]
+            return IKResult(q=np.concatenate([p.q for p in parts]),
+                            success=np.concatenate([p.success for p in parts]),
+                            position_error=np.concatenate([p.position_error for p in parts]),
+                            rotation_error=np.concatenate([p.rotation_error for p in parts]),
+                            solve_time=sum(p.solve_time for p in parts))
         pad = self.max_batch - n
         if pad:
             T = np.concatenate([T, np.repeat(T[-1:], pad, axis=0)], axis=0)

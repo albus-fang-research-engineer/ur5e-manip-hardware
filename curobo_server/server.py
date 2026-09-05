@@ -84,6 +84,14 @@ Wire protocol (msgpack + msgpack_numpy, REQ/REP):
           "position_error": float, "rotation_error": float,
           "solve_time": float}
 
+  {"cmd": "plan_constrained",         # CBiRRT over a TSR pair (manip_cbirrt)
+   "q_start": [6], "T_ee_body": 4x4,   #   vs. the LIVE ESDF; see
+   "subgoal": TSR, "path": [TSR,...],  #   plan_constrained.py for the full
+   ...}                                #   request/reply and the goal funnel
+      -> {"ok": True, "success": bool, "reason": str, "positions": Nx6,
+          "ee_path": Nx3, "body_path": Nx3, "max_excess": float,
+          "funnel": {...}, "tree_sizes": [a, b], ...}
+
   FRAME CONTRACT for masking + planning: the map frame IS the robot base
   frame (base_link at the map origin). The planner plans in base frame and
   reads the mapper's VoxelGrid coordinates as-is; the segmenter needs the
@@ -430,8 +438,10 @@ def handle(msg, state):
         kw.update({k: msg[k] for k in kw if k in msg})
         state["mapper"], state["cfg"] = build_mapper(**kw)
         state["cfg_kwargs"] = kw
-        # the planner holds an alias of the OLD mapper's ESDF buffer
+        # the planner (and the cbirrt oracles) hold an alias of the OLD
+        # mapper's ESDF buffer
         state["planner"] = None
+        state["cbirrt"] = None
         return {"ok": True, "memory_mb": state["mapper"].memory_usage_mb()}
 
     if cmd == "integrate":
@@ -466,6 +476,12 @@ def handle(msg, state):
 
     if cmd == "plan":
         return _plan(state, msg)
+
+    if cmd == "plan_constrained":
+        import plan_constrained as _pc      # sidecar dir is the CWD / on sys.path
+        if state.get("robot_cfg") is None:
+            _load_robot(state)
+        return _pc.handle(state, msg)
 
     if cmd == "esdf":
         origin = msg.get("origin")
