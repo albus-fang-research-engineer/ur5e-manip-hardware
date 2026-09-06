@@ -1,5 +1,10 @@
 """Isolate the CUDA fault seen on the first live-ESDF plan_constrained call.
 
+CONCLUSION (see variant notes below): an RSC voxel query between the IK
+solver's CUDA-graph capture and replay faults the replay. Fix applied:
+CuroboIK(use_cuda_graph=False) by default (variant J: 84 ms / batch of 20).
+MotionPlanner is unaffected (variant K). Kept as a regression harness.
+
 Traceback pointed at IKSolver._get_result during a scene-aware IK solve on
 Scene(voxel=[mapper.compute_esdf()]). The same grid passed through
 RobotSceneCollision moments earlier without fault, and IK on a Cuboid scene

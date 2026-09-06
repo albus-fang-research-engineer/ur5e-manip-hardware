@@ -209,12 +209,22 @@ class IKResult:
 
 class CuroboIK:
     """Batched IK on tool0. Built for a fixed max batch and a fixed goal-buffer
-    structure (CUDA graphs cannot be re-captured in this build): solve() pads
-    every call to max_batch and always supplies a current_state."""
+    structure: solve() pads every call to max_batch and always supplies a
+    current_state.
+
+    use_cuda_graph is OFF by default, deliberately. Measured in
+    test/curobo_incontainer/repro_ik_live_esdf.py: a RobotSceneCollision
+    VOXEL query executed between this solver's graph capture and a later
+    replay raises `CUDA error: an illegal instruction` inside the replay
+    (variants E/F/H fault; G/I/J pass; a cloned grid does not help; cuboid
+    scenes and no-scene IK never fault; MotionPlanner's own graphs are not
+    affected, variant K). The collision oracle and this IK live in the same
+    process by design, so the graph is not safe here. Cost: ~84 ms per batch
+    of 20 instead of ~10 ms -- 0.2-2 s per stage across the goal funnel."""
 
     def __init__(self, robot_cfg: dict, scene=None, max_batch: int = 64,
                  num_seeds: int = 32, position_tolerance: float = 0.005,
-                 orientation_tolerance: float = 0.05, use_cuda_graph: bool = True):
+                 orientation_tolerance: float = 0.05, use_cuda_graph: bool = False):
         from curobo.inverse_kinematics import InverseKinematics, InverseKinematicsCfg
 
         cfg = InverseKinematicsCfg.create(
@@ -229,9 +239,8 @@ class CuroboIK:
         self.warmup_time = self._warmup()
 
     def _warmup(self) -> float:
-        """First solve pays warp JIT + CUDA-graph capture (~30 s observed);
-        do it here, on a reachable dummy pose, so callers see steady-state
-        latency."""
+        """First solve pays warp JIT (and graph capture if enabled); do it
+        here, on a reachable dummy pose, so callers see steady-state latency."""
         import time
         t0 = time.time()
         T = np.eye(4); T[:3, 3] = [0.45, 0.0, 0.45]
