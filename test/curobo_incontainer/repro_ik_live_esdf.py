@@ -12,6 +12,13 @@ is fine in the tests. Variables to separate:
     E  the EXACT plan_constrained command the bridge sent, via server.handle
        (max_batch = CuroboIK default 64, unlike A-C which used 32)
     F  same as E with CuroboIK max_batch forced to 32
+    -- E and F fault, A-D pass: the trigger is RobotSceneCollision AND IK
+       built on the SAME VoxelGrid object (direct-reference, no copy). --
+    G  RSC + IK on the same grid, IK solve only (no collision query): confirms
+       coexistence alone is the trigger
+    H  RSC on the live grid, IK on grid.clone(): candidate fix 1 (scene-aware
+       IK on a private copy, refreshed with update_world per call)
+    I  RSC on the live grid, IK with scene=None: candidate fix 2
 
 Run with CUDA_LAUNCH_BLOCKING=1 so the report names the faulting kernel
 rather than the next API call:
@@ -28,7 +35,7 @@ import subprocess
 import sys
 import traceback
 
-VARIANTS = ["E", "F", "D", "A", "B", "C"]
+VARIANTS = ["G", "H", "I"]
 
 
 def child(variant: str):
@@ -96,9 +103,21 @@ def child(variant: str):
         torch.cuda.synchronize()
         return
 
-    scene = None if variant == "C" else Scene(voxel=[grid])
-    print(f"[{variant}] building IK (scene={'voxel' if scene is not None else 'None'}) ...")
+    col = None
+    if variant in ("G", "H", "I"):
+        col = CuroboCollision(robot_cfg, Scene(voxel=[grid]))       # the planner's oracle, live grid
+        print(f"[{variant}] RSC built on the live grid")
+    if variant in ("C", "I"):
+        scene, label = None, "None"
+    elif variant == "H":
+        scene, label = Scene(voxel=[grid.clone()]), "voxel CLONE"
+    else:
+        scene, label = Scene(voxel=[grid]), "voxel (shared)"
+    print(f"[{variant}] building IK (scene={label}) ...")
     ik = CuroboIK(robot_cfg, scene, max_batch=32, num_seeds=32)
+    if col is not None and variant != "G":
+        print(f"[{variant}] collision query on live grid first: in_collision(q0) = {col.in_collision(q0)}")
+        torch.cuda.synchronize()
     torch.cuda.synchronize()
     print(f"[{variant}] IK built + warmed in {ik.warmup_time:.1f}s")
     ch = dh_chain()
@@ -106,6 +125,15 @@ def child(variant: str):
     res = ik.solve(T, q_seed_dh=q0)
     torch.cuda.synchronize()
     print(f"[{variant}] IK solved {res.success.sum()}/20 OK")
+    if col is not None:
+        print(f"[{variant}] collision after IK: in_collision(q0) = {col.in_collision(q0)}; "
+              f"batch of solutions free: {(~col.in_collision_batch(res.q[res.success])).sum()}/{res.success.sum()}")
+        torch.cuda.synchronize()
+        if variant == "H":
+            # refresh the clone from the live grid the way the command would per call
+            ik.update_world(Scene(voxel=[mapper.compute_esdf(esdf_voxel_size=float(cfg.esdf_voxel_size)).clone()]))
+            res2 = ik.solve(T, q_seed_dh=q0); torch.cuda.synchronize()
+            print(f"[{variant}] after update_world(clone): IK solved {res2.success.sum()}/20 OK")
 
 
 def main():
