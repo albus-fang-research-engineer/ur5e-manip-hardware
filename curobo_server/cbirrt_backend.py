@@ -224,15 +224,23 @@ class CuroboIK:
 
     def __init__(self, robot_cfg: dict, scene=None, max_batch: int = 64,
                  num_seeds: int = 32, position_tolerance: float = 0.005,
-                 orientation_tolerance: float = 0.05, use_cuda_graph: bool = False):
+                 orientation_tolerance: float = 0.05, use_cuda_graph: bool = False,
+                 shared_checker=None, optimizer_configs=None):
+        """shared_checker: a SceneCollision to reuse (e.g. CuroboCollision.rsc
+        .scene_model) instead of building a second one from `scene` -- the
+        arrangement cuRobo's own MotionPlanner uses across its solvers.
+        optimizer_configs: override IK optimizer yml list (default
+        particle_ik + lbfgs_ik)."""
         from curobo.inverse_kinematics import InverseKinematics, InverseKinematicsCfg
 
-        cfg = InverseKinematicsCfg.create(
-            robot=robot_cfg, scene_model=scene, num_seeds=int(num_seeds),
-            position_tolerance=float(position_tolerance),
-            orientation_tolerance=float(orientation_tolerance),
-            max_batch_size=int(max_batch), use_cuda_graph=bool(use_cuda_graph))
-        self.ik = InverseKinematics(cfg)
+        kw = dict(robot=robot_cfg, scene_model=None if shared_checker is not None else scene,
+                  num_seeds=int(num_seeds), position_tolerance=float(position_tolerance),
+                  orientation_tolerance=float(orientation_tolerance),
+                  max_batch_size=int(max_batch), use_cuda_graph=bool(use_cuda_graph))
+        if optimizer_configs is not None:
+            kw["optimizer_configs"] = list(optimizer_configs)
+        cfg = InverseKinematicsCfg.create(**kw)
+        self.ik = InverseKinematics(cfg, scene_collision_checker=shared_checker)
         self.max_batch = int(max_batch)
         self.joint_names = list(self.ik.joint_names)
         self.tool = self.ik.tool_frames[0]

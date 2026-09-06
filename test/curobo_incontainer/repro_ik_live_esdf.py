@@ -30,6 +30,13 @@ is fine in the tests. Variables to separate:
     J  as H but IK built with use_cuda_graph=False: candidate fix 3
     K  MotionPlanner (server's own, cuda graph) plan -> RSC voxel query ->
        plan again: is the existing "plan" command exposed too?
+    -- J ok (84 ms/20), K ok. Is the fault OUR misuse -- two independent
+       voxel SceneCollisions in one process, where cuRobo shares one? --
+    L  IK with cuda graph ON, sharing the RSC's SceneCollision
+       (IKSolver(scene_collision_checker=col.rsc.scene_model)); queries and
+       solves interleaved 3x
+    M  IK with cuda graph ON, separate checker, optimizer lbfgs_ik only
+       (the planner's own IK config) -- the particle-optimizer hypothesis
 
 Run with CUDA_LAUNCH_BLOCKING=1 so the report names the faulting kernel
 rather than the next API call:
@@ -46,7 +53,7 @@ import subprocess
 import sys
 import traceback
 
-VARIANTS = ["J", "K"]
+VARIANTS = ["L", "M"]
 
 
 def child(variant: str):
@@ -127,7 +134,7 @@ def child(variant: str):
         return
 
     col = None
-    if variant in ("G", "H", "I", "J"):
+    if variant in ("G", "H", "I", "J", "L", "M"):
         col = CuroboCollision(robot_cfg, Scene(voxel=[grid]))       # the planner's oracle, live grid
         print(f"[{variant}] RSC built on the live grid")
     if variant in ("C", "I"):
@@ -136,10 +143,21 @@ def child(variant: str):
         scene, label = Scene(voxel=[grid.clone()]), "voxel CLONE"
     elif variant == "J":
         scene, label = Scene(voxel=[grid]), "voxel (shared), NO cuda graph"
+    elif variant == "L":
+        scene, label = None, "SHARED SceneCollision from RSC, cuda graph ON"
+    elif variant == "M":
+        scene, label = Scene(voxel=[grid]), "voxel (separate), cuda graph ON, lbfgs only"
     else:
         scene, label = Scene(voxel=[grid]), "voxel (shared)"
     print(f"[{variant}] building IK (scene={label}) ...")
-    ik = CuroboIK(robot_cfg, scene, max_batch=32, num_seeds=32, use_cuda_graph=(variant != "J"))
+    extra = {}
+    if variant == "L":
+        extra = dict(shared_checker=col.rsc.scene_model, use_cuda_graph=True)
+    elif variant == "M":
+        extra = dict(optimizer_configs=["ik/lbfgs_ik.yml"], use_cuda_graph=True)
+    else:
+        extra = dict(use_cuda_graph=(variant != "J"))
+    ik = CuroboIK(robot_cfg, scene, max_batch=32, num_seeds=32, **extra)
     if col is not None and variant != "G":
         print(f"[{variant}] collision query on live grid first: in_collision(q0) = {col.in_collision(q0)}")
         torch.cuda.synchronize()
@@ -154,6 +172,18 @@ def child(variant: str):
         print(f"[{variant}] collision after IK: in_collision(q0) = {col.in_collision(q0)}; "
               f"batch of solutions free: {(~col.in_collision_batch(res.q[res.success])).sum()}/{res.success.sum()}")
         torch.cuda.synchronize()
+        if variant in ("L", "M"):
+            import time
+            for k in range(3):                       # interleave: query, solve, query, solve ...
+                print(f"[{variant}] interleave {k}: in_collision(q0) = {col.in_collision(q0)}", end="")
+                torch.cuda.synchronize()
+                r = ik.solve(T, q_seed_dh=q0); torch.cuda.synchronize()
+                print(f" -> IK {r.success.sum()}/20")
+            t0 = time.time()
+            for _ in range(5):
+                ik.solve(T, q_seed_dh=q0)
+            torch.cuda.synchronize()
+            print(f"[{variant}] steady state: {(time.time() - t0) / 5 * 1e3:.1f} ms per batch of 20")
         if variant == "J":
             import time
             t0 = time.time()
