@@ -66,7 +66,10 @@ def generate_launch_description():
                  "info_topic": LaunchConfiguration("info_topic"),
                  "use_sim_time": use_sim_time,
              }]),
-
+        # CBiRRT over TSRs, same sidecar as curobo_bridge (its
+        # "plan_constrained" command); stateless service, roots TSRs via TF.
+        Node(package="manip_bridge", executable="constrained_planner", name="constrained_planner",
+             output="screen", parameters=[{"use_sim_time": use_sim_time}]),
 
         ExecuteProcess(
             cmd=["python3", os.path.join(LEGACY_DIR, "pointso_bridge_node.py")],

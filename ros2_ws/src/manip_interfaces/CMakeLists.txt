@@ -10,6 +10,7 @@ find_package(sensor_msgs REQUIRED)
 find_package(shape_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
+find_package(trajectory_msgs REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
   "srv/GenerateMesh.srv"
@@ -17,10 +18,11 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "srv/EstimatePose.srv"
   "srv/Orient.srv"
   "srv/Release.srv"
+  "srv/PlanConstrained.srv"
   "msg/TSR.msg"
   "msg/Grasp.msg"
   "msg/GraspArray.msg"
-  DEPENDENCIES sensor_msgs shape_msgs geometry_msgs std_msgs
+  DEPENDENCIES sensor_msgs shape_msgs geometry_msgs std_msgs trajectory_msgs
 )
 
 ament_package()

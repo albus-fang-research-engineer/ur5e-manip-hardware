@@ -87,6 +87,9 @@ Two kinds of node, matching how the sidecars are used in a task:
 | service (once per scene) | `oriany_bridge` | `/oriany/orient` `Orient` | oriany :5673 |
 | service + stream | `any6d_bridge` | `/any6d/estimate` `/any6d/release` → `/any6d/<obj>/pose` + TF | any6d :5672 |
 | service + stream | `pose_bridge` | `/pose/estimate` `/pose/release` → `/pose/<obj>/pose` + TF | pose :5667 |
+| service (per stage) | `constrained_planner` | `/planner/plan_constrained` `PlanConstrained` → `/planner/trajectory` `/planner/{ee,body}_path` | curobo :5671 (`plan_constrained` cmd) |
+| topic filter (per object) | `grasp_filter` | `/grasp/<obj>/grasps` × `/tsr/<obj>/grasp` → `/grasp/<obj>/filtered` + report + markers | none (pure `manip_tsr`) |
+| latched publisher | `tsr_from_yaml` | YAML → `/tsr/<obj>/grasp` (hand arm / test harness) | none |
 | legacy topic-JSON | `ros2_bridge/pointso_bridge_node.py` | `/pointso_bridge/*` | pointso :5668 |
 
 `EstimatePose` registers once from a caller-supplied RGB-D + mask; on success

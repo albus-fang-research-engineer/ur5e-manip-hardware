@@ -35,6 +35,7 @@ setup(
             "grasp_viz = manip_bridge.grasp_viz_node:main",
             "grasp_filter = manip_bridge.grasp_filter_node:main",
             "tsr_from_yaml = manip_bridge.tsr_from_yaml_node:main",
+            "constrained_planner = manip_bridge.constrained_planner_bridge_node:main",
             "run_scene = manip_bridge.run_scene:main",
             "curobo_bridge = manip_bridge.curobo_bridge_node:main",
             # still legacy (ros2_bridge/pointso_bridge_node.py via ExecuteProcess)

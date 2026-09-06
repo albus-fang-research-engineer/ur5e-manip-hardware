@@ -1,0 +1,38 @@
+# CBiRRT over a TSR pair via the curobo sidecar's "plan_constrained" command.
+#
+# GOALS ARE NOT IN THIS REQUEST. The sidecar samples body poses from
+# subgoal INTERSECT path, runs IK on all of them, filters collision and
+# containment, and plans to the nearest surviving config -- the reply's
+# funnel_json says how many survived each step, so a failure is typed
+# (thin intersection / IK / collision / planner) rather than a bare false.
+#
+# Frames: every TSR's header.frame_id may be any TF frame (object frame for
+# grasp-anchored regions, base_link for world-anchored); the bridge roots it
+# into base_link before sending. t_ee_body is the measured grasp transform
+# tool0 -> body (e = tool0 at this HEAD). attached_spheres are the grasped
+# body's spheres in the tool0 frame, 4 floats each (x y z r); empty = none.
+# start empty -> the bridge uses the latest /joint_states.
+manip_interfaces/TSR subgoal
+manip_interfaces/TSR[] path
+geometry_msgs/Pose t_ee_body
+sensor_msgs/JointState start
+int32 n_goal_samples 60
+float32 timeout 20.0             # CBiRRT wall budget across goal attempts, s
+float32 eps 0.10                 # joint-space step, rad
+float32 constraint_tol 0.002     # max TSR excess along the path
+float32 clearance_margin 0.0     # m; flags anything closer than this to the ESDF
+int32 seed 0
+float32[] attached_spheres
+---
+bool success
+string message                   # typed reason on failure
+trajectory_msgs/JointTrajectory trajectory   # geometric path; time_from_start = index * waypoint_dt
+geometry_msgs/Point[] ee_path    # tool0 positions along the path, base_link
+geometry_msgs/Point[] body_path  # body positions along the path, base_link
+float32 max_excess               # verified max TSR excess along the path
+string funnel_json               # {"n_requested","n_sampled","acceptance_rate","n_ik",
+                                 #  "n_collision_free","n_contained","escalations",
+                                 #  "n_plan_attempts","stopped",...}
+int32[] tree_sizes
+int32 n_collision_calls
+float32 total_time
