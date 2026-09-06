@@ -98,6 +98,14 @@ def test_plan_constrained_succeeds_with_typed_funnel(state, problem):
     assert len(rep["ee_path"]) == len(rep["body_path"]) == len(P)
 
 
+def test_no_path_tsr_means_plain_birrt(state, problem):
+    """path: [] must plan (unconstrained), not raise in project_config."""
+    rep = server.handle(base_msg(problem, path=[], timeout=30.0), state)
+    assert rep["success"], rep["reason"]
+    assert rep["tsr_names"] == ["transport/subgoal", "path/free"]
+    assert rep["max_excess"] == 0.0
+
+
 def test_joint_name_reorder_is_honoured(state, problem):
     names = ["wrist_3_joint", "shoulder_pan_joint", "elbow_joint", "wrist_1_joint",
              "wrist_2_joint", "shoulder_lift_joint"]

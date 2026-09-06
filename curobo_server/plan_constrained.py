@@ -39,7 +39,7 @@ import time
 
 import numpy as np
 
-from manip_tsr import TSR, sample_intersection
+from manip_tsr import FREE_ROT, FREE_TRANS, TSR, bounds, sample_intersection
 from manip_cbirrt import AttachedObject, plan_constrained
 
 from cbirrt_backend import DH_JOINT_ORDER, CuroboCollision, CuroboIK, make_ik, make_kinematics
@@ -51,6 +51,14 @@ log = logging.getLogger("curobo_server.plan_constrained")
 GOAL_SAMPLE_MAX = 480
 MIN_ACCEPT_RATE = 0.02
 CONTAINMENT_TOL = 5e-3          # achieved-config containment check
+
+# "No path TSR" = unconstrained motion = CBiRRT degenerates to plain BiRRT. The
+# planner needs at least one TSR to project onto (max() over an empty list),
+# so an all-free region stands in; it constrains nothing and is contained
+# everywhere. manip_cbirrt stays verbatim with sim, which always has a path.
+FREE_PATH = TSR(T0_w=np.eye(4), Bw=bounds(x=FREE_TRANS, y=FREE_TRANS, z=FREE_TRANS,
+                                          roll=FREE_ROT, pitch=FREE_ROT, yaw=FREE_ROT),
+                name="path/free")
 
 
 # ------------------------------------------------------------------ oracles
@@ -149,7 +157,7 @@ def handle(state, msg) -> dict:
     q_start = np.array([q_in[names.index(n)] for n in DH_JOINT_ORDER])
     attached = AttachedObject(T_ee_body=np.asarray(msg["T_ee_body"], float).reshape(4, 4))
     subgoal = _tsr(msg["subgoal"])
-    paths = [_tsr(p) for p in msg.get("path", [])]
+    paths = [_tsr(p) for p in msg.get("path", [])] or [FREE_PATH]
     rng = np.random.default_rng(int(msg.get("seed", 0)))
     col.clearance_margin = float(msg.get("clearance_margin", 0.0))
     col.n_calls = 0
