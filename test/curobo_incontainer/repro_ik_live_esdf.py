@@ -1,9 +1,12 @@
 """Isolate the CUDA fault seen on the first live-ESDF plan_constrained call.
 
-CONCLUSION (see variant notes below): an RSC voxel query between the IK
-solver's CUDA-graph capture and replay faults the replay. Fix applied:
-CuroboIK(use_cuda_graph=False) by default (variant J: 84 ms / batch of 20).
-MotionPlanner is unaffected (variant K). Kept as a regression harness.
+CONCLUSION: two independent voxel SceneCollision instances in one process,
+with one inside a CUDA-graph-captured solver, fault the replay (E/F/H/M);
+sharing the collision oracle's checker with the IK solver (L) is clean with
+the graph ON at 6.9 ms per batch of 20. That is how cuRobo's MotionPlanner
+uses the API (one checker across solvers) -- our misuse, not a cuRobo bug.
+Fix: make_ik(robot_cfg, col) in cbirrt_backend. J (no graph, 84 ms) was the
+interim workaround. MotionPlanner unaffected (K). Kept as a regression harness.
 
 Traceback pointed at IKSolver._get_result during a scene-aware IK solve on
 Scene(voxel=[mapper.compute_esdf()]). The same grid passed through
@@ -53,7 +56,7 @@ import subprocess
 import sys
 import traceback
 
-VARIANTS = ["L", "M"]
+VARIANTS = ["L", "E"]        # L must pass (deployed arrangement); E is the exact bridge command
 
 
 def child(variant: str):

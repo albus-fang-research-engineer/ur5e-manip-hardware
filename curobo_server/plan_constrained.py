@@ -42,7 +42,7 @@ import numpy as np
 from manip_tsr import TSR, sample_intersection
 from manip_cbirrt import AttachedObject, plan_constrained
 
-from cbirrt_backend import DH_JOINT_ORDER, CuroboCollision, CuroboIK, make_kinematics
+from cbirrt_backend import DH_JOINT_ORDER, CuroboCollision, CuroboIK, make_ik, make_kinematics
 
 log = logging.getLogger("curobo_server.plan_constrained")
 
@@ -73,12 +73,12 @@ def get_oracles(state, msg):
         if state.get(key) is None:
             scene = Scene.create(msg["scene"])
             kin, col = make_kinematics(state["robot_cfg"], scene)
-            state[key] = (kin, col, CuroboIK(state["robot_cfg"], scene))
+            state[key] = (kin, col, make_ik(state["robot_cfg"], col))   # ONE checker, shared
         return state[key]
     if state.get("cbirrt") is None:
         scene = _live_scene(state)
         kin, col = make_kinematics(state["robot_cfg"], scene)
-        state["cbirrt"] = (kin, col, CuroboIK(state["robot_cfg"], scene))
+        state["cbirrt"] = (kin, col, make_ik(state["robot_cfg"], col))    # ONE checker, shared
         log.info("cbirrt oracles built on the live ESDF")
     else:
         _live_scene(state)                          # refresh the aliased buffer

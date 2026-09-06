@@ -212,19 +212,22 @@ class CuroboIK:
     structure: solve() pads every call to max_batch and always supplies a
     current_state.
 
-    use_cuda_graph is OFF by default, deliberately. Measured in
-    test/curobo_incontainer/repro_ik_live_esdf.py: a RobotSceneCollision
-    VOXEL query executed between this solver's graph capture and a later
-    replay raises `CUDA error: an illegal instruction` inside the replay
-    (variants E/F/H fault; G/I/J pass; a cloned grid does not help; cuboid
-    scenes and no-scene IK never fault; MotionPlanner's own graphs are not
-    affected, variant K). The collision oracle and this IK live in the same
-    process by design, so the graph is not safe here. Cost: ~84 ms per batch
-    of 20 instead of ~10 ms -- 0.2-2 s per stage across the goal funnel."""
+    ONE VOXEL CHECKER PER PROCESS. Two independent SceneCollision instances
+    over VoxelGrids in one process, with either inside a CUDA-graph-captured
+    solver, fault the graph replay ("illegal instruction" / "illegal memory
+    access") -- test/curobo_incontainer/repro_ik_live_esdf.py, variants
+    E/F/H/M fault, L passes. This is how cuRobo uses its own API (MotionPlanner
+    shares one checker across IK / trajopt / graph), and it matches the
+    documented voxel-cache-pointer caveat for captured graphs. So: pass the
+    collision oracle's checker as `shared_checker` (make_ik does) and keep the
+    graph ON (6.9 ms per batch of 20). Without a shared checker the graph is
+    only enabled when this solver has no scene of its own.
+
+    Not a cuRobo bug as far as the evidence goes; it was our misuse."""
 
     def __init__(self, robot_cfg: dict, scene=None, max_batch: int = 64,
                  num_seeds: int = 32, position_tolerance: float = 0.005,
-                 orientation_tolerance: float = 0.05, use_cuda_graph: bool = False,
+                 orientation_tolerance: float = 0.05, use_cuda_graph: bool | None = None,
                  shared_checker=None, optimizer_configs=None):
         """shared_checker: a SceneCollision to reuse (e.g. CuroboCollision.rsc
         .scene_model) instead of building a second one from `scene` -- the
@@ -233,6 +236,9 @@ class CuroboIK:
         particle_ik + lbfgs_ik)."""
         from curobo.inverse_kinematics import InverseKinematics, InverseKinematicsCfg
 
+        if use_cuda_graph is None:                  # safe by construction, see class doc
+            use_cuda_graph = shared_checker is not None or scene is None
+        self.use_cuda_graph = bool(use_cuda_graph)
         kw = dict(robot=robot_cfg, scene_model=None if shared_checker is not None else scene,
                   num_seeds=int(num_seeds), position_tolerance=float(position_tolerance),
                   orientation_tolerance=float(orientation_tolerance),
@@ -316,6 +322,12 @@ class CuroboIK:
 
 
 # ------------------------------------------------------------------ assembly
+
+
+def make_ik(robot_cfg: dict, col: CuroboCollision, **ik_kw) -> CuroboIK:
+    """IK sharing the collision oracle's SceneCollision (the only safe
+    arrangement next to a graph-captured solver; see CuroboIK)."""
+    return CuroboIK(robot_cfg, scene=None, shared_checker=col.rsc.scene_model, **ik_kw)
 
 
 def make_kinematics(robot_cfg: dict, scene, **collision_kw) -> tuple[CompositeKinematics, CuroboCollision]:

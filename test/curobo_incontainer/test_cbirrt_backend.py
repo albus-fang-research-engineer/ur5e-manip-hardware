@@ -194,9 +194,11 @@ def test_single_and_batch_agree(collision):
 
 
 # ---------------------------------------------------------------------- IK
-def test_ik_reproduces_pose_and_keeps_branch(robot_cfg, scene, kin_curobo):
+def test_ik_reproduces_pose_and_keeps_branch(robot_cfg, scene, kin_curobo, collision):
     chain = dh_chain()
-    ik = CuroboIK(robot_cfg, scene, max_batch=32, num_seeds=32)
+    ik = CuroboIK(robot_cfg, scene=None, shared_checker=collision.rsc.scene_model,
+                  max_batch=32, num_seeds=32)              # the deployed arrangement
+    assert ik.use_cuda_graph
     print(f"\n  IK warmup (JIT + graph capture): {ik.warmup_time:.1f}s")
     rng = np.random.default_rng(2)
     # free, near-nominal configs
