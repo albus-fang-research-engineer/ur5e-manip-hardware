@@ -19,6 +19,12 @@ is fine in the tests. Variables to separate:
     H  RSC on the live grid, IK on grid.clone(): candidate fix 1 (scene-aware
        IK on a private copy, refreshed with update_world per call)
     I  RSC on the live grid, IK with scene=None: candidate fix 2
+    -- G ok, H FAULT, I ok: the trigger is an RSC VOXEL query between the IK
+       solver's CUDA-graph capture and a later replay; a cloned grid does not
+       help, a cuboid scene never faults, no-scene IK never faults. --
+    J  as H but IK built with use_cuda_graph=False: candidate fix 3
+    K  MotionPlanner (server's own, cuda graph) plan -> RSC voxel query ->
+       plan again: is the existing "plan" command exposed too?
 
 Run with CUDA_LAUNCH_BLOCKING=1 so the report names the faulting kernel
 rather than the next API call:
@@ -35,7 +41,7 @@ import subprocess
 import sys
 import traceback
 
-VARIANTS = ["G", "H", "I"]
+VARIANTS = ["J", "K"]
 
 
 def child(variant: str):
@@ -96,6 +102,18 @@ def child(variant: str):
               f"funnel {f.get('n_sampled')}->{f.get('n_ik')}->{f.get('n_collision_free')}->{f.get('n_contained')} "
               f"waypoints {len(rep.get('positions', []))}")
         return
+    if variant == "K":
+        goal = np.array([[1, 0, 0, 0.35], [0, 1, 0, 0.55], [0, 0, 1, 0.45], [0, 0, 0, 1]], np.float32)
+        names = ["shoulder_pan_joint", "shoulder_lift_joint", "elbow_joint",
+                 "wrist_1_joint", "wrist_2_joint", "wrist_3_joint"]
+        req = {"cmd": "plan", "q": q0.astype(np.float32), "joint_names": names, "T_base_goal": goal}
+        r1 = server.handle(req, state); torch.cuda.synchronize()
+        print(f"[{variant}] MotionPlanner plan #1: success={r1.get('success')} {r1.get('error', '')}")
+        col = CuroboCollision(robot_cfg, Scene(voxel=[grid]))
+        print(f"[{variant}] RSC voxel query: in_collision(q0) = {col.in_collision(q0)}"); torch.cuda.synchronize()
+        r2 = server.handle(req, state); torch.cuda.synchronize()
+        print(f"[{variant}] MotionPlanner plan #2 (after RSC query): success={r2.get('success')} {r2.get('error', '')}")
+        return
     if variant == "D":
         col = CuroboCollision(robot_cfg, Scene(voxel=[grid]))
         print(f"[{variant}] collision on live grid: in_collision(q0) = {col.in_collision(q0)}, "
@@ -104,17 +122,19 @@ def child(variant: str):
         return
 
     col = None
-    if variant in ("G", "H", "I"):
+    if variant in ("G", "H", "I", "J"):
         col = CuroboCollision(robot_cfg, Scene(voxel=[grid]))       # the planner's oracle, live grid
         print(f"[{variant}] RSC built on the live grid")
     if variant in ("C", "I"):
         scene, label = None, "None"
     elif variant == "H":
         scene, label = Scene(voxel=[grid.clone()]), "voxel CLONE"
+    elif variant == "J":
+        scene, label = Scene(voxel=[grid]), "voxel (shared), NO cuda graph"
     else:
         scene, label = Scene(voxel=[grid]), "voxel (shared)"
     print(f"[{variant}] building IK (scene={label}) ...")
-    ik = CuroboIK(robot_cfg, scene, max_batch=32, num_seeds=32)
+    ik = CuroboIK(robot_cfg, scene, max_batch=32, num_seeds=32, use_cuda_graph=(variant != "J"))
     if col is not None and variant != "G":
         print(f"[{variant}] collision query on live grid first: in_collision(q0) = {col.in_collision(q0)}")
         torch.cuda.synchronize()
@@ -129,6 +149,13 @@ def child(variant: str):
         print(f"[{variant}] collision after IK: in_collision(q0) = {col.in_collision(q0)}; "
               f"batch of solutions free: {(~col.in_collision_batch(res.q[res.success])).sum()}/{res.success.sum()}")
         torch.cuda.synchronize()
+        if variant == "J":
+            import time
+            t0 = time.time()
+            for _ in range(5):
+                ik.solve(T, q_seed_dh=q0)
+            torch.cuda.synchronize()
+            print(f"[{variant}] no-graph IK steady state: {(time.time() - t0) / 5 * 1e3:.1f} ms per batch of 20")
         if variant == "H":
             # refresh the clone from the live grid the way the command would per call
             ik.update_world(Scene(voxel=[mapper.compute_esdf(esdf_voxel_size=float(cfg.esdf_voxel_size)).clone()]))
