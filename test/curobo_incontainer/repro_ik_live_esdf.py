@@ -9,6 +9,9 @@ is fine in the tests. Variables to separate:
     B  IK, voxel scene, mapper after ONE synthetic depth frame (a plane)
     C  IK, no scene at all (collision filter happens afterwards anyway)
     D  RobotSceneCollision on the never-integrated grid (control; expected ok)
+    E  the EXACT plan_constrained command the bridge sent, via server.handle
+       (max_batch = CuroboIK default 64, unlike A-C which used 32)
+    F  same as E with CuroboIK max_batch forced to 32
 
 Run with CUDA_LAUNCH_BLOCKING=1 so the report names the faulting kernel
 rather than the next API call:
@@ -25,7 +28,7 @@ import subprocess
 import sys
 import traceback
 
-VARIANTS = ["D", "A", "B", "C"]
+VARIANTS = ["E", "F", "D", "A", "B", "C"]
 
 
 def child(variant: str):
@@ -64,6 +67,28 @@ def child(variant: str):
     torch.cuda.synchronize()
 
     q0 = np.array([-1.0, -1.2, 1.5, -1.9, -1.57, 0.0])
+    if variant in ("E", "F"):
+        import functools
+        import plan_constrained as pc
+        if variant == "F":
+            pc.CuroboIK = functools.partial(CuroboIK, max_batch=32)
+        msg = {"cmd": "plan_constrained", "q_start": q0.astype(np.float32),
+               "joint_names": ["shoulder_pan_joint", "shoulder_lift_joint", "elbow_joint",
+                               "wrist_1_joint", "wrist_2_joint", "wrist_3_joint"],
+               "T_ee_body": [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0.12, 0, 0, 0, 1],
+               "subgoal": {"t0_w": [1, 0, 0, 0.35, 0, 1, 0, 0.55, 0, 0, 1, 0.45, 0, 0, 0, 1],
+                           "tw_e": list(np.eye(4).ravel()),
+                           "bw": [-.01, .01, -.01, .01, -.01, .01, -3.2, 3.2, -3.2, 3.2, -3.2, 3.2],
+                           "name": "transport/subgoal"},
+               "path": [], "n_goal_samples": 40, "timeout": 20.0, "eps": 0.1,
+               "constraint_tol": 0.002, "clearance_margin": 0.0, "seed": 0, "attached_spheres": None}
+        rep = server.handle(msg, state)
+        torch.cuda.synchronize()
+        f = rep.get("funnel", {})
+        print(f"[{variant}] success={rep.get('success')} reason='{rep.get('reason')}' "
+              f"funnel {f.get('n_sampled')}->{f.get('n_ik')}->{f.get('n_collision_free')}->{f.get('n_contained')} "
+              f"waypoints {len(rep.get('positions', []))}")
+        return
     if variant == "D":
         col = CuroboCollision(robot_cfg, Scene(voxel=[grid]))
         print(f"[{variant}] collision on live grid: in_collision(q0) = {col.in_collision(q0)}, "
