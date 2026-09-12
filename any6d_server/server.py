@@ -91,8 +91,34 @@ def _img_to_3d(rgb, mask, work_dir, obj):
     return trimesh.load(centered)
 
 
+def _simple_texture(mesh):
+    """A textured GLB (TRELLIS.2) loads with a trimesh PBRMaterial, and both
+    Any6D.reset_object and FoundationPose's make_mesh_tensors dereference
+    `mesh.visual.material.image` -- an attribute only SimpleMaterial has (in
+    trimesh 4.2.2, Any6D's pin, and current). Without this swap `Any6D(mesh=
+    <glb>)` raises AttributeError before any estimation; nobody hit it
+    because only geometry-only meshes were ever fed in. to_simple() carries
+    baseColorTexture into .image (verified for an EXT_texture_webp GLB, the
+    format trellis2_server writes, under trimesh 4.2.2 + numpy 1.26).
+    Geometry untouched: vertices, faces and per-vertex uv are unchanged."""
+    vis = getattr(mesh, "visual", None)
+    mat = getattr(vis, "material", None)
+    if vis is not None and vis.kind == "texture" and mat is not None \
+            and not hasattr(mat, "image") and hasattr(mat, "to_simple"):
+        mesh.visual.material = mat.to_simple()
+        log.info("PBRMaterial -> SimpleMaterial (image %s)",
+                 "present" if mesh.visual.material.image is not None else "MISSING")
+    return mesh
+
+
 def main():
     os.makedirs(OUT_DIR, exist_ok=True)
+    try:
+        from PIL import features
+        log.info("PIL webp support: %s (TRELLIS.2 GLBs carry EXT_texture_webp)",
+                 features.check("webp"))
+    except Exception:  # noqa: BLE001
+        log.warning("could not query PIL webp support")
     sessions = {}   # obj -> Any6D estimator (holds the scaled mesh)
 
     ctx = zmq.Context()
@@ -123,6 +149,7 @@ def main():
                 elif "mesh" in req:
                     mesh = trimesh.load(
                         os.path.join(MESH_DIR, req["mesh"]), force="mesh")
+                    mesh = _simple_texture(mesh)
                 else:
                     raise ValueError("estimate needs 'mesh' or img_to_3d=True")
 

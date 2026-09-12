@@ -5,11 +5,21 @@ orchestrator in embryo, and the manual "does it work, show me" harness.
     2. /sam3/segment            prompts -> masks            (writes overlays)
     3. per object:
          a. /oriany/orient           rgb+mask -> az/el/ro + alpha (semantic)
-         b. /trellis2/generate_mesh  rgb+mask+depth+K -> canonical + metric GLB
-         c. /any6d/estimate          img_to_3d  (or --any6d-mesh trellis)
-         d. /pose/estimate           mesh = TRELLIS metric GLB   (FP counterpart)
+         b. /trellis2/generate_mesh  rgb+mask -> canonical (unit-box) GLB
+         c. /any6d/estimate          mesh = that GLB; Any6D does the metric
+                                     scaling itself and exports
+                                     final_mesh_<obj>.obj (--any6d-mesh
+                                     img_to_3d keeps its own InstantMesh path)
+         d. /pose/estimate           mesh = Any6D's final_mesh -> FoundationPose
+                                     is the tracker of record on that file
     4. summary table + summary.json; every artifact under --out/<stamp>/
     5. --watch: keep spinning, print tracked poses as they stream
+
+The body frame of record is Any6D's final_mesh_<obj>.obj: FoundationPose
+registers and tracks on it, and the render asset the grounding renderers
+load is built from it (manip_bridge/render_asset.py). The TRELLIS sidecar's
+own metric-scale branch (_metric.glb, metric_scale.py) is recorded in the
+summary when the bridge computes it, but nothing here consumes it.
 
 Every stage is optional (--skip sam3,oriany,trellis2,any6d,pose) and tolerant: a
 failed or absent service is logged and the rest continues, so you can run
@@ -193,8 +203,9 @@ def main():
                     help="send oriany the FULL frame with an empty mask so the model "
                          "mattes it itself (upstream demo path) instead of a SAM3 crop. "
                          "A/B this against the default before trusting either.")
-    ap.add_argument("--any6d-mesh", choices=["img_to_3d", "trellis"], default="img_to_3d",
-                    help="Any6D mesh source: its own SAM2+InstantMesh, or the TRELLIS metric GLB")
+    ap.add_argument("--any6d-mesh", choices=["img_to_3d", "trellis"], default="trellis",
+                    help="Any6D mesh source: the TRELLIS.2 canonical GLB (default; Any6D "
+                         "rescales it), or Any6D's own SAM2+InstantMesh")
     ap.add_argument("--threshold", type=float, default=0.0)
     ap.add_argument("--out", default=os.environ.get("RUN_OUT_DIR", "/data/runs"))
     ap.add_argument("--watch", type=float, nargs="?", const=20.0, default=None,
@@ -280,7 +291,8 @@ def main():
             key = obj.replace(" ", "_")
             rec = summary["objects"].setdefault(obj, {})
             mask_msg = mono_to_image(masks[obj], rgb_msg.header)
-            trellis_metric = ""
+            trellis_glb = ""       # canonical GLB -> Any6D's input
+            final_mesh = ""        # Any6D's scaled export -> FoundationPose's input
 
             if "oriany" not in skip:
                 req = Orient.Request()
@@ -303,10 +315,10 @@ def main():
                 req.output_name = f"{key}_{os.path.basename(out)}"
                 res = node.call("trellis2", req, 400)
                 if res is not None:
+                    trellis_glb = res.glb_path
                     rec["trellis2"] = {"glb": res.glb_path, "gen_time": res.gen_time,
                                        "metric_valid": res.metric_valid}
-                    if res.metric_valid:
-                        trellis_metric = res.metric_glb_path
+                    if res.metric_valid:   # sidecar's own scale branch: recorded, not used
                         rec["trellis2"].update(
                             metric_glb=res.metric_glb_path, scale=res.scale,
                             rmse_mm=1e3 * res.registration_rmse,
@@ -316,25 +328,35 @@ def main():
                 req = EstimatePose.Request()
                 req.rgb, req.depth, req.camera_info, req.mask = rgb_msg, depth_clean_msg, info, mask_msg
                 req.obj = key
-                if args.any6d_mesh == "trellis" and trellis_metric:
-                    req.mesh = trellis_metric
+                if args.any6d_mesh == "trellis":
+                    if not trellis_glb:
+                        log.warn(f"any6d: no TRELLIS GLB for '{obj}', skipping "
+                                 "(--any6d-mesh img_to_3d to use InstantMesh instead)")
+                        res = None
+                    else:
+                        req.mesh = trellis_glb
+                        res = node.call("any6d", req, 1000)
                 else:
                     req.img_to_3d = True
-                res = node.call("any6d", req, 1000)
+                    res = node.call("any6d", req, 1000)
                 if res is not None:
+                    final_mesh = res.mesh_path
                     rec["any6d"] = {"cam_T_obj": pose_to_T(res.pose).tolist(),
-                                    "extents": list(res.extents), "mesh": res.mesh_path}
+                                    "extents": list(res.extents), "mesh": res.mesh_path,
+                                    "source": args.any6d_mesh}
 
             if "pose" not in skip:
-                if not trellis_metric:
-                    log.warn(f"pose: no TRELLIS metric mesh for '{obj}', skipping FP")
+                if not final_mesh:
+                    log.warn(f"pose: no Any6D final mesh for '{obj}', skipping FP "
+                             "(FoundationPose registers on Any6D's scaled export)")
                 else:
                     req = EstimatePose.Request()
                     req.rgb, req.depth, req.camera_info, req.mask = rgb_msg, depth_clean_msg, info, mask_msg
-                    req.obj, req.mesh = key, trellis_metric
+                    req.obj, req.mesh = key, final_mesh
                     res = node.call("pose", req, 400)
                     if res is not None:
-                        rec["pose_on_trellis"] = {"cam_T_obj": pose_to_T(res.pose).tolist()}
+                        rec["pose_on_final"] = {"cam_T_obj": pose_to_T(res.pose).tolist(),
+                                                "mesh": final_mesh}
 
         # ---- summary -------------------------------------------------------
         print("\n==== scene summary ====")
@@ -348,23 +370,29 @@ def main():
                       + ("   <- alpha != 1: front axis defined only up to a "
                          "symmetry group" if o["alpha"] != 1 else ""))
             ts = {}
-            for k in ("trellis2", "any6d", "pose_on_trellis"):
+            for k in ("trellis2", "any6d", "pose_on_final"):
                 r = rec.get(k)
                 if r and "cam_T_obj" in r:
                     T = np.array(r["cam_T_obj"])
                     ts[k] = T
                     extra = ""
                     if k == "trellis2":
-                        extra = f" scale={r['scale']:.4f} rmse={r['rmse_mm']:.1f}mm"
+                        extra = f" scale={r['scale']:.4f} rmse={r['rmse_mm']:.1f}mm (sidecar branch, unused)"
                     if k == "any6d":
                         extra = f" extents={np.round(r['extents'], 3).tolist()}"
                     print(f"  {k:16s} t={T[:3, 3].round(3).tolist()}{extra}")
-            if "any6d" in ts and "pose_on_trellis" in ts:
-                d = np.linalg.norm(ts["any6d"][:3, 3] - ts["pose_on_trellis"][:3, 3])
-                Ra, Rb = ts["any6d"][:3, :3], ts["pose_on_trellis"][:3, :3]
+            if "any6d" in ts and "pose_on_final" in ts:
+                # Same mesh, same body frame (Any6D's last reset_object is on
+                # the already-centred scaled mesh, so its pose compensation is
+                # the identity and final_mesh IS the frame): this is a
+                # registration-consistency check, and a large gap means one of
+                # the two registrations is wrong -- not a frame difference.
+                d = np.linalg.norm(ts["any6d"][:3, 3] - ts["pose_on_final"][:3, 3])
+                Ra, Rb = ts["any6d"][:3, :3], ts["pose_on_final"][:3, :3]
                 ang = np.degrees(np.arccos(np.clip((np.trace(Ra.T @ Rb) - 1) / 2, -1, 1)))
-                print(f"  any6d vs FP(trellis): dt={1e3 * d:.1f} mm  dR={ang:.1f} deg  "
-                      "(body frames differ -> dR only meaningful if both use the TRELLIS mesh)")
+                flag = "   <- disagree: inspect both registrations" if (d > 0.01 or ang > 5) else ""
+                print(f"  any6d vs FP(final): dt={1e3 * d:.1f} mm  dR={ang:.1f} deg  "
+                      f"(same mesh, same frame){flag}")
         with open(f"{out}/summary.json", "w") as f:
             json.dump(summary, f, indent=2)
         print(f"artifacts: {out}")

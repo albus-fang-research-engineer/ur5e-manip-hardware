@@ -53,6 +53,15 @@ class Session:
 
     def __init__(self, mesh_path, scorer, refiner, glctx):
         mesh = trimesh.load(mesh_path, force="mesh")
+        # A textured GLB loads with a PBRMaterial; FoundationPose's
+        # make_mesh_tensors reads `material.image`, which only SimpleMaterial
+        # has. Any6D's final_mesh_*.obj is untextured so this is a no-op on the
+        # normal path; it matters if a TRELLIS GLB is ever registered directly.
+        vis = getattr(mesh, "visual", None)
+        mat = getattr(vis, "material", None)
+        if vis is not None and vis.kind == "texture" and mat is not None \
+                and not hasattr(mat, "image") and hasattr(mat, "to_simple"):
+            mesh.visual.material = mat.to_simple()
         self.est = FoundationPose(
             model_pts=mesh.vertices,
             model_normals=mesh.vertex_normals,

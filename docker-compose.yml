@@ -93,8 +93,13 @@ services:
       - ./foundationpose_runtime/weights:/opt/FoundationPose/weights
       - ./foundationpose_runtime/meshes:/opt/meshes
       # TRELLIS.2 outputs, read-only: pass an absolute /data/meshes/*.glb as
-      # `mesh` to register FoundationPose on a generated metric mesh
+      # `mesh` to register FoundationPose on a generated mesh directly
       - ./trellis2_runtime/outputs:/data/meshes:ro
+      # Any6D outputs, read-only: the tracker of record registers on Any6D's
+      # metrically scaled final_mesh_<obj>.obj (absolute /data/any6d/... as
+      # `mesh`, the path Any6D reports in its reply) -- same file, same body
+      # frame as the render asset the grounding renderers load.
+      - ./any6d_runtime/outputs:/data/any6d:ro
       - /tmp/.X11-unix:/tmp/.X11-unix      # only needed for debug viz
     environment:
       - POSE_PORT=5667

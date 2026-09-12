@@ -6,9 +6,12 @@
     TF  camera_optical -> any6d_<obj>
 
 `img_to_3d=true` generates the mesh from the anchor RGB (SAM2 + InstantMesh,
-~1-2 min); otherwise `mesh` is a reference mesh Any6D will rescale (CAD or a
-TRELLIS.2 output -- need not be metric). The reply carries the scaled mesh
-path + AABB extents.
+~1-2 min); otherwise `mesh` is a reference mesh Any6D will rescale (CAD or
+the TRELLIS.2 canonical GLB -- need not be metric; a textured GLB is fine,
+the sidecar converts its PBR material). The reply carries the scaled mesh
+path (final_mesh_<obj>.obj, bbox-centred, per-axis scaled, vertex order
+and faces identical to the input) + AABB extents. The returned pose is in
+that final mesh's frame.
 
 Env:
     ANY6D_ADDR          tcp://127.0.0.1:5672

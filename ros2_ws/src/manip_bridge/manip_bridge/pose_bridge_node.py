@@ -6,10 +6,12 @@
     TF  camera_optical -> pose_<obj>
 
 `mesh` is a filename under the sidecar's /opt/meshes, or an absolute path on
-a mount it can see (docker-compose mounts ./trellis2_runtime/outputs at
-/data/meshes in the pose container, so a TRELLIS.2 metric GLB can be fed
-straight in -- that is the "FoundationPose on a TRELLIS mesh" counterpart
-to Any6D).
+a mount it can see. docker-compose mounts ./any6d_runtime/outputs at
+/data/any6d (Any6D's scaled final_mesh_<obj>.obj -- the tracker-of-record
+input; the pose is expressed in that file's frame) and
+./trellis2_runtime/outputs at /data/meshes (a TRELLIS.2 GLB can be
+registered directly; the sidecar swaps its PBR material for a simple one
+so FoundationPose can read the texture).
 
 Env:
     POSE_ADDR          tcp://127.0.0.1:5667

@@ -119,9 +119,31 @@ matting path so the two are directly comparable. `bg_fill` defaults to 255,
 which is what upstream `preprocess_images` composites the rembg RGBA onto.
 
 `mesh` in `EstimatePose` is a filename under the sidecar's `/opt/meshes` **or**
-an absolute path: `./trellis2_runtime/outputs` is mounted read-only at
-`/data/meshes` in the pose and any6d containers, so a TRELLIS.2 metric GLB
-from `/trellis2/generate_mesh` can be passed straight in.
+an absolute path. Mounts: `./trellis2_runtime/outputs` at `/data/meshes`
+(pose, any6d) and `./any6d_runtime/outputs` at `/data/any6d` (pose,
+ros2-bridge).
+
+**Perception flow (what `run_scene` does by default).** TRELLIS.2 produces
+the canonical unit-box GLB and replaces InstantMesh as Any6D's input mesh;
+Any6D does the metric scaling itself and exports `final_mesh_<obj>.obj`;
+FoundationPose registers and tracks on that file and is the tracker of
+record (Any6D's own `track` is the same refiner on the same mesh -- the
+second registration buys process isolation, a `release`-able Any6D
+session, and a same-mesh consistency check that `run_scene` prints). The
+TRELLIS sidecar's `_metric.glb` / `metric_scale.py` branch is recorded in
+`summary.json` when computed but nothing consumes it.
+
+Two facts about `final_mesh` that the rest of the stack relies on
+(`taeyeopl/Any6D` at `80eb486`): the returned `cam_T_obj` is in
+`final_mesh`'s frame -- the last `reset_object` is on the already-centred
+scaled mesh, so the centring compensation is the identity and the export is
+that mesh (its bbox centre is 0; assert it, it is numerical not structural);
+and Any6D only ever replaces `mesh.vertices`, so vertex order and faces are
+identical to the input (`final = diag(s)·(canonical − c)`, measured residual
+1e-8 m on the mug run). A textured GLB into Any6D used to crash in
+`reset_object` (`material.image` on a `PBRMaterial`); `any6d_server` now
+swaps in a `SimpleMaterial`, verified to carry an `EXT_texture_webp` texture
+under trimesh 4.2.2.
 
 ### Build
 
@@ -191,9 +213,17 @@ The sim repo's grounding renderers (`ground_parts.py`, `render_candidates.py`,
 `render_stage_frames.py`) read an object asset dir -- `<name>.xml` with a
 body `object` carrying the visual geom, plus `meshes/<name>_visual.obj` --
 and every `frames.json` symbol is expressed in that mesh's body frame. On
-hardware the body frame of record is the TRELLIS **metric** GLB's frame,
-because that is what FoundationPose tracks. `manip_bridge/render_asset.py`
-builds the asset dir as that exact geometry under the identity transform:
+hardware the body frame of record is **Any6D's `final_mesh_<obj>.obj`**,
+because that is what FoundationPose registers and tracks on (see the
+perception-flow paragraph above). `manip_bridge/render_asset.py` builds the
+asset dir as that exact geometry under the identity transform:
+
+> **Status:** the current `render_asset.py` predates the flow above -- it
+> builds `canonical GLB x scale` and verifies against the TRELLIS sidecar's
+> `_metric.glb`, which is not the mesh being tracked (Any6D's export is
+> bbox-centred and scaled per axis, not by one factor). Do not build assets
+> with it; the next patch rebuilds it from `final_mesh`'s vertices verbatim
+> with the canonical GLB's texture carried over by vertex index.
 
 ```bash
 ros2 run manip_bridge render_asset -- \
