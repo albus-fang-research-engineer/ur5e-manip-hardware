@@ -1,12 +1,15 @@
 """Offline tests for manip_bridge.render_asset -- no ROS, no sidecars.
 
 Fixture: a synthetic textured mesh (icosphere, spherical UVs, checkerboard
-texture) written as a "canonical" GLB, DELIBERATELY OFF-CENTRE so a
-recentring bug is detectable, plus a "metric" GLB produced by the exact
-recipe trellis2_server/server.py uses (trimesh.load -> concatenate ->
-apply_scale -> geometry-only export). The builder must reproduce the
-metric GLB's vertex set from (canonical x scale), keep the texture, and
-refuse a wrong scale.
+texture) written as the "canonical" GLB, DELIBERATELY OFF-CENTRE, plus a
+"final_mesh" produced by replaying Any6D's chain on it: load the way
+any6d_server does (trimesh.load force="mesh"), bbox-centre, scale each
+axis by its own factor about the origin (register_any6d: coarse isotropic,
+refinement per-axis, 252-sample rescale -- all diagonal, nothing rotates),
+export as OBJ through trimesh like `est.mesh.export(...)`. The builder must
+reproduce final_mesh's vertices verbatim, carry the texture over by index,
+recover the per-axis scale and the centre, and refuse anything that breaks
+the correspondence or the centred-frame condition.
 
 The render test needs a MuJoCo GL backend: MUJOCO_GL=egl on the
 workstation, osmesa on a GPU-less box (`apt install libosmesa6`). It
@@ -16,7 +19,7 @@ Run from the repo root:  python -m pytest test/test_render_asset.py -v
 Host deps: pip install trimesh scipy pillow mujoco
 """
 
-import io
+import json
 import os
 import sys
 import xml.etree.ElementTree as ET
@@ -32,12 +35,12 @@ pytest.importorskip("scipy")
 PIL_Image = pytest.importorskip("PIL.Image")
 
 from manip_bridge.render_asset import (                       # noqa: E402
-    BODY_NAME, RenderAssetError, build_render_asset, load_metric_vertices,
-    render_check, vertex_set_deviation,
+    BODY_NAME, RenderAssetError, build_render_asset, from_summary, read_obj,
+    render_check,
 )
 
-SCALE = 0.1372                       # canonical -> metres, teapot-ish
-OFFSET = np.array([0.31, -0.22, 0.14])   # canonical-frame offset; recentring would remove it
+SCALE = np.array([0.0922, 0.0664, 0.1571])       # per-axis, mug-run ratios x 0.1
+OFFSET = np.array([0.31, -0.22, 0.14])            # canonical-frame offset
 
 
 def _checker(px=256, tile=32):
@@ -59,97 +62,120 @@ def _textured_sphere() -> trimesh.Trimesh:
     return m
 
 
-def _server_metric_recipe(glb_bytes: bytes, scale: float, out: Path) -> Path:
-    """Verbatim what trellis2_server does for the metric copy."""
-    scene = trimesh.load(io.BytesIO(glb_bytes), file_type="glb")
-    tm = (trimesh.util.concatenate(list(scene.geometry.values()))
-          if isinstance(scene, trimesh.Scene) else scene)
-    tm_metric = tm.copy()
-    tm_metric.apply_scale(scale)
-    tm_metric.export(out)
+def _any6d_chain(canonical_glb: Path, out: Path, scale=SCALE, shift=None,
+                 textured_export=False) -> Path:
+    """What register_any6d does to the vertices, then `est.mesh.export`."""
+    m = trimesh.load(str(canonical_glb), force="mesh")        # any6d_server's load
+    V = np.asarray(m.vertices, np.float64)
+    V = V - 0.5 * (V.min(0) + V.max(0))                       # reset_object: bbox-centre
+    V = V * scale                                             # per-axis, about origin
+    if shift is not None:
+        V = V + shift
+    mesh = m.copy()
+    mesh.vertices = V
+    if not textured_export:
+        mesh.visual = trimesh.visual.ColorVisuals(mesh)       # the mug run: "visual vertex"
+    mesh.export(out)
     return out
 
 
 @pytest.fixture(scope="module")
-def glbs(tmp_path_factory):
-    d = tmp_path_factory.mktemp("trellis")
-    canonical = d / "obj.glb"
+def pair(tmp_path_factory):
+    d = tmp_path_factory.mktemp("perception")
+    canonical = d / "mug.glb"
     _textured_sphere().export(canonical)
-    metric = _server_metric_recipe(canonical.read_bytes(), SCALE, d / "obj_metric.glb")
-    return canonical, metric
+    final = _any6d_chain(canonical, d / "final_mesh_mug.obj")
+    return final, canonical
 
 
 @pytest.fixture(scope="module")
-def asset(glbs, tmp_path_factory):
-    canonical, metric = glbs
-    out = tmp_path_factory.mktemp("assets") / "obj"
-    rec = build_render_asset(canonical, SCALE, out, "obj", metric_glb=metric,
-                             require_texture=True)
+def asset(pair, tmp_path_factory):
+    final, canonical = pair
+    out = tmp_path_factory.mktemp("assets") / "mug"
+    rec = build_render_asset(final, canonical, out, "mug", require_texture=True)
     return out, rec
-
-
-def _read_obj(path: Path):
-    """The sim's load_obj rule: `v` lines, first index of each face token."""
-    V, F, VT = [], [], 0
-    for line in path.read_text().splitlines():
-        if line.startswith("v "):
-            V.append([float(x) for x in line.split()[1:4]])
-        elif line.startswith("vt "):
-            VT += 1
-        elif line.startswith("f "):
-            F.append([int(t.split("/")[0]) - 1 for t in line.split()[1:]])
-    return np.asarray(V), np.asarray(F), VT
 
 
 # ------------------------------------------------------------------ identity
 
-def test_vertex_set_identity_against_metric_glb(asset, glbs):
+def test_vertices_are_final_mesh_verbatim(asset, pair):
     out, rec = asset
-    V, F, _ = _read_obj(Path(rec.obj))
-    Vm = load_metric_vertices(glbs[1])
-    assert rec.max_vertex_deviation_m is not None and rec.max_vertex_deviation_m <= 1e-6
-    assert vertex_set_deviation(V, Vm) <= 1e-6         # what was WRITTEN, not just computed
-    assert len(F) > 0 and F.max() < len(V)
+    V, F = read_obj(Path(rec.obj))
+    Vf, Ff = read_obj(pair[0])
+    assert np.array_equal(V, Vf), "asset vertices must be final_mesh's, bit for bit"
+    assert np.array_equal(F, Ff)
+    assert rec.n_vertices == len(Vf) and rec.n_faces == len(Ff)
 
 
-def test_no_recentre(asset, glbs):
-    """The metric GLB is off-centre by design; the asset must be too
-    (convert_asset.py would have moved it to the origin)."""
+def test_fit_recovers_scale_and_centre(asset):
     out, rec = asset
-    V, _, _ = _read_obj(Path(rec.obj))
-    Vm = load_metric_vertices(glbs[1])
-    np.testing.assert_allclose(V.min(0), Vm.min(0), atol=1e-6)
-    np.testing.assert_allclose(V.max(0), Vm.max(0), atol=1e-6)
-    center = 0.5 * (V.min(0) + V.max(0))
-    assert np.linalg.norm(center - OFFSET * SCALE) < 1e-6
-    assert np.linalg.norm(center) > 0.01                # i.e. NOT at the origin
+    np.testing.assert_allclose(rec.scale_xyz, SCALE, rtol=1e-6)
+    np.testing.assert_allclose(rec.centre_xyz, OFFSET, atol=1e-6)     # sphere: bbox centre = OFFSET
+    assert rec.fit_residual_m <= 1e-6
+    assert np.abs(rec.bbox_centre_m).max() <= 1e-6
 
 
-def test_wrong_scale_refused(glbs, tmp_path):
-    canonical, metric = glbs
-    with pytest.raises(RenderAssetError, match="deviates"):
-        build_render_asset(canonical, SCALE * 1.02, tmp_path / "bad", "bad", metric_glb=metric)
+def test_textured_any6d_export_also_accepted(pair, tmp_path):
+    """A final_mesh whose OBJ carries vt/mtllib (textured input survived
+    Any6D) parses to the same vertices; the texture still comes from the
+    canonical GLB, not from Any6D's shared material.png."""
+    final, canonical = pair
+    final_tex = _any6d_chain(canonical, tmp_path / "final_mesh_mug.obj", textured_export=True)
+    assert "mtllib" in (tmp_path / "final_mesh_mug.obj").read_text()[:200]
+    rec = build_render_asset(final_tex, canonical, tmp_path / "mug", "mug", require_texture=True)
+    Va, _ = read_obj(Path(rec.obj))
+    Vf, _ = read_obj(final_tex)
+    assert np.array_equal(Va, Vf)
+    assert Path(rec.texture).name == "mug_texture.png"
 
 
-def test_recentred_copy_refused(glbs, tmp_path):
-    """A metric GLB that someone recentred (the convert_asset failure mode)
-    must not verify against the canonical x scale."""
-    canonical, _ = glbs
-    m = trimesh.load(str(_server_metric_recipe(canonical.read_bytes(), SCALE,
-                                               tmp_path / "m.glb")), force="mesh")
-    m.apply_translation(-m.bounds.mean(axis=0))
-    m.export(tmp_path / "m_recentred.glb")
-    with pytest.raises(RenderAssetError, match="deviates"):
-        build_render_asset(canonical, SCALE, tmp_path / "bad", "bad",
-                           metric_glb=tmp_path / "m_recentred.glb")
+# ------------------------------------------------------------------ refusals
+
+def test_wrong_reconstruction_refused(pair, tmp_path):
+    """A different TRELLIS run (other vertex count) cannot pair with this final_mesh."""
+    final, _ = pair
+    other = trimesh.creation.icosphere(subdivisions=2)
+    other.visual = trimesh.visual.TextureVisuals(uv=np.random.rand(len(other.vertices), 2),
+                                                 image=_checker())
+    other.export(tmp_path / "other.glb")
+    with pytest.raises(RenderAssetError, match="vertices"):
+        build_render_asset(final, tmp_path / "other.glb", tmp_path / "x", "x")
 
 
-def test_multi_geometry_refused(tmp_path):
-    a, b = _textured_sphere(), _textured_sphere()
-    b.apply_translation([2.0, 0, 0])
-    trimesh.Scene([a, b]).export(tmp_path / "two.glb")
-    with pytest.raises(RenderAssetError, match="geometries"):
-        build_render_asset(tmp_path / "two.glb", 1.0, tmp_path / "two", "two")
+def test_scrambled_order_refused(pair, tmp_path):
+    """Same counts and faces, vertices permuted: the affine fit must fail."""
+    final, canonical = pair
+    V, F = read_obj(final)
+    perm = np.random.default_rng(0).permutation(len(V))
+    from manip_bridge.render_asset import write_obj
+    write_obj(tmp_path / "scrambled.obj", V[perm], F, None)
+    with pytest.raises(RenderAssetError, match="residual"):
+        build_render_asset(tmp_path / "scrambled.obj", canonical, tmp_path / "x", "x")
+
+
+def test_faces_mismatch_refused(pair, tmp_path):
+    final, canonical = pair
+    V, F = read_obj(final)
+    from manip_bridge.render_asset import write_obj
+    write_obj(tmp_path / "refaced.obj", V, F[::-1], None)
+    with pytest.raises(RenderAssetError, match="[Ff]ace"):
+        build_render_asset(tmp_path / "refaced.obj", canonical, tmp_path / "x", "x")
+
+
+def test_uncentred_final_refused(pair, tmp_path):
+    """If final_mesh were not bbox-centred, Any6D's pose compensation would
+    not be the identity and the pose would not be in this file's frame."""
+    _, canonical = pair
+    shifted = _any6d_chain(canonical, tmp_path / "shifted.obj", shift=np.array([0.005, 0, 0]))
+    with pytest.raises(RenderAssetError, match="centre"):
+        build_render_asset(shifted, canonical, tmp_path / "x", "x")
+
+
+def test_flipped_axis_refused(pair, tmp_path):
+    _, canonical = pair
+    flipped = _any6d_chain(canonical, tmp_path / "flipped.obj", scale=SCALE * [1, -1, 1])
+    with pytest.raises(RenderAssetError, match="positive"):
+        build_render_asset(flipped, canonical, tmp_path / "x", "x")
 
 
 # ------------------------------------------------------------------ texture
@@ -157,9 +183,11 @@ def test_multi_geometry_refused(tmp_path):
 def test_texture_written_and_wired(asset):
     out, rec = asset
     assert rec.texture and Path(rec.texture).is_file() and Path(rec.texture).is_absolute()
-    V, F, n_vt = _read_obj(Path(rec.obj))
-    assert n_vt == len(V), "one vt per vertex"
-    assert "/" in next(l for l in Path(rec.obj).read_text().splitlines() if l.startswith("f "))
+    obj_text = Path(rec.obj).read_text()
+    n_vt = sum(1 for l in obj_text.splitlines() if l.startswith("vt "))
+    assert n_vt == rec.n_vertices, "one vt per vertex"
+    assert "/" in next(l for l in obj_text.splitlines() if l.startswith("f "))
+    assert "mtllib" not in obj_text
     root = ET.parse(rec.xml).getroot()
     tex = root.find("asset/texture")
     mat = root.find("asset/material")
@@ -168,18 +196,35 @@ def test_texture_written_and_wired(asset):
     assert mat is not None and mat.get("texture") == tex.get("name")
     assert geom is not None and geom.get("material") == mat.get("name")
     assert geom.get("group") == "1" and geom.get("contype") == "0"
-    assert root.find("asset/mesh").get("file") == "meshes/obj_visual.obj"
+    assert root.find("asset/mesh").get("file") == "meshes/mug_visual.obj"
     assert not [m for m in root.findall("asset/mesh") if "_col_" in m.get("name", "")]
 
 
-def test_untextured_mesh_is_flagged(tmp_path):
-    m = trimesh.creation.icosphere(subdivisions=2)
-    m.export(tmp_path / "plain.glb")
+def test_untextured_canonical_is_flagged(tmp_path):
+    plain = trimesh.creation.icosphere(subdivisions=2)
+    plain.apply_translation([0.2, 0, 0])
+    plain.export(tmp_path / "plain.glb")
+    final = _any6d_chain(tmp_path / "plain.glb", tmp_path / "final_mesh_p.obj")
     with pytest.raises(RenderAssetError, match="texture"):
-        build_render_asset(tmp_path / "plain.glb", 1.0, tmp_path / "p", "p", require_texture=True)
-    rec = build_render_asset(tmp_path / "plain.glb", 1.0, tmp_path / "p", "p")
+        build_render_asset(final, tmp_path / "plain.glb", tmp_path / "p", "p", require_texture=True)
+    rec = build_render_asset(final, tmp_path / "plain.glb", tmp_path / "p", "p")
     assert rec.texture is None
     assert ET.parse(rec.xml).getroot().find("asset/texture") is None
+
+
+# ------------------------------------------------------------------ summary
+
+def test_from_summary_reads_run_scene_record(pair, tmp_path):
+    final, canonical = pair
+    doc = {"objects": {"mug": {"trellis2": {"glb": str(canonical)},
+                               "any6d": {"mesh": str(final), "source": "trellis"}}}}
+    (tmp_path / "summary.json").write_text(json.dumps(doc))
+    f, c = from_summary(tmp_path / "summary.json", "mug")
+    assert f == final and c == canonical
+    doc["objects"]["mug"]["any6d"]["source"] = "img_to_3d"
+    (tmp_path / "summary.json").write_text(json.dumps(doc))
+    with pytest.raises(RenderAssetError, match="img_to_3d"):
+        from_summary(tmp_path / "summary.json", "mug")
 
 
 # ------------------------------------------------------------------ render
@@ -206,7 +251,7 @@ def test_render_shows_texture(asset):
     if not _gl_ok():
         pytest.skip("no MuJoCo GL backend (set MUJOCO_GL=egl|osmesa; osmesa needs libosmesa6)")
     out, rec = asset
-    img = render_check(out, "obj", px=320).astype(np.int32)
+    img = render_check(out, "mug", px=320).astype(np.int32)
     bg = img[0, 0]
     obj_px = np.abs(img - bg).sum(-1) > 30
     assert obj_px.sum() > 0.05 * img.shape[0] * img.shape[1], "object not in view"

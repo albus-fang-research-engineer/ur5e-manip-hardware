@@ -158,6 +158,17 @@ def main():
     print(f"  t          {np.round(t, 4).tolist()} m")
     print(f"  rpy        {np.round(rpy, 1).tolist()} deg")
 
+    # Persist the pose at full precision so reproject_check.py (and the
+    # render-asset / FoundationPose consistency checks) read it instead of
+    # retyping a 0.1-degree print.
+    pose_json = os.path.join(args.run_dir, f"any6d_{args.object}.json")
+    with open(pose_json, "w") as f:
+        json.dump({"object": args.object, "mesh": args.mesh,
+                   "final_mesh": rep["mesh_path"], "cam_T_obj": pose.tolist(),
+                   "extents": ext.tolist(), "est_refine_iter": args.est_refine_iter,
+                   "seconds": dt}, f, indent=2)
+    print(f"  pose json  {pose_json}")
+
     if args.expect_extents is not None:
         exp = np.asarray(args.expect_extents, np.float64)
         d = ext - exp

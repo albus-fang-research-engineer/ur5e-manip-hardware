@@ -207,27 +207,20 @@ For the hand-eye transform on hardware, add a `static_transform_publisher`
 `use_sim_time` on the host then shows `pose_<obj>` / `any6d_<obj>` frames
 relative to `base_link`.
 
-## Render asset from a TRELLIS.2 reconstruction (`render_asset`)
+## Render asset from the tracked mesh (`render_asset`)
 
 The sim repo's grounding renderers (`ground_parts.py`, `render_candidates.py`,
 `render_stage_frames.py`) read an object asset dir -- `<name>.xml` with a
 body `object` carrying the visual geom, plus `meshes/<name>_visual.obj` --
 and every `frames.json` symbol is expressed in that mesh's body frame. On
-hardware the body frame of record is **Any6D's `final_mesh_<obj>.obj`**,
-because that is what FoundationPose registers and tracks on (see the
-perception-flow paragraph above). `manip_bridge/render_asset.py` builds the
-asset dir as that exact geometry under the identity transform:
-
-> **Status:** the current `render_asset.py` predates the flow above -- it
-> builds `canonical GLB x scale` and verifies against the TRELLIS sidecar's
-> `_metric.glb`, which is not the mesh being tracked (Any6D's export is
-> bbox-centred and scaled per axis, not by one factor). Do not build assets
-> with it; the next patch rebuilds it from `final_mesh`'s vertices verbatim
-> with the canonical GLB's texture carried over by vertex index.
+hardware the body frame of record is **Any6D's `final_mesh_<obj>.obj`**:
+FoundationPose registers and tracks on it and Any6D's own pose is in it (see
+the perception-flow paragraph above). `manip_bridge/render_asset.py` builds
+the asset dir as that file's geometry under the identity transform:
 
 ```bash
 ros2 run manip_bridge render_asset -- \
-    --from-summary /data/runs/<stamp>/summary.json --object teapot \
+    --from-summary /data/runs/<stamp>/summary.json --object mug \
     --out /data/runs/<stamp>/assets --check
 ```
 
@@ -236,29 +229,43 @@ recentres at the bbox centroid unconditionally, drops the texture on OBJ
 export, and runs CoACD (nothing on hardware consumes hulls; attached-object
 collision is cuRobo spheres). A recentred asset offsets every symbol from
 the tracked frame silently -- it looks like a bad VLM pick or tracker drift.
+And `final_mesh` is not `canonical GLB x one scale` either (Any6D bbox-centres
+and scales each axis separately), so nothing is rebuilt from a scale factor.
 
 How the build stays honest:
 
-- The sidecar's metric GLB is **geometry-only** (`server.py`: concatenate,
-  `apply_scale`, export). The textured geometry in the tracked frame is
-  `canonical GLB x scale`, so the builder takes those two and **verifies**
-  the result against the metric GLB: every vertex within `--tol` (1 um) of
-  the other set, symmetric, order-free. Wrong scale, a recentred copy, or a
-  re-run TRELLIS output refuses with "deviates".
+- **Geometry is `final_mesh`, verbatim.** Vertices and faces are parsed from
+  the OBJ text with the sim's own `load_obj` rule (`v` lines, first face
+  index) -- no library reprocessing in between.
+- **Texture comes from the canonical GLB by vertex index.** Any6D only ever
+  replaces `mesh.vertices`, so order and faces are the input's. The builder
+  loads the GLB exactly as `any6d_server` does, then **refuses** unless the
+  correspondence is proven: equal vertex counts, identical face arrays, and
+  `final == diag(s)·(canonical − c)` with residual ≤ `--tol` (1 µm) and
+  `s > 0` -- a scrambled order, a rotated copy, or a different TRELLIS run
+  all fail this. `s` and `c` are recorded in `render_asset.json`.
+- **`final_mesh` must be bbox-centred** (`--centre-tol`, 0.1 mm). That is the
+  condition under which Any6D's centring compensation is the identity and
+  the pose it returns -- and FoundationPose's, registered on the same file
+  -- is in this file's frame.
 - MuJoCo ignores MTL. The OBJ carries `vt` per vertex, and the MJCF declares
   `<texture type="2d">` + `<material>` on the geom explicitly. The texture
   path is **absolute** (the sim's `build_model` loads via `from_xml_string`
   with an injected `meshdir` and no `texturedir`), so an asset dir is bound
-  to the path it was built at -- rebuild, don't move. `render_asset.json`
-  records both source paths, the scale and the measured deviation.
+  to the path it was built at -- rebuild, don't move.
 - `--check` renders one view to `<name>_check.png`. A flat grey object means
   the texture is not wired and SAM3 on the canonical renders will see the
   same grey; fix that before grounding.
 
+`--from-summary` refuses an object whose Any6D ran with `source: img_to_3d`
+(InstantMesh geometry has no correspondence to the TRELLIS GLB).
+
 Tests (offline, no sidecars): `python -m pytest test/test_render_asset.py -v`
--- vertex-set identity against a metric GLB produced by the server's own
-recipe, no-recentre, wrong-scale / recentred-copy / multi-geometry refusal,
-texture wiring, and a MuJoCo render that must show both checker colours.
+-- the fixture replays Any6D's chain on a textured off-centre GLB (any6d-style
+load, bbox-centre, per-axis scale, trimesh OBJ export); checks vertex
+identity, recovered `s`/`c`, refusal of wrong reconstruction / scrambled
+order / face mismatch / uncentred / flipped, texture wiring, and a MuJoCo
+render that must show both checker colours.
 
 ## Orient Anything V2 sidecar (port 5673)
 
