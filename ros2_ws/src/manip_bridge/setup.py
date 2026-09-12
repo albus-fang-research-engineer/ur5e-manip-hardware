@@ -38,6 +38,7 @@ setup(
             "constrained_planner = manip_bridge.constrained_planner_bridge_node:main",
             "run_scene = manip_bridge.run_scene:main",
             "curobo_bridge = manip_bridge.curobo_bridge_node:main",
+            "render_asset = manip_bridge.render_asset:main",
             # still legacy (ros2_bridge/pointso_bridge_node.py via ExecuteProcess)
         ],
     },

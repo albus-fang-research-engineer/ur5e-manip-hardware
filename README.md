@@ -185,6 +185,51 @@ For the hand-eye transform on hardware, add a `static_transform_publisher`
 `use_sim_time` on the host then shows `pose_<obj>` / `any6d_<obj>` frames
 relative to `base_link`.
 
+## Render asset from a TRELLIS.2 reconstruction (`render_asset`)
+
+The sim repo's grounding renderers (`ground_parts.py`, `render_candidates.py`,
+`render_stage_frames.py`) read an object asset dir -- `<name>.xml` with a
+body `object` carrying the visual geom, plus `meshes/<name>_visual.obj` --
+and every `frames.json` symbol is expressed in that mesh's body frame. On
+hardware the body frame of record is the TRELLIS **metric** GLB's frame,
+because that is what FoundationPose tracks. `manip_bridge/render_asset.py`
+builds the asset dir as that exact geometry under the identity transform:
+
+```bash
+ros2 run manip_bridge render_asset -- \
+    --from-summary /data/runs/<stamp>/summary.json --object teapot \
+    --out /data/runs/<stamp>/assets --check
+```
+
+Do **not** use `ur5e-manip-sim/scripts/convert_asset.py` for this. It
+recentres at the bbox centroid unconditionally, drops the texture on OBJ
+export, and runs CoACD (nothing on hardware consumes hulls; attached-object
+collision is cuRobo spheres). A recentred asset offsets every symbol from
+the tracked frame silently -- it looks like a bad VLM pick or tracker drift.
+
+How the build stays honest:
+
+- The sidecar's metric GLB is **geometry-only** (`server.py`: concatenate,
+  `apply_scale`, export). The textured geometry in the tracked frame is
+  `canonical GLB x scale`, so the builder takes those two and **verifies**
+  the result against the metric GLB: every vertex within `--tol` (1 um) of
+  the other set, symmetric, order-free. Wrong scale, a recentred copy, or a
+  re-run TRELLIS output refuses with "deviates".
+- MuJoCo ignores MTL. The OBJ carries `vt` per vertex, and the MJCF declares
+  `<texture type="2d">` + `<material>` on the geom explicitly. The texture
+  path is **absolute** (the sim's `build_model` loads via `from_xml_string`
+  with an injected `meshdir` and no `texturedir`), so an asset dir is bound
+  to the path it was built at -- rebuild, don't move. `render_asset.json`
+  records both source paths, the scale and the measured deviation.
+- `--check` renders one view to `<name>_check.png`. A flat grey object means
+  the texture is not wired and SAM3 on the canonical renders will see the
+  same grey; fix that before grounding.
+
+Tests (offline, no sidecars): `python -m pytest test/test_render_asset.py -v`
+-- vertex-set identity against a metric GLB produced by the server's own
+recipe, no-recentre, wrong-scale / recentred-copy / multi-geometry refusal,
+texture wiring, and a MuJoCo render that must show both checker colours.
+
 ## Orient Anything V2 sidecar (port 5673)
 
 Category-free canonical **up / front** from one RGB crop. It is the

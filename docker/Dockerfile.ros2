@@ -76,6 +76,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 RUN pip3 install --no-cache-dir pyzmq msgpack msgpack-numpy numpy scipy opencv-python-headless
 
+# ---------------------------------------------------------------------------
+# Render-only asset builder (manip_bridge/render_asset.py) and, later, the
+# sim repo's grounding renderers run in THIS container: mujoco here is a
+# renderer (plain wheel, no CUDA), not model code, so the "no perception,
+# no CUDA" contract above still holds. libosmesa6 is the software backend
+# (MUJOCO_GL=osmesa); with the NVIDIA runtime and `graphics` caps use
+# MUJOCO_GL=egl instead.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libosmesa6 \
+    && rm -rf /var/lib/apt/lists/*
+RUN pip3 install --no-cache-dir mujoco trimesh pillow
+
 # Auto-source ROS and the workspace overlay (if built) in every interactive shell
 RUN echo 'source /opt/ros/humble/setup.bash' >> /root/.bashrc && \
     echo '[ -f /root/ros2_ws/install/setup.bash ] && source /root/ros2_ws/install/setup.bash' >> /root/.bashrc
