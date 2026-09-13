@@ -100,6 +100,10 @@ services:
       # `mesh`, the path Any6D reports in its reply) -- same file, same body
       # frame as the render asset the grounding renderers load.
       - ./any6d_runtime/outputs:/data/any6d:ro
+      # run directories (render assets live under /data/runs/<stamp>/assets/):
+      # register on <name>_fp.obj there for a TEXTURED scorer input -- same
+      # geometry as final_mesh, verbatim, with the canonical GLB's texture.
+      - ./outputs:/data/runs:ro
       - /tmp/.X11-unix:/tmp/.X11-unix      # only needed for debug viz
     environment:
       - POSE_PORT=5667

@@ -12,8 +12,17 @@ Wire protocol (msgpack + msgpack_numpy, REQ/REP):
    "depth": HxW float32 (meters),
    "K":    3x3 float32,
    "mask": HxW uint8/bool,
-   "est_refine_iter": 5}
-      -> {"ok": True, "pose": 4x4 float32}   # cam_T_obj
+   "est_refine_iter": 5,
+   "return_all": false}             # optional: also return every refined hypothesis
+      -> {"ok": True, "pose": 4x4 float32,   # cam_T_obj
+          "hypotheses": Nx4x4 float32,       # only with return_all: all refined poses,
+          "scores": N float32,               #   scorer-sorted (best first), same frame
+          "texture": "simple"|"pbr->simple"|"none"}   # what the scorer's RGB channel saw
+
+`return_all` exists for the yaw-ambiguity diagnosis: FoundationPose keeps
+every refined hypothesis (est.poses, est.scores) and on a near-symmetric
+object its scorer is flat across them, so an offline re-rank against the
+SAM mask can be evaluated before any in-server re-rank is enabled.
 
   {"cmd": "track", "obj": "mustard",
    "rgb": ..., "depth": ..., "K": ...,
@@ -59,9 +68,19 @@ class Session:
         # normal path; it matters if a TRELLIS GLB is ever registered directly.
         vis = getattr(mesh, "visual", None)
         mat = getattr(vis, "material", None)
-        if vis is not None and vis.kind == "texture" and mat is not None \
-                and not hasattr(mat, "image") and hasattr(mat, "to_simple"):
-            mesh.visual.material = mat.to_simple()
+        self.texture = "none"
+        if vis is not None and vis.kind == "texture" and mat is not None:
+            if not hasattr(mat, "image") and hasattr(mat, "to_simple"):
+                mesh.visual.material = mat.to_simple()
+                self.texture = "pbr->simple"
+            else:
+                self.texture = "simple"
+            if getattr(mesh.visual.material, "image", None) is None:
+                self.texture = "none"
+        # Report what the scorer's RGB channel will actually see: on a
+        # yaw-symmetric body the texture is its only tie-breaker.
+        log.info("mesh %s: %d verts, texture=%s", os.path.basename(mesh_path),
+                 len(mesh.vertices), self.texture)
         self.est = FoundationPose(
             model_pts=mesh.vertices,
             model_normals=mesh.vertex_normals,
@@ -76,6 +95,21 @@ class Session:
         pose = self.est.register(K=K, rgb=rgb, depth=depth,
                                  ob_mask=mask.astype(bool), iteration=iters)
         return np.asarray(pose, dtype=np.float32)
+
+    def hypotheses(self):
+        """All refined hypotheses from the last register, scorer-sorted (best
+        first), expressed in the same frame as the returned pose (i.e. with
+        FoundationPose's centring compensation applied), plus their scores.
+        Read-only: est.poses / est.scores are what register() stored."""
+        poses = self.est.poses
+        scores = self.est.scores
+        if poses is None:
+            return None, None
+        poses = poses.data.cpu().numpy() if hasattr(poses, "data") else np.asarray(poses)
+        scores = scores.data.cpu().numpy() if hasattr(scores, "data") else np.asarray(scores)
+        tf = self.est.get_tf_to_centered_mesh()
+        tf = tf.data.cpu().numpy() if hasattr(tf, "data") else np.asarray(tf)
+        return (poses @ tf).astype(np.float32), scores.astype(np.float32)
 
     def track(self, K, rgb, depth, iters):
         pose = self.est.track_one(rgb=rgb, depth=depth, K=K, iteration=iters)
@@ -110,7 +144,15 @@ def main():
                     rgb=req["rgb"], depth=req["depth"], mask=req["mask"],
                     iters=int(req.get("est_refine_iter", 5)),
                 )
-                rep = {"ok": True, "pose": pose}
+                rep = {"ok": True, "pose": pose, "texture": sessions[obj].texture}
+                if req.get("return_all"):
+                    hyp, sc = sessions[obj].hypotheses()
+                    if hyp is not None:
+                        rep["hypotheses"] = hyp
+                        rep["scores"] = sc
+                        log.info("register %s: %d hypotheses, scores %.3f..%.3f (top-10 spread %.3f)",
+                                 obj, len(sc), float(sc.min()), float(sc.max()),
+                                 float(sc[0] - sc[min(9, len(sc) - 1)]))
 
             elif cmd == "track":
                 sess = sessions[req["obj"]]

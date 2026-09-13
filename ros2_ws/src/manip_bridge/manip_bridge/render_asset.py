@@ -9,6 +9,7 @@ out as
 
     <out>/<name>.xml                 MJCF, body "object" carries the visual geom
     <out>/meshes/<name>_visual.obj   the mesh `manip_sim.proposal.load_obj` samples
+    <out>/meshes/<name>_fp.obj       same geometry + mtllib -> textured input for FoundationPose
 
 and every symbol in frames.json is expressed in the body frame of THAT
 mesh. On hardware the body frame of record is Any6D's `final_mesh_<obj>.obj`:
@@ -105,6 +106,7 @@ class RenderAsset:
     xml: str
     obj: str
     texture: str | None
+    fp_obj: str | None
     final_mesh: str
     canonical_glb: str
     transform: str
@@ -234,6 +236,28 @@ def write_obj(path: Path, V: np.ndarray, F: np.ndarray, uv: np.ndarray | None) -
                 f.write(f"f {a} {b} {c}\n")
 
 
+def write_fp_obj(path: Path, V: np.ndarray, F: np.ndarray, uv: np.ndarray, texture_name: str) -> None:
+    """The same geometry as write_obj, but with `mtllib`/`usemtl` and an MTL
+    whose map_Kd points at the texture -- what trimesh (and therefore
+    FoundationPose's pose_server, which loads with trimesh.load(force="mesh"))
+    needs to see a TextureVisuals with material.image set. MuJoCo ignores
+    MTL, so the render asset's own OBJ stays MTL-free; this file exists so
+    FoundationPose's scorer (c_in = RGB + XYZ) gets the RGB channel, which on a
+    yaw-symmetric body is the only cue that can break the yaw tie. Identical
+    vertices and faces: registering on this file IS registering on final_mesh."""
+    mtl = path.with_suffix(".mtl")
+    with open(path, "w") as f:
+        f.write("# FoundationPose-facing textured copy of the render asset, identity geometry\n")
+        f.write(f"mtllib {mtl.name}\nusemtl textured\n")
+        for v in V:
+            f.write(f"v {v[0]:.9g} {v[1]:.9g} {v[2]:.9g}\n")
+        for t in uv:
+            f.write(f"vt {t[0]:.7g} {t[1]:.7g}\n")
+        for a, b, c in F + 1:
+            f.write(f"f {a}/{a} {b}/{b} {c}/{c}\n")
+    mtl.write_text(f"newmtl textured\nKa 1 1 1\nKd 1 1 1\nKs 0 0 0\nmap_Kd {texture_name}\n")
+
+
 def write_mjcf(path: Path, name: str, obj_rel: str, texture_abs: Path | None) -> None:
     """The sim asset layout (`<body><body name="object"><geom group=1/>`)
     so `render_candidates.build_model` and `ground_parts.render_depth_views`
@@ -304,12 +328,17 @@ def build_render_asset(final_mesh: Path, canonical_glb: Path, out_dir: Path, nam
         tex_path = (mesh_dir / f"{name}_texture.png").resolve()
         img.save(tex_path)
     write_obj(obj_path, V, F, uv)
+    fp_obj = None
+    if uv is not None:
+        fp_obj = mesh_dir / f"{name}_fp.obj"
+        write_fp_obj(fp_obj, V, F, uv, tex_path.name)
     xml_path = out_dir / f"{name}.xml"
     write_mjcf(xml_path, name, f"meshes/{obj_path.name}", tex_path)
 
     rec = RenderAsset(
         name=name, out_dir=str(out_dir.resolve()), xml=str(xml_path.resolve()),
         obj=str(obj_path.resolve()), texture=str(tex_path) if tex_path else None,
+        fp_obj=str(fp_obj.resolve()) if fp_obj else None,
         final_mesh=str(final_mesh.resolve()), canonical_glb=str(canonical_glb.resolve()),
         transform="identity: vertices = final_mesh vertices verbatim; "
                   "final = diag(scale_xyz) . (canonical - centre_xyz) is the recorded fit",
@@ -421,6 +450,9 @@ def main(argv=None) -> int:
     print(f"[render-asset] {name}: {rec.n_vertices} v {rec.n_faces} f, "
           f"scale {np.round(rec.scale_xyz, 4).tolist()} residual {rec.fit_residual_m:.1e} m, "
           f"texture {'yes' if rec.texture else 'NO'} -> {rec.out_dir}")
+    if rec.fp_obj:
+        print(f"[render-asset] FoundationPose-facing textured OBJ -> {rec.fp_obj} "
+              f"(+ .mtl, same PNG); register on this file for a textured scorer input")
     if args.check:
         from PIL import Image
         img = render_check(out, name)

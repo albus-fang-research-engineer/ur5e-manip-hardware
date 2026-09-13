@@ -212,6 +212,23 @@ def test_untextured_canonical_is_flagged(tmp_path):
     assert ET.parse(rec.xml).getroot().find("asset/texture") is None
 
 
+def test_fp_obj_is_textured_identity_copy(asset):
+    """trimesh (as pose_server loads it) must see a TextureVisuals with an
+    image, and the vertices must be final_mesh's -- FoundationPose registering
+    on <name>_fp.obj is registering on the tracked geometry."""
+    out, rec = asset
+    assert rec.fp_obj and Path(rec.fp_obj).is_file() and Path(rec.fp_obj).with_suffix(".mtl").is_file()
+    m = trimesh.load(rec.fp_obj, force="mesh")
+    assert m.visual.kind == "texture"
+    img = getattr(m.visual.material, "image", None) or getattr(m.visual.material, "baseColorTexture", None)
+    assert img is not None
+    Va, _ = read_obj(Path(rec.obj))
+    assert np.array_equal(np.asarray(m.vertices, np.float64).round(9), Va.round(9)) or \
+        np.allclose(np.sort(np.asarray(m.vertices), axis=0), np.sort(Va, axis=0), atol=1e-9)
+    Vf, _ = read_obj(Path(rec.fp_obj))
+    assert np.array_equal(Vf, Va)
+
+
 # ------------------------------------------------------------------ summary
 
 def test_from_summary_reads_run_scene_record(pair, tmp_path):

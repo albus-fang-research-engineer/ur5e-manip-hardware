@@ -260,6 +260,26 @@ How the build stays honest:
 `--from-summary` refuses an object whose Any6D ran with `source: img_to_3d`
 (InstantMesh geometry has no correspondence to the TRELLIS GLB).
 
+The builder also writes `meshes/<name>_fp.obj` (+ `.mtl`, same PNG): the same
+geometry with `mtllib`, so trimesh -- and therefore the pose sidecar -- loads
+it as a textured mesh. FoundationPose's scorer takes RGB + XYZ; on a
+yaw-symmetric body (a mug) XYZ cannot break the yaw tie and the texture is the
+only cue it has, so register on `<name>_fp.obj` rather than on the untextured
+`final_mesh_<obj>.obj`. `./outputs` is mounted read-only at `/data/runs` in
+the pose container for this. The `register` reply reports `texture:` so a
+gray scorer input is visible in the log.
+
+**Yaw ambiguity diagnosis (2026-09-13, saved run `20260903_203531`).** Both
+Any6D and standalone FoundationPose registered the mug ~140° wrong in yaw
+(handle behind the body); the sidecar's 252 scores spanned two points with the
+top thirty within 0.4. `outputs/runs/reproject_check.py` (symmetry-axis
+search, yaw sweep against the SAM mask) located the error; `--pre-rotate body
+140` put the handle on the mask with the body in place. Pre-check for an
+in-sidecar mask re-rank: `fp_from_mesh.py --all` returns every refined
+hypothesis (`return_all`), `rank_hypotheses.py` scores each against the mask
+(precision / recall / IoU) -- if some hypothesis covers the mask, selecting it
+is the fix; if none does, the re-rank has to move to the coarse stage.
+
 Tests (offline, no sidecars): `python -m pytest test/test_render_asset.py -v`
 -- the fixture replays Any6D's chain on a textured off-centre GLB (any6d-style
 load, bbox-centre, per-axis scale, trimesh OBJ export); checks vertex
