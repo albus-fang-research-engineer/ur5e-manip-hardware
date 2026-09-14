@@ -115,27 +115,31 @@ class Session:
         poses_c = self.est.poses                          # centred-mesh frame, scorer-sorted
         scores = self.est.scores.data.cpu().numpy() if hasattr(self.est.scores, "data") else np.asarray(self.est.scores)
         H, W = mask.shape[:2]
-        sils, Ks, hs, ws = self._silhouettes(K, H, W, poses_c)
+        depths_r, Ks, hs, ws = self._render_depths(K, H, W, poses_c)
+        sils = depths_r > 0
         mask_s = np.asarray(mask).astype(bool)[::self.RERANK_STRIDE, ::self.RERANK_STRIDE][:hs, :ws]
         depth_s = np.asarray(depth, np.float32)[::self.RERANK_STRIDE, ::self.RERANK_STRIDE][:hs, :ws]
         poses_np = poses_c.data.cpu().numpy() if hasattr(poses_c, "data") else np.asarray(poses_c)
-        chosen, rec = rerank_hypotheses(sils, scores, poses_np, mask_s, depth_s, float(self.est.diameter))
+        chosen, rec = rerank_hypotheses(sils, scores, poses_np, mask_s, depth_s, float(self.est.diameter),
+                                        depths=depths_r)
         tf = self.est.get_tf_to_centered_mesh()
         tf_np = tf.data.cpu().numpy() if hasattr(tf, "data") else np.asarray(tf)
         if chosen != 0:
             self.est.pose_last = poses_c[chosen]
             pose = poses_np[chosen] @ tf_np
-        log.info("rerank: %s (from rank 0 -> %d, %.0f deg, expl %.2f -> %.2f, U %d px = %.1f%% of mask, %d survivors)",
-                 rec.reason, rec.to_rank, rec.rotation_deg, rec.expl_from, rec.expl_to, rec.u_px,
-                 100 * rec.u_frac, rec.n_survivors)
+        log.info("rerank: %s (from rank 0 -> %d, %.0f deg, expl %.2f -> %.2f, depth-bad %.2f -> %.2f, "
+                 "U %d px = %.1f%% of mask, %d survivors)",
+                 rec.reason, rec.to_rank, rec.rotation_deg, rec.expl_from, rec.expl_to,
+                 rec.depth_bad_from, rec.depth_bad_to, rec.u_px, 100 * rec.u_frac, rec.n_survivors)
         return np.asarray(pose, dtype=np.float32), record_dict(rec)
 
     RERANK_STRIDE = 2          # silhouettes at half resolution: enough for a part-placement test
     RERANK_CHUNK = 32          # hypotheses per nvdiffrast batch
 
-    def _silhouettes(self, K, H, W, poses_c):
-        """Boolean silhouettes of all refined hypotheses at reduced resolution,
-        via the same nvdiffrast renderer FoundationPose scores with."""
+    def _render_depths(self, K, H, W, poses_c):
+        """Rendered depth (metres, 0 = background) of all refined hypotheses at
+        reduced resolution, via the same nvdiffrast renderer FoundationPose
+        scores with. Silhouette = depth > 0."""
         s = 1.0 / self.RERANK_STRIDE
         hs, ws = int(H * s), int(W * s)
         Ks = np.asarray(K, np.float64).copy(); Ks[:2] *= s
@@ -145,7 +149,7 @@ class Session:
             _, depth_r, _ = nvdiffrast_render(K=Ks, H=hs, W=ws, ob_in_cams=poses_t[i:i + self.RERANK_CHUNK],
                                               glctx=self.est.glctx, mesh_tensors=self.est.mesh_tensors,
                                               output_size=np.asarray([hs, ws]))
-            out.append((depth_r > 0).cpu().numpy())
+            out.append(depth_r.detach().cpu().numpy().astype(np.float32))
         return np.concatenate(out, 0), Ks, hs, ws
 
     def hypotheses(self):

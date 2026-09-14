@@ -113,7 +113,7 @@ services:
       - DISPLAY=${DISPLAY}
       # GPUs 1-2 run the FSDP VLA training on this workstation; soft-pin
       # to GPU 0. Delete to let it roam over all three.
-      # - CUDA_VISIBLE_DEVICES=0
+      - CUDA_VISIBLE_DEVICES=2
     stdin_open: true
     tty: true
 

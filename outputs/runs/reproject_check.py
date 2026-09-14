@@ -62,7 +62,7 @@ elif a.t is not None and a.rpy is not None:
 else:
     ap.error("--pose-json or --t/--rpy")
 
-rgb = np.array(Image.open(os.path.join(a.run_dir, "rgb.png")).convert("RGB"))[..., ::-1].copy()  # BGR on disk
+rgb = np.array(Image.open(os.path.join(a.run_dir, "rgb.png")).convert("RGB")).copy()  # run_scene writes a normal RGB PNG (cv2.imwrite of a BGR view); PIL reads it correctly -- no flip
 mask = np.array(Image.open(os.path.join(a.run_dir, f"mask_{a.object.replace(' ', '_')}.png")).convert("L")) > 0
 depth = np.array(Image.open(os.path.join(a.run_dir, "depth_mm.png")))
 if depth.dtype != np.uint16:

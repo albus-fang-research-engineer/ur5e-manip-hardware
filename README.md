@@ -287,9 +287,16 @@ the part, so their consensus silhouette (dilated by 1% of the mask's bbox
 diagonal) IS the body, with no part detector. `U = mask ∖ consensus`, minus
 pixels farther than half the mesh diameter from the body's depth (SAM leak
 guard), is what the body cannot explain. Per hypothesis `expl = |sil ∩ U| /
-|U|`; survivors have `expl ≥ 0.6·max` and silhouette precision ≥ 0.9 (a
-tumbled body can cover `U` and score 1.0 -- precision catches it); the scorer
-picks among survivors. Declines with a recorded reason when `|U| < 2%` of the
+|U|`; survivors have `expl ≥ 0.6·max`, silhouette precision ≥ 0.9 (a
+tumbled body can cover `U` and score 1.0 -- precision catches it), at most
+10% of their silhouette pixels with rendered depth more than 15% of the mesh
+diameter off the measured depth (an **inverted** cup has the same outline and
+puts its handle in the same place, but a flat base where the visible cavity
+is: measured 0.02 upright vs 0.44 inverted), and a scorer score within 1.0 of
+the pick's (the scorer is overridden only where it is flat: correct family
+0.25 below the pick, inverted family 1.4 below). The relative `expl`
+threshold is taken over the gated set, so a disqualified tumbled body at
+`expl` 1.0 cannot set it. The scorer picks among survivors. Declines with a recorded reason when `|U| < 2%` of the
 mask (nothing unexplained / symmetric object), when `max(expl) < 0.10` (no
 hypothesis reaches `U`: part missing from the mesh or set collapsed), or when
 `u_frac > 0.35` (the top-10 do not agree on the body -- **treat as a failed

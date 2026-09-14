@@ -28,9 +28,21 @@ What does separate them is placement of the part, conditioned on the body:
      the mug frame). A tumbled hypothesis can cover U with its BODY and
      score 1.0 -- those have poor precision (|sil AND mask| / |sil|), hence
      the precision floor.
-  4. Survivors: expl >= expl_rel * max(expl) and precision >= precision_floor.
-     Among them, the scorer's own best. The scorer is overridden only on the
-     one thing it demonstrably cannot see.
+  4. Survivors: precision >= precision_floor, scorer score within
+     scorer_margin of the pick's (the scorer is overridden only where it is
+     flat: on the mug frame the correct family sits 0.25 below the pick, the
+     inverted family 1.4 below), and -- when rendered depth is available -- a
+     DEPTH gate: the fraction of
+     silhouette pixels whose rendered depth is off the measured depth by more
+     than depth_bad_diam * diameter must stay below depth_bad_max. A silhouette
+     cannot tell an upright cup from an inverted one (a frustum's outline is
+     the same either way, and the handle lands in the same place), but the
+     visible cavity is centimetres deep where the inverted mesh puts a flat
+     base: measured on run 20260903_203531, that fraction is 0.02 for the
+     upright pose and 0.44 (min 0.08) for the inverted family. THEN, over
+     the hypotheses that pass those gates, expl >= expl_rel * max(expl) --
+     the relative threshold is taken after gating so a disqualified tumbled
+     body at expl 1.0 cannot set it. Among survivors, the scorer's own best.
 
 Declines (the scorer's pick is returned unchanged, with the reason recorded):
   - |U| below u_floor of the mask: the top-K explain the whole mask, nothing
@@ -38,7 +50,7 @@ Declines (the scorer's pick is returned unchanged, with the reason recorded):
   - max(expl) below expl_floor: the mask has an unexplained region but no
     hypothesis reaches it -- part missing from the mesh, or the refined set
     collapsed; re-ranking cannot help and should not guess
-  - no survivor passes the precision floor
+  - no survivor passes the precision floor / depth gate
   - u_frac above u_frac_max: the top-K do not even agree on the body; the
     registration is bad for reasons a re-rank cannot fix -- callers should
     treat this as a hard stop, not proceed to grounding / VLM calls
@@ -69,6 +81,9 @@ class RerankParams:
     expl_floor: float = 0.10        # max(expl) below this -> decline (no hypothesis reaches U)
     expl_rel: float = 0.6           # survivors: expl >= expl_rel * max(expl)
     precision_floor: float = 0.9    # survivors: |sil AND mask| / |sil| >= this (rejects tumbled bodies covering U)
+    depth_bad_diam: float = 0.15    # a pixel is "wrong surface" if |rendered - measured| > this * diameter
+    depth_bad_max: float = 0.10     # survivors: fraction of wrong-surface pixels <= this (rejects inverted bodies)
+    scorer_margin: float = 1.0      # survivors: score >= pick's score - this (override the scorer only where it is flat)
 
 
 @dataclass
@@ -92,6 +107,10 @@ class RerankRecord:
     max_expl: float
     scorer_from: float
     scorer_to: float
+    depth_bad_from: float = -1.0   # wrong-surface fraction of the scorer's pick (-1: no rendered depth given)
+    depth_bad_to: float = -1.0     # ... of the chosen hypothesis
+    n_gated: int = 0               # hypotheses passing precision / scorer-margin / depth gates (before expl)
+    max_expl_gated: float = 0.0    # max(expl) over the gated set -- what the relative threshold is taken from
 
 
 def _rotation_deg(Ra: np.ndarray, Rb: np.ndarray) -> float:
@@ -101,14 +120,18 @@ def _rotation_deg(Ra: np.ndarray, Rb: np.ndarray) -> float:
 
 def rerank_hypotheses(sils: np.ndarray, scores: np.ndarray, poses: np.ndarray, mask: np.ndarray,
                       depth: np.ndarray | None, diameter: float,
-                      params: RerankParams | None = None) -> tuple[int, RerankRecord]:
+                      params: RerankParams | None = None,
+                      depths: np.ndarray | None = None) -> tuple[int, RerankRecord]:
     """
     sils    (N, h, w) bool   silhouettes of the refined hypotheses, scorer-sorted (index 0 = pick)
     scores  (N,)             scorer scores, same order
     poses   (N, 4, 4)        same order (only used to report the rotation between pick and choice)
     mask    (h, w) bool      SAM mask at the same resolution
-    depth   (h, w) float m   measured depth at the same resolution, 0 = invalid; None disables the guard
+    depth   (h, w) float m   measured depth at the same resolution, 0 = invalid; None disables the
+                             depth guard on U and the depth gate on survivors
     diameter                 mesh bounding diameter in metres (FoundationPose's est.diameter)
+    depths  (N, h, w) float  rendered depth of each hypothesis, metres, <=0 or non-finite where
+                             the mesh does not cover the pixel; None disables the depth gate
     returns (chosen_index, record). chosen_index == 0 whenever the re-rank declines.
     """
     p = params or RerankParams()
@@ -168,12 +191,34 @@ def rerank_hypotheses(sils: np.ndarray, scores: np.ndarray, poses: np.ndarray, m
     if rec["max_expl"] < p.expl_floor:
         return decline("no hypothesis reaches the unexplained region (max expl below floor): part missing or set collapsed")
 
-    # 4. survivors, scorer picks among them
-    surv = np.nonzero((expl >= p.expl_rel * expl.max()) & (precision >= p.precision_floor))[0]
+    # 4. gates first (precision, scorer margin, depth), THEN the relative expl
+    #    threshold over the gated set, then the scorer picks among survivors
+    ok = (precision >= p.precision_floor) & (scores >= scores[0] - p.scorer_margin)
+    depth_bad = None
+    if depths is not None and depth is not None:
+        depth_bad = np.ones(N)
+        thr = p.depth_bad_diam * diameter
+        valid = mask & (depth > 0)
+        for i in range(N):
+            di = depths[i]
+            sel = sils[i] & valid & np.isfinite(di) & (di > 0)
+            if sel.sum() >= 50:
+                depth_bad[i] = float((np.abs(di[sel] - depth[sel]) > thr).mean())
+        ok &= depth_bad <= p.depth_bad_max
+        rec["depth_bad_from"] = float(depth_bad[0])
+    rec["n_gated"] = int(ok.sum())
+    if not ok.any():
+        return decline("no hypothesis passes the precision / scorer-margin / depth gates")
+    rec["max_expl_gated"] = float(expl[ok].max())
+    if rec["max_expl_gated"] < p.expl_floor:
+        return decline("no gated hypothesis reaches the unexplained region (max expl below floor): "
+                       "part missing, set collapsed, or only bad bodies cover it")
+    ok &= expl >= p.expl_rel * rec["max_expl_gated"]
+    surv = np.nonzero(ok)[0]
     rec["n_survivors"] = int(len(surv))
-    if len(surv) == 0:
-        return decline("no survivor passes the precision floor")
     chosen = int(surv[np.argmax(scores[surv])])
+    if depth_bad is not None:
+        rec["depth_bad_to"] = float(depth_bad[chosen])
     rec.update(to_rank=chosen, expl_to=float(expl[chosen]), scorer_to=float(scores[chosen]),
                rotation_deg=_rotation_deg(poses[0][:3, :3], poses[chosen][:3, :3]),
                changed=chosen != 0, reason="re-ranked" if chosen != 0 else "scorer pick already covers U")

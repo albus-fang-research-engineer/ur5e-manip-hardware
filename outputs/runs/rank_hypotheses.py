@@ -65,15 +65,31 @@ def silhouette(T):
         dr.polygon(row, fill=1)
     return np.array(img, dtype=bool)
 
+from scipy.ndimage import distance_transform_edt
+
+def rendered_depth(T, sil):
+    """dense rendered depth inside the silhouette from the vertex z-buffer
+    (nearest-filled) -- the offline stand-in for the sidecar's nvdiffrast depth"""
+    P = V @ T[:3, :3].T + T[:3, 3]; u = P @ Ks.T; u = u[:, :2] / u[:, 2:3]
+    q = np.round(u).astype(int); ok = (q[:, 0] >= 0) & (q[:, 0] < Ws) & (q[:, 1] >= 0) & (q[:, 1] < Hs)
+    zb = np.full((Hs, Ws), np.inf); np.minimum.at(zb, (q[ok, 1], q[ok, 0]), P[ok, 2])
+    valid = np.isfinite(zb)
+    if not valid.any():
+        return np.zeros((Hs, Ws), np.float32)
+    idx = distance_transform_edt(~valid, return_distances=False, return_indices=True)
+    return np.where(sil, zb[idx[0], idx[1]], 0.0).astype(np.float32)
+
 R0 = poses[0][:3, :3]
 rows = []
 sils = np.zeros((len(poses), Hs, Ws), bool)
+depths = np.zeros((len(poses), Hs, Ws), np.float32)
 t0 = time.time()
 for i, (T, sc) in enumerate(zip(poses, scores)):
     sil = silhouette(T)
     if sil is None:
         rows.append(dict(rank=i, score=sc, precision=0, recall=0, iou=0, rot_deg=np.nan)); continue
     sils[i] = sil
+    depths[i] = rendered_depth(T, sil)
     inter = (sil & mask_s).sum()
     prec = inter / max(sil.sum(), 1); rec = inter / max(mask_s.sum(), 1); iou = inter / max((sil | mask_s).sum(), 1)
     rot = np.degrees(np.linalg.norm(Rotation.from_matrix(T[:3, :3] @ R0.T).as_rotvec()))
@@ -146,7 +162,7 @@ if a.rerank:
         dep = np.array(Image.open(depth_p)).astype(np.float64) * 1e-3
         depth_s = np.array(Image.fromarray(dep.astype(np.float32)).resize((Ws, Hs), Image.NEAREST))
     diameter = float(np.linalg.norm(m.bounding_box.extents)) if not hasattr(m, "bounding_sphere") else 2 * float(m.bounding_sphere.primitive.radius)
-    chosen, rr = rerank_hypotheses(sils, scores, poses, mask_s, depth_s, diameter)
+    chosen, rr = rerank_hypotheses(sils, scores, poses, mask_s, depth_s, diameter, depths=depths)
     print(f"\n=== sidecar re-rank (pose_server/rerank.py, same code) ===")
     for k, v in rr.__dict__.items():
         print(f"  {k:16s} {v}")
