@@ -274,11 +274,34 @@ Any6D and standalone FoundationPose registered the mug ~140° wrong in yaw
 (handle behind the body); the sidecar's 252 scores spanned two points with the
 top thirty within 0.4. `outputs/runs/reproject_check.py` (symmetry-axis
 search, yaw sweep against the SAM mask) located the error; `--pre-rotate body
-140` put the handle on the mask with the body in place. Pre-check for an
-in-sidecar mask re-rank: `fp_from_mesh.py --all` returns every refined
-hypothesis (`return_all`), `rank_hypotheses.py` scores each against the mask
-(precision / recall / IoU) -- if some hypothesis covers the mask, selecting it
-is the fix; if none does, the re-rank has to move to the coarse stage.
+140` put the handle on the mask with the body in place. `fp_from_mesh.py
+--all` returns every refined hypothesis (`return_all`); `rank_hypotheses.py`
+scores each against the mask. Findings: a correct refined hypothesis EXISTS
+(ranks 17–30, 155° from the pick) but no global silhouette statistic separates
+it from the wrong family -- the undersized handle explains only ~26% of the
+mask's handle region, the same size as body-fit jitter.
+
+**Fix: mask-conditioned re-rank (`pose_server/rerank.py`, `"rerank": true` on
+`register`).** The scorer's top-10 agree on the body and disagree only about
+the part, so their consensus silhouette (dilated by 1% of the mask's bbox
+diagonal) IS the body, with no part detector. `U = mask ∖ consensus`, minus
+pixels farther than half the mesh diameter from the body's depth (SAM leak
+guard), is what the body cannot explain. Per hypothesis `expl = |sil ∩ U| /
+|U|`; survivors have `expl ≥ 0.6·max` and silhouette precision ≥ 0.9 (a
+tumbled body can cover `U` and score 1.0 -- precision catches it); the scorer
+picks among survivors. Declines with a recorded reason when `|U| < 2%` of the
+mask (nothing unexplained / symmetric object), when `max(expl) < 0.10` (no
+hypothesis reaches `U`: part missing from the mesh or set collapsed), or when
+`u_frac > 0.35` (the top-10 do not agree on the body -- **treat as a failed
+registration upstream**). Off by default; the reply carries the `rerank`
+record. Validated offline on the 252 saved hypotheses: `U` = 570 px at half
+resolution vs a 569 px geometric handle blob, picks rank 18 (155°, handle on
+the mask, scorer 71.17 vs 71.42) -- `rank_hypotheses.py --rerank` runs the
+identical code on a saved `.npz`; `test/test_rerank.py` covers the positive
+path, each decline, the depth guard and the scaling of the constants on a
+synthetic tapered mug. Any6D's own registration is not re-ranked (its scale
+loop is interleaved with scoring); FoundationPose on `final_mesh` is the
+tracker of record, so this is where the fix reaches the pipeline.
 
 Tests (offline, no sidecars): `python -m pytest test/test_render_asset.py -v`
 -- the fixture replays Any6D's chain on a textured off-centre GLB (any6d-style

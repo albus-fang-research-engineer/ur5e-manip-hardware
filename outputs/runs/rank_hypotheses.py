@@ -35,6 +35,9 @@ ap.add_argument("--npz", default=None, help="default <run>/fp_<object>_hypothese
 ap.add_argument("--scale", type=float, default=0.5, help="raster scale (0.5 = half resolution, ~4x faster)")
 ap.add_argument("--recall-gate", type=float, default=0.95)
 ap.add_argument("--precision-floor", type=float, default=0.95)
+ap.add_argument("--rerank", action="store_true",
+                help="also run pose_server/rerank.py's selection on these silhouettes exactly as the "
+                     "sidecar would (same code), and report what it would have picked")
 a = ap.parse_args()
 
 npz = a.npz or os.path.join(a.run_dir, f"fp_{a.object}_hypotheses.npz")
@@ -64,11 +67,13 @@ def silhouette(T):
 
 R0 = poses[0][:3, :3]
 rows = []
+sils = np.zeros((len(poses), Hs, Ws), bool)
 t0 = time.time()
 for i, (T, sc) in enumerate(zip(poses, scores)):
     sil = silhouette(T)
     if sil is None:
         rows.append(dict(rank=i, score=sc, precision=0, recall=0, iou=0, rot_deg=np.nan)); continue
+    sils[i] = sil
     inter = (sil & mask_s).sum()
     prec = inter / max(sil.sum(), 1); rec = inter / max(mask_s.sum(), 1); iou = inter / max((sil | mask_s).sum(), 1)
     rot = np.degrees(np.linalg.norm(Rotation.from_matrix(T[:3, :3] @ R0.T).as_rotvec()))
@@ -131,6 +136,26 @@ for j in order:
 print("top-10 by scorer:  rank  scorer  prec   recall  IoU    rot_from_pick")
 for j in range(min(10, len(rows))):
     print(f"                   {j:4d}  {scores[j]:6.2f}  {prec[j]:.3f}  {rec[j]:.3f}  {iou[j]:.3f}  {rot[j]:6.0f}")
+
+if a.rerank:
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "pose_server"))
+    from rerank import rerank_hypotheses
+    depth_p = os.path.join(a.run_dir, "depth_mm.png")
+    depth_s = None
+    if os.path.exists(depth_p):
+        dep = np.array(Image.open(depth_p)).astype(np.float64) * 1e-3
+        depth_s = np.array(Image.fromarray(dep.astype(np.float32)).resize((Ws, Hs), Image.NEAREST))
+    diameter = float(np.linalg.norm(m.bounding_box.extents)) if not hasattr(m, "bounding_sphere") else 2 * float(m.bounding_sphere.primitive.radius)
+    chosen, rr = rerank_hypotheses(sils, scores, poses, mask_s, depth_s, diameter)
+    print(f"\n=== sidecar re-rank (pose_server/rerank.py, same code) ===")
+    for k, v in rr.__dict__.items():
+        print(f"  {k:16s} {v}")
+    print(f"  -> would return rank {chosen}"
+          + (f" ({rr.rotation_deg:.0f} deg from the scorer's pick)" if rr.changed else " (scorer's pick unchanged)"))
+    json.dump({"cam_T_obj": poses[chosen].tolist(), "mesh": str(d["mesh"]), "rank": chosen,
+               "rerank": rr.__dict__},
+              open(os.path.join(a.run_dir, f"fp_{a.object}_rerank.json"), "w"), indent=2)
+    print(f"  wrote {os.path.join(a.run_dir, f'fp_{a.object}_rerank.json')}   (reproject_check.py --pose-json to see it)")
 
 best = os.path.join(a.run_dir, f"fp_{a.object}_best_recall.json")
 json.dump({"cam_T_obj": poses[jb].tolist(), "mesh": str(d["mesh"]), "rank": jb,

@@ -48,6 +48,9 @@ def main():
     ap.add_argument("--release", action="store_true")
     ap.add_argument("--timeout", type=float, default=600.0)
     ap.add_argument("--out", default=None, help="pose json path; default <run_dir>/fp_<object>.json")
+    ap.add_argument("--rerank", action="store_true",
+                    help="ask the sidecar to apply its mask-conditioned re-rank (pose_server/rerank.py) "
+                         "and print the record")
     ap.add_argument("--all", action="store_true",
                     help="ask the sidecar for every refined hypothesis + scorer score (return_all) and "
                          "save them to <run_dir>/fp_<object>_hypotheses.npz for rank_hypotheses.py")
@@ -80,10 +83,17 @@ def main():
     print(f"-> register '{args.object}' (est_refine_iter={args.est_refine_iter}) ...")
     rep, dt = call({"cmd": "register", "obj": args.object, "rgb": rgb, "depth": depth,
                     "K": K.astype(np.float32), "mask": mask, "mesh": args.mesh,
-                    "est_refine_iter": args.est_refine_iter, "return_all": bool(args.all)}, "register")
+                    "est_refine_iter": args.est_refine_iter, "return_all": bool(args.all),
+                    "rerank": bool(args.rerank)}, "register")
     T = np.asarray(rep["pose"], np.float64).reshape(4, 4)
     rpy = Rotation.from_matrix(T[:3, :3]).as_euler("xyz", degrees=True)
     print(f"\nok in {dt:.1f}s   (scorer saw texture: {rep.get('texture', '?')})")
+    if "rerank" in rep:
+        rr = rep["rerank"]
+        print(f"  rerank: {rr['reason']}  changed={rr['changed']}  rank 0 -> {rr['to_rank']}  "
+              f"{rr['rotation_deg']:.0f} deg  expl {rr['expl_from']:.2f} -> {rr['expl_to']:.2f}  "
+              f"U {rr['u_px']} px ({100*rr['u_frac']:.1f}% of mask, {rr['u_depth_dropped']} dropped by depth)  "
+              f"{rr['n_survivors']} survivors")
     if args.all and "hypotheses" in rep:
         hyp = np.asarray(rep["hypotheses"], np.float64); sc = np.asarray(rep["scores"], np.float64)
         stem = os.path.splitext(os.path.basename(args.out))[0] if args.out else f"fp_{args.object}"
@@ -98,7 +108,7 @@ def main():
     with open(out, "w") as f:
         json.dump({"object": args.object, "mesh": args.mesh, "cam_T_obj": T.tolist(),
                    "est_refine_iter": args.est_refine_iter, "seconds": dt,
-                   "estimator": "foundationpose"}, f, indent=2)
+                   "estimator": "foundationpose", "rerank": rep.get("rerank")}, f, indent=2)
     print(f"  pose json  {out}")
 
     if args.track:

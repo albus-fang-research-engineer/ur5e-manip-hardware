@@ -13,11 +13,20 @@ Wire protocol (msgpack + msgpack_numpy, REQ/REP):
    "K":    3x3 float32,
    "mask": HxW uint8/bool,
    "est_refine_iter": 5,
-   "return_all": false}             # optional: also return every refined hypothesis
+   "return_all": false,             # optional: also return every refined hypothesis
+   "rerank": false}                 # optional: mask-conditioned re-rank (see rerank.py)
       -> {"ok": True, "pose": 4x4 float32,   # cam_T_obj
           "hypotheses": Nx4x4 float32,       # only with return_all: all refined poses,
           "scores": N float32,               #   scorer-sorted (best first), same frame
-          "texture": "simple"|"pbr->simple"|"none"}   # what the scorer's RGB channel saw
+          "texture": "simple"|"pbr->simple"|"none",   # what the scorer's RGB channel saw
+          "rerank": {...}}                    # only with rerank: RerankRecord (changed, reason, ...)
+
+`rerank` selects among FoundationPose's refined hypotheses by how much of the
+SAM mask the scorer's top-K body consensus leaves unexplained -- the part of
+the object the scorer cannot see (a mug handle behind the body). Off by
+default; when it declines, the scorer's pick is returned and `rerank.reason`
+says why. `rerank.u_frac` above ~0.35 means the top-K do not agree on the
+body: treat as a failed registration upstream.
 
 `return_all` exists for the yaw-ambiguity diagnosis: FoundationPose keeps
 every refined hypothesis (est.poses, est.scores) and on a near-symmetric
@@ -48,7 +57,11 @@ msgpack_numpy.patch()
 
 # FoundationPose imports (PYTHONPATH=/opt/FoundationPose)
 from estimater import FoundationPose, ScorePredictor, PoseRefinePredictor
+from Utils import nvdiffrast_render
 import nvdiffrast.torch as dr
+import torch
+
+from rerank import rerank_hypotheses, record_dict
 
 MESH_DIR = os.environ.get("MESH_DIR", "/opt/meshes")
 PORT = int(os.environ.get("POSE_PORT", "5667"))
@@ -91,10 +104,49 @@ class Session:
             debug=0,
         )
 
-    def register(self, K, rgb, depth, mask, iters):
+    def register(self, K, rgb, depth, mask, iters, rerank=False):
+        """Returns (pose, rerank_record_or_None). With rerank=True the pick
+        among the refined hypotheses may be changed by rerank_hypotheses();
+        est.pose_last is updated so `track` continues from the chosen one."""
         pose = self.est.register(K=K, rgb=rgb, depth=depth,
                                  ob_mask=mask.astype(bool), iteration=iters)
-        return np.asarray(pose, dtype=np.float32)
+        if not rerank:
+            return np.asarray(pose, dtype=np.float32), None
+        poses_c = self.est.poses                          # centred-mesh frame, scorer-sorted
+        scores = self.est.scores.data.cpu().numpy() if hasattr(self.est.scores, "data") else np.asarray(self.est.scores)
+        H, W = mask.shape[:2]
+        sils, Ks, hs, ws = self._silhouettes(K, H, W, poses_c)
+        mask_s = np.asarray(mask).astype(bool)[::self.RERANK_STRIDE, ::self.RERANK_STRIDE][:hs, :ws]
+        depth_s = np.asarray(depth, np.float32)[::self.RERANK_STRIDE, ::self.RERANK_STRIDE][:hs, :ws]
+        poses_np = poses_c.data.cpu().numpy() if hasattr(poses_c, "data") else np.asarray(poses_c)
+        chosen, rec = rerank_hypotheses(sils, scores, poses_np, mask_s, depth_s, float(self.est.diameter))
+        tf = self.est.get_tf_to_centered_mesh()
+        tf_np = tf.data.cpu().numpy() if hasattr(tf, "data") else np.asarray(tf)
+        if chosen != 0:
+            self.est.pose_last = poses_c[chosen]
+            pose = poses_np[chosen] @ tf_np
+        log.info("rerank: %s (from rank 0 -> %d, %.0f deg, expl %.2f -> %.2f, U %d px = %.1f%% of mask, %d survivors)",
+                 rec.reason, rec.to_rank, rec.rotation_deg, rec.expl_from, rec.expl_to, rec.u_px,
+                 100 * rec.u_frac, rec.n_survivors)
+        return np.asarray(pose, dtype=np.float32), record_dict(rec)
+
+    RERANK_STRIDE = 2          # silhouettes at half resolution: enough for a part-placement test
+    RERANK_CHUNK = 32          # hypotheses per nvdiffrast batch
+
+    def _silhouettes(self, K, H, W, poses_c):
+        """Boolean silhouettes of all refined hypotheses at reduced resolution,
+        via the same nvdiffrast renderer FoundationPose scores with."""
+        s = 1.0 / self.RERANK_STRIDE
+        hs, ws = int(H * s), int(W * s)
+        Ks = np.asarray(K, np.float64).copy(); Ks[:2] *= s
+        out = []
+        poses_t = poses_c if torch.is_tensor(poses_c) else torch.as_tensor(poses_c, device="cuda", dtype=torch.float)
+        for i in range(0, len(poses_t), self.RERANK_CHUNK):
+            _, depth_r, _ = nvdiffrast_render(K=Ks, H=hs, W=ws, ob_in_cams=poses_t[i:i + self.RERANK_CHUNK],
+                                              glctx=self.est.glctx, mesh_tensors=self.est.mesh_tensors,
+                                              output_size=np.asarray([hs, ws]))
+            out.append((depth_r > 0).cpu().numpy())
+        return np.concatenate(out, 0), Ks, hs, ws
 
     def hypotheses(self):
         """All refined hypotheses from the last register, scorer-sorted (best
@@ -139,12 +191,15 @@ def main():
                 obj = req["obj"]
                 mesh_path = os.path.join(MESH_DIR, req["mesh"])
                 sessions[obj] = Session(mesh_path, scorer, refiner, glctx)
-                pose = sessions[obj].register(
+                pose, rr = sessions[obj].register(
                     K=np.asarray(req["K"], np.float64).reshape(3, 3),
                     rgb=req["rgb"], depth=req["depth"], mask=req["mask"],
                     iters=int(req.get("est_refine_iter", 5)),
+                    rerank=bool(req.get("rerank", False)),
                 )
                 rep = {"ok": True, "pose": pose, "texture": sessions[obj].texture}
+                if rr is not None:
+                    rep["rerank"] = rr
                 if req.get("return_all"):
                     hyp, sc = sessions[obj].hypotheses()
                     if hyp is not None:
