@@ -14,12 +14,22 @@ Wire protocol (msgpack + msgpack_numpy, REQ/REP):
    "mask": HxW uint8/bool,
    "est_refine_iter": 5,
    "return_all": false,             # optional: also return every refined hypothesis
-   "rerank": false}                 # optional: mask-conditioned re-rank (see rerank.py)
+   "rerank": false,                 # optional: mask-conditioned re-rank (see rerank.py)
+   "survivor_crops": false}         # optional (with rerank): textured RGB renders of each
+                                    #   survivor in the mask's crop framing, for an external
+                                    #   decider (Orient Anything two-sided comparison)
       -> {"ok": True, "pose": 4x4 float32,   # cam_T_obj
           "hypotheses": Nx4x4 float32,       # only with return_all: all refined poses,
           "scores": N float32,               #   scorer-sorted (best first), same frame
           "texture": "simple"|"pbr->simple"|"none",   # what the scorer's RGB channel saw
-          "rerank": {...}}                    # only with rerank: RerankRecord (changed, reason, ...)
+          "rerank": {...},                    # only with rerank: RerankRecord (changed, reason, survivors, ...)
+          "crops": n x h x w x 3 uint8,       # only with survivor_crops: one per rerank.survivors,
+          "crop_box": [y0, y1, x0, x1]}       #   white background; crop the real RGB with the same box
+
+  {"cmd": "select", "obj": "mug", "rank": 18}  -> {"ok": True, "pose": 4x4}
+      pick a specific refined hypothesis of the last register (index into the
+      scorer-sorted set, as reported in rerank.survivors); est.pose_last is set
+      so `track` continues from it.
 
 `rerank` selects among FoundationPose's refined hypotheses by how much of the
 SAM mask the scorer's top-K body consensus leaves unexplained -- the part of
@@ -152,6 +162,42 @@ class Session:
             out.append(depth_r.detach().cpu().numpy().astype(np.float32))
         return np.concatenate(out, 0), Ks, hs, ws
 
+    def select(self, rank):
+        """Make refined hypothesis `rank` (scorer-sorted index) the current pose."""
+        poses_c = self.est.poses
+        if poses_c is None or not (0 <= int(rank) < len(poses_c)):
+            raise ValueError(f"rank {rank} out of range")
+        self.est.pose_last = poses_c[int(rank)]
+        tf = self.est.get_tf_to_centered_mesh()
+        tf_np = tf.data.cpu().numpy() if hasattr(tf, "data") else np.asarray(tf)
+        p = poses_c[int(rank)]
+        p_np = p.data.cpu().numpy() if hasattr(p, "data") else np.asarray(p)
+        return (p_np @ tf_np).astype(np.float32)
+
+    def survivor_crops(self, K, mask, ranks, margin=0.2):
+        """Textured RGB renders of the given hypotheses at full resolution,
+        cropped to the mask's bbox (+margin, square) with a white background:
+        the same framing an external decider should apply to the real RGB."""
+        H, W = mask.shape[:2]
+        ys, xs = np.nonzero(np.asarray(mask).astype(bool))
+        cy, cx = (ys.min() + ys.max()) / 2, (xs.min() + xs.max()) / 2
+        half = int(max(np.ptp(ys), np.ptp(xs)) * (0.5 + margin))
+        y0, y1, x0, x1 = max(0, int(cy - half)), min(H, int(cy + half)), max(0, int(cx - half)), min(W, int(cx + half))
+        poses_c = self.est.poses
+        out = []
+        Kt = np.asarray(K, np.float64)
+        for i in range(0, len(ranks), self.RERANK_CHUNK):
+            sel = [int(r) for r in ranks[i:i + self.RERANK_CHUNK]]
+            ob = poses_c[sel] if torch.is_tensor(poses_c) else torch.as_tensor(np.asarray(poses_c)[sel], device="cuda", dtype=torch.float)
+            color, depth_r, _ = nvdiffrast_render(K=Kt, H=H, W=W, ob_in_cams=ob, glctx=self.est.glctx,
+                                                  mesh_tensors=self.est.mesh_tensors,
+                                                  output_size=np.asarray([H, W]), use_light=True)
+            col = (color.clip(0, 1) * 255).detach().cpu().numpy().astype(np.uint8)
+            fg = (depth_r > 0).detach().cpu().numpy()
+            col = np.where(fg[..., None], col, 255).astype(np.uint8)
+            out.append(col[:, y0:y1, x0:x1])
+        return np.concatenate(out, 0), [int(y0), int(y1), int(x0), int(x1)]
+
     def hypotheses(self):
         """All refined hypotheses from the last register, scorer-sorted (best
         first), expressed in the same frame as the returned pose (i.e. with
@@ -204,6 +250,11 @@ def main():
                 rep = {"ok": True, "pose": pose, "texture": sessions[obj].texture}
                 if rr is not None:
                     rep["rerank"] = rr
+                    if req.get("survivor_crops") and rr.get("survivors"):
+                        crops, box = sessions[obj].survivor_crops(
+                            np.asarray(req["K"], np.float64).reshape(3, 3), req["mask"], rr["survivors"])
+                        rep["crops"] = crops
+                        rep["crop_box"] = box
                 if req.get("return_all"):
                     hyp, sc = sessions[obj].hypotheses()
                     if hyp is not None:
@@ -212,6 +263,13 @@ def main():
                         log.info("register %s: %d hypotheses, scores %.3f..%.3f (top-10 spread %.3f)",
                                  obj, len(sc), float(sc.min()), float(sc.max()),
                                  float(sc[0] - sc[min(9, len(sc) - 1)]))
+
+            elif cmd == "select":
+                if obj not in sessions:
+                    raise KeyError(f"no session for {obj!r}")
+                pose = sessions[obj].select(int(req["rank"]))
+                log.info("select %s: rank %d", obj, int(req["rank"]))
+                rep = {"ok": True, "pose": pose}
 
             elif cmd == "track":
                 sess = sessions[req["obj"]]

@@ -290,13 +290,31 @@ guard), is what the body cannot explain. Per hypothesis `expl = |sil ∩ U| /
 |U|`; survivors have `expl ≥ 0.6·max`, silhouette precision ≥ 0.9 (a
 tumbled body can cover `U` and score 1.0 -- precision catches it), at most
 10% of their silhouette pixels with rendered depth more than 15% of the mesh
-diameter off the measured depth (an **inverted** cup has the same outline and
-puts its handle in the same place, but a flat base where the visible cavity
-is: measured 0.02 upright vs 0.44 inverted), and a scorer score within 1.0 of
+diameter off the measured depth (a cup **tumbled onto its side, base toward the camera**, has nearly the
+same outline and can put its handle in the same place, but a flat base where
+the visible cavity is: measured 0.02 upright vs 0.44 tumbled), and a scorer score within 1.0 of
 the pick's (the scorer is overridden only where it is flat: correct family
-0.25 below the pick, inverted family 1.4 below). The relative `expl`
+0.25 below the pick, tumbled family 1.4 below). The relative `expl`
 threshold is taken over the gated set, so a disqualified tumbled body at
-`expl` 1.0 cannot set it. The scorer picks among survivors. Declines with a recorded reason when `|U| < 2%` of the
+`expl` 1.0 cannot set it. The scorer picks among survivors -- unless an
+external decider does (below).
+
+**Orient Anything as the decider (2026-09-14).** Measured on the saved frame
+(`outputs/runs/oriany_check.py`, real masked crop vs textured renders of five
+hypotheses in the same framing): the full-rotation disagreement between
+Orient Anything's `R_cam` on the real crop and on the render is 13° for the
+correct hypothesis, 14° for a near-correct one, 74° for the handle-behind
+pick and 109° for a 110° partial -- the ordering is right, the magnitudes
+compress, and the real crop reports `alpha 2`. It does NOT see a tumbled
+body (up-vector disagreement 24° for a mug on its side, where ~90° was due), so the depth gate stays in front
+of it. Wiring: `register` with `"rerank": true, "survivor_crops": true`
+returns `rerank.survivors` and one textured render per survivor cropped to
+the mask's bbox (`crop_box`); the caller crops the real RGB identically, runs
+Orient Anything on all of them, picks the survivor with the smallest geodesic
+angle, and calls `{"cmd": "select", "rank": N}` so tracking continues from
+it. `fp_from_mesh.py --oriany` does exactly this and writes an annotated
+contact sheet (`oriany_<obj>.png`, front = green, up = blue). If the real crop
+reads `alpha 0`, the sidecar's scorer-among-survivors pick stands. Declines with a recorded reason when `|U| < 2%` of the
 mask (nothing unexplained / symmetric object), when `max(expl) < 0.10` (no
 hypothesis reaches `U`: part missing from the mesh or set collapsed), or when
 `u_frac > 0.35` (the top-10 do not agree on the body -- **treat as a failed

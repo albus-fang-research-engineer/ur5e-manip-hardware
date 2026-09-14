@@ -31,15 +31,15 @@ What does separate them is placement of the part, conditioned on the body:
   4. Survivors: precision >= precision_floor, scorer score within
      scorer_margin of the pick's (the scorer is overridden only where it is
      flat: on the mug frame the correct family sits 0.25 below the pick, the
-     inverted family 1.4 below), and -- when rendered depth is available -- a
+     tumbled family 1.4 below), and -- when rendered depth is available -- a
      DEPTH gate: the fraction of
      silhouette pixels whose rendered depth is off the measured depth by more
      than depth_bad_diam * diameter must stay below depth_bad_max. A silhouette
-     cannot tell an upright cup from an inverted one (a frustum's outline is
-     the same either way, and the handle lands in the same place), but the
-     visible cavity is centimetres deep where the inverted mesh puts a flat
-     base: measured on run 20260903_203531, that fraction is 0.02 for the
-     upright pose and 0.44 (min 0.08) for the inverted family. THEN, over
+     cannot tell an upright cup from one tumbled onto its side with the base toward
+     the camera (a frustum's outline is nearly the same, and the handle can
+     land in the same place), but the visible cavity is centimetres deep
+     where the tumbled mesh puts a flat base: measured on run 20260903_203531, that fraction is 0.02 for the
+     upright pose and 0.44 (min 0.08) for the tumbled family. THEN, over
      the hypotheses that pass those gates, expl >= expl_rel * max(expl) --
      the relative threshold is taken after gating so a disqualified tumbled
      body at expl 1.0 cannot set it. Among survivors, the scorer's own best.
@@ -82,7 +82,7 @@ class RerankParams:
     expl_rel: float = 0.6           # survivors: expl >= expl_rel * max(expl)
     precision_floor: float = 0.9    # survivors: |sil AND mask| / |sil| >= this (rejects tumbled bodies covering U)
     depth_bad_diam: float = 0.15    # a pixel is "wrong surface" if |rendered - measured| > this * diameter
-    depth_bad_max: float = 0.10     # survivors: fraction of wrong-surface pixels <= this (rejects inverted bodies)
+    depth_bad_max: float = 0.10     # survivors: fraction of wrong-surface pixels <= this (rejects tumbled bodies)
     scorer_margin: float = 1.0      # survivors: score >= pick's score - this (override the scorer only where it is flat)
 
 
@@ -111,6 +111,7 @@ class RerankRecord:
     depth_bad_to: float = -1.0     # ... of the chosen hypothesis
     n_gated: int = 0               # hypotheses passing precision / scorer-margin / depth gates (before expl)
     max_expl_gated: float = 0.0    # max(expl) over the gated set -- what the relative threshold is taken from
+    survivors: list = None         # ranks of the survivors (scorer-sorted indices), for an external decider
 
 
 def _rotation_deg(Ra: np.ndarray, Rb: np.ndarray) -> float:
@@ -216,6 +217,7 @@ def rerank_hypotheses(sils: np.ndarray, scores: np.ndarray, poses: np.ndarray, m
     ok &= expl >= p.expl_rel * rec["max_expl_gated"]
     surv = np.nonzero(ok)[0]
     rec["n_survivors"] = int(len(surv))
+    rec["survivors"] = [int(i) for i in surv]
     chosen = int(surv[np.argmax(scores[surv])])
     if depth_bad is not None:
         rec["depth_bad_to"] = float(depth_bad[chosen])
