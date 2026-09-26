@@ -314,3 +314,57 @@ def write_mark_set(rgb, kept, out_dir):
                              "score": round(by_idx[i]["score"], 4)}
                   for mid, i in id_map.items()}}, indent=2) + "\n")
     return ms, id_map
+
+
+# ------------------------------------------------------ run_scene plumbing
+
+def obj_key(mark_id):
+    """Session key, TF child frame and file stem for a mark: m<id>."""
+    return f"m{int(mark_id)}"
+
+
+def parse_register(spec, ids):
+    """--register none | all | '2,3' | '2 3' -> sorted mark ids to register.
+    An id that is not a mark in this set is an error, not a skip: a chosen
+    set that silently shrinks is how the wrong object gets registered."""
+    ids = sorted(int(i) for i in ids)
+    spec = (spec or "none").strip().lower()
+    if spec == "none":
+        return []
+    if spec == "all":
+        return ids
+    try:
+        want = sorted({int(t) for t in spec.replace(",", " ").split()})
+    except ValueError:
+        raise ValueError(f"--register wants none, all, or mark ids; got {spec!r}")
+    bad = [i for i in want if i not in ids]
+    if bad:
+        raise ValueError(f"--register {bad}: not marks in this set (marks: {ids})")
+    return want
+
+
+def split_instances(prompts, masks, scores, object_prompts, bg_prompts, bg_score_min):
+    """A flat SAM3 response -> (object instances, bg mask or None, bg count).
+    Object instances keep every score (selection applies score_min and
+    records the rest as below_score); the bg ("robot arm") fallback mask is
+    the union of bg-prompt instances at >= bg_score_min."""
+    inst, bg, n_bg = [], None, 0
+    for p, m, s in zip(prompts, masks, scores):
+        m = np.asarray(m) > 0
+        if p in object_prompts:
+            inst.append({"prompt": p, "score": float(s), "mask": m})
+        elif p in bg_prompts and float(s) >= bg_score_min:
+            bg = m if bg is None else (bg | m)
+            n_bg += 1
+    return inst, bg, n_bg
+
+
+def load_mark_set(mark_dir):
+    """A saved mark set -> ({mark_id: HxW bool}, marks.sam3.json or None)."""
+    from manip_bridge.marks_compat import load_marks          # lazy: sim only when marking
+
+    mark_dir = Path(mark_dir)
+    ms = load_marks(mark_dir)
+    sam = mark_dir / "marks.sam3.json"
+    return ({mid: ms.load_mask(mid) for mid in ms.ids()},
+            json.loads(sam.read_text()) if sam.is_file() else None)

@@ -176,18 +176,28 @@ ros2 launch manip_bridge bridges.launch.py use_sim_time:=true \
 Then, in a second shell in the container:
 
 ```bash
+# 1. packet + marks only (default --register none): look at <run>/marks/marked.png
 ros2 run manip_bridge run_scene --ros-args -p use_sim_time:=true -- \
-    --prompts teapot mug --bg "robot arm" --watch 30
+    --skip oriany,trellis2,any6d,pose
+# 2. register the marks you chose, on the SAME frame and mark ids
+ros2 run manip_bridge run_scene -- --from-run /data/runs/<stamp> --reuse-marks \
+    --register 2 --watch 30
 ```
 
-`run_scene` grabs one synced frame, segments, runs TRELLIS.2 (canonical +
-metric), Any6D (`img_to_3d`, or `--any6d-mesh trellis`), FoundationPose on
-the TRELLIS metric mesh, prints a per-object pose table and then reports
+`run_scene` builds the frame packet (N frames, median depth, joint state,
+`T_base_cam`, robot mask, table plane; stops at a failed gate), marks the
+scene with a label-free SAM3 prompt (see *Set-of-mark* below), and for each
+`--register`ed mark `m<id>` runs Orient Anything, TRELLIS.2 (canonical GLB),
+Any6D (metric scaling -> `final_mesh_m<id>.obj`) and FoundationPose on that
+final mesh, prints a per-object pose table, and with `--watch` reports
 tracking rate / position std / rotation drift for the streaming nodes.
-Artifacts (rgb, depth, masks, overlay, `summary.json`) land in
-`./outputs/runs/<stamp>/`; GLBs in `./trellis2_runtime/outputs`, scaled Any6D
-meshes in `./any6d_runtime/outputs`. `--skip trellis2,any6d` etc. for a
-partial stack.
+Artifacts land in `./outputs/runs/<stamp>/`: rgb, median depth, `marks/`
+(the mark set the VLM will see), `mask_m<id>.png` per mark (what the
+per-object drivers in `outputs/runs/` read: pass `--object m<id>`),
+`arm_mask.png`, each registered object's meshes copied to `objects/m<id>/`
+(the sidecar output dirs are shared and overwritten by the next scene), and
+`summary.json`. Exit code 0 = ran, 2 = stopped at a gate (`summary["stop"]`
+says which and why). `--skip trellis2,any6d` etc. for a partial stack.
 
 Things that silently yield *no callbacks* on replay:
 
@@ -276,6 +286,15 @@ replaying an old frame creates no new data:
 ros2 run manip_bridge run_scene -- --from-run /data/runs/20260903_203531 \
     --skip sam3,oriany,trellis2,any6d,pose
 ```
+
+**Not yet run live.** As of the first set-of-mark patches, everything above
+has been exercised on replays of a saved frame (`--from-run`), which has no
+joint state, no `T_base_cam` and a single depth frame. The live-only paths
+-- the TF hand-eye gate, joint states and the stillness gate, the cuRobo
+robot mask, the plane-vs-base check, the N-frame median -- are unit-tested
+offline but have not seen a real capture. The duplicate / part-of
+thresholds and the plane band remain provisional until a multi-object
+frame (teapot, cup, mug) has been captured live.
 
 Tuning without the sidecar or a camera, from a saved run:
 

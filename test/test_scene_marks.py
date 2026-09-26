@@ -210,3 +210,49 @@ def test_write_mark_set_maps_ids_and_keeps_prompts_out_of_marks_json(scene, tmp_
     marks_json = (tmp_path / "marks.json").read_text()
     assert "teapot-ish" not in marks_json and "cube-ish" not in marks_json
     assert ms.ids() == (1, 2) and (tmp_path / "marked.png").is_file()
+
+
+# ------------------------------------------------------ run_scene plumbing
+
+def test_obj_key_and_register_parsing():
+    assert sm.obj_key(3) == "m3"
+    ids = [3, 1, 2]
+    assert sm.parse_register("none", ids) == [] and sm.parse_register(None, ids) == []
+    assert sm.parse_register("all", ids) == [1, 2, 3]
+    assert sm.parse_register("2", ids) == [2]
+    assert sm.parse_register(" 3, 1 ", ids) == [1, 3] == sm.parse_register("3 1 3", ids)
+    with pytest.raises(ValueError, match=r"\[4\]: not marks"):
+        sm.parse_register("2,4", ids)                    # never silently shrink the set
+    with pytest.raises(ValueError, match="none, all, or mark ids"):
+        sm.parse_register("mug", ids)
+
+
+def test_split_instances_keeps_every_object_score_and_thresholds_only_bg():
+    a, b, arm1, arm2 = (box(10, 20, 10, 20), box(30, 40, 30, 40),
+                        box(0, 5, 0, 50), box(0, 5, 60, 100))
+    inst, bg, n = sm.split_instances(
+        ["object", "object", "robot arm", "robot arm", "table"],
+        [a.astype(np.uint8) * 255, b.astype(np.uint8) * 255, arm1 * 255, arm2 * 255, a * 255],
+        [0.35, 0.12, 0.53, 0.2], {"object"}, {"robot arm"}, 0.4)
+    assert [(i["prompt"], i["score"]) for i in inst] == [("object", 0.35), ("object", pytest.approx(0.12))]
+    assert inst[0]["mask"].dtype == bool and np.array_equal(inst[0]["mask"], a)
+    assert n == 1 and np.array_equal(bg, arm1)           # 0.2 arm instance below bg_score_min
+    inst, bg, n = sm.split_instances(["object"], [a], [0.3], {"object"}, set(), 0.4)
+    assert bg is None and n == 0
+
+
+@pytest.mark.skipif(not HAVE_SIM, reason=f"no sim checkout at {SIM_DIR} (set SIM_DIR)")
+def test_load_mark_set_round_trips_write_mark_set(scene, tmp_path):
+    pytest.importorskip("PIL")
+    sys.path.insert(0, str(SIM_DIR))
+    try:
+        _, obj, *_ = scene
+        kept, *_ = run(scene, [inst("object", obj["teapot"][0], 0.35),
+                               inst("object", obj["cube"][0], 0.37)])
+        sm.write_mark_set(np.full((H, W, 3), 128, np.uint8), kept, tmp_path)
+        masks, sam = sm.load_mark_set(tmp_path)
+    finally:
+        sys.path.remove(str(SIM_DIR))
+    assert sorted(masks) == [1, 2]
+    assert np.array_equal(masks[1], obj["teapot"][0]) and np.array_equal(masks[2], obj["cube"][0])
+    assert sam["marks"]["2"]["score"] == pytest.approx(0.37)

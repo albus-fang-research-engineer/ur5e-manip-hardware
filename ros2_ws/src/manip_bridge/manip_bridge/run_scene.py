@@ -6,8 +6,15 @@ orchestrator in embryo, and the manual "does it work, show me" harness.
        contract, with stop-at-gate: misaligned depth, a moving arm, no
        hand-eye, or no table plane ends the run (summary.json still written,
        summary["stop"] says why). --from-run DIR replays a saved frame instead
-    2. /sam3/segment            prompts -> masks            (writes overlays)
-    3. per object:
+    2. set-of-mark: /sam3/segment with a label-free prompt ("object") at a
+       low floor -> scene_marks keeps the instances the pipeline can act on
+       (depth, plane, robot mask from the packet) -> the sim's canonical mark
+       set in <out>/marks/ (marked.png is what the VLM will see). Every
+       instance and why it was or wasn't marked goes into summary["marks"].
+       --reuse-marks (with --from-run) takes the source run's mark set
+       instead, so mark ids stay fixed across invocations
+    3. per REGISTERED mark (--register none|all|<ids>, default none), keyed
+       m<id> (service session key, TF child frame, file stem):
          a. /oriany/orient           rgb+mask -> az/el/ro + alpha (semantic)
          b. /trellis2/generate_mesh  rgb+mask -> canonical (unit-box) GLB
          c. /any6d/estimate          mesh = that GLB; Any6D does the metric
@@ -16,7 +23,10 @@ orchestrator in embryo, and the manual "does it work, show me" harness.
                                      img_to_3d keeps its own InstantMesh path)
          d. /pose/estimate           mesh = Any6D's final_mesh -> FoundationPose
                                      is the tracker of record on that file
-    4. summary table + summary.json; every artifact under --out/<stamp>/
+    4. summary table + summary.json; every artifact under --out/<stamp>/,
+       including each registered object's GLB / final mesh copied into
+       objects/m<id>/ (the shared sidecar paths are overwritten by the next
+       scene) and mask_m<id>.png per mark for the per-object drivers
     5. --watch: keep spinning, print tracked poses as they stream
 
 The body frame of record is Any6D's final_mesh_<obj>.obj: FoundationPose
@@ -35,12 +45,15 @@ Run inside the Ros2Bridge container after `colcon build`:
     ros2 bag play /bags/<bag> --clock --loop &
     ros2 launch manip_bridge bridges.launch.py use_sim_time:=true
     ros2 run manip_bridge run_scene --ros-args -p use_sim_time:=true \\
-        -- --prompts teapot mug "robot arm" --watch
+        -- --skip oriany,trellis2,any6d,pose          # packet + marks
+    ros2 run manip_bridge run_scene -- --from-run /data/runs/<stamp> \\
+        --reuse-marks --register 2 --watch            # register mark 2
 """
 
 import argparse
 import json
 import os
+import shutil
 import sys
 import threading
 import time
@@ -66,15 +79,12 @@ from manip_interfaces.srv import EstimatePose, GenerateMesh, Orient, Segment
 
 from . import DEPTH_TOPIC, INFO_TOPIC, RGB_TOPIC
 from . import frame_packet as fp
+from . import scene_marks as sm
 from .img import (image_to_depth_m, image_to_mono, image_to_rgb,
                   mono_to_image)
 from .zmq_client import SidecarClient
 
 CUROBO_ADDR = os.environ.get("CUROBO_ADDR", "tcp://127.0.0.1:5671")
-
-PALETTE = [(255, 80, 80), (80, 200, 80), (80, 120, 255), (240, 200, 40),
-           (200, 80, 220), (40, 220, 220)]
-
 
 def pose_to_T(p):
     q = p.pose.orientation
@@ -233,19 +243,6 @@ class SceneRunner(Node):
                   f"rot drift max {max(ang):.2f} deg")
 
 
-def draw_overlay(rgb, masks, labels):
-    out = rgb.copy()
-    for i, (m, lab) in enumerate(zip(masks, labels)):
-        c = np.array(PALETTE[i % len(PALETTE)], np.uint8)
-        sel = m > 0
-        out[sel] = (0.55 * out[sel] + 0.45 * c).astype(np.uint8)
-        ys, xs = np.nonzero(sel)
-        if len(xs):
-            cv2.putText(out, lab, (int(xs.min()), max(int(ys.min()) - 4, 12)),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, tuple(int(v) for v in c), 2)
-    return out
-
-
 def _header(frame_id, stamp):
     h = Header()
     h.frame_id = frame_id or ""
@@ -343,9 +340,17 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--prompts", nargs="+", default=["object"],
-                    help="SAM3 prompts; each becomes an object (except --bg prompts)")
+                    help="SAM3 marking prompts. Label-free by default: naming objects is "
+                         "the VLM's job on the marked image, not the segmenter's")
     ap.add_argument("--bg", nargs="*", default=["robot arm"],
-                    help="prompts to segment but NOT reconstruct/pose (masked out of depth)")
+                    help="fallback arm prompt(s), used only when the packet has no robot "
+                         "mask; the arm is dropped from marks and removed from depth")
+    ap.add_argument("--register", default="none",
+                    help="marks to reconstruct + register: none (default), all, or ids "
+                         "like 2,3 (ids from <out>/marks/marked.png)")
+    ap.add_argument("--reuse-marks", action="store_true",
+                    help="with --from-run: take the source run's mark set (and arm mask) "
+                         "instead of re-running SAM3, so the ids you chose stay valid")
     ap.add_argument("--skip", default="",
                     help="comma list of sam3,oriany,trellis2,any6d,pose")
     ap.add_argument("--oriany-matting", action="store_true",
@@ -355,7 +360,10 @@ def main():
     ap.add_argument("--any6d-mesh", choices=["img_to_3d", "trellis"], default="trellis",
                     help="Any6D mesh source: the TRELLIS.2 canonical GLB (default; Any6D "
                          "rescales it), or Any6D's own SAM2+InstantMesh")
-    ap.add_argument("--threshold", type=float, default=0.0)
+    ap.add_argument("--threshold", type=float, default=0.1,
+                    help="SAM3 request floor. Selection applies scene_marks score_min "
+                         "(0.2) and records the instances in between as below_score. "
+                         "<= 0 means the sidecar default 0.5, where 'object' finds nothing")
     ap.add_argument("--out", default=os.environ.get("RUN_OUT_DIR", "/data/runs"))
     ap.add_argument("--watch", type=float, nargs="?", const=20.0, default=None,
                     help="after estimates, watch tracked poses for N seconds (default 20)")
@@ -373,6 +381,10 @@ def main():
         argv = argv[argv.index("--") + 1:]
     args = ap.parse_args(rclpy.utilities.remove_ros_args(argv))
     skip = set(filter(None, args.skip.split(",")))
+    if args.reuse_marks and not args.from_run:
+        ap.error("--reuse-marks needs --from-run (the run whose marks to reuse)")
+    if args.register.strip().lower() != "none" and "sam3" in skip and not args.reuse_marks:
+        ap.error("--register needs marks: don't skip sam3, or use --from-run ... --reuse-marks")
 
     rclpy.init(args=sys.argv)
     node = SceneRunner(args)
@@ -423,6 +435,23 @@ def _shutdown(ex, spin, node, log):
         rclpy.shutdown()
 
 
+def _keep(out, key, paths):
+    """Copy an object's sidecar artifacts into <out>/objects/<key>/. The
+    sidecar paths are shared (final_mesh_m1.obj is the next scene's m1 too),
+    so the run dir is the record. A path this container can't see is noted,
+    not an error: the sidecars pass paths among themselves."""
+    rec, dst = {}, os.path.join(out, "objects", key)
+    for name, p in paths.items():
+        if not p:
+            continue
+        if not os.path.isfile(p):
+            rec[name] = f"not visible from run_scene: {p}"
+            continue
+        os.makedirs(dst, exist_ok=True)
+        rec[name] = shutil.copy2(p, os.path.join(dst, os.path.basename(p)))
+    return rec
+
+
 def _run(node, args, skip, out, summary, log, write_summary):
     rgb, rgb_msg, info, header, depth, packet, rmask = build_packet(node, args, log)
     summary["packet"] = packet
@@ -452,37 +481,75 @@ def _run(node, args, skip, out, summary, log, write_summary):
     depth_msg = Image()
     depth_msg.header = header
 
-    # ---- SAM3 ----------------------------------------------------------
-    masks = {}
-    if "sam3" not in skip:
+    # ---- marks (set-of-mark) ---------------------------------------------
+    K = np.asarray(packet["K"], float)
+    arm_mask, arm_source = (rmask, "robot_mask") if rmask is not None else (None, None)
+    mark_dir = os.path.join(out, "marks")
+    if args.reuse_marks:
+        src_marks = os.path.join(args.from_run, "marks")
+        if not os.path.isfile(os.path.join(src_marks, "marks.json")):
+            raise fp.GateStop("marks", f"--reuse-marks: no mark set at {src_marks}")
+        shutil.copytree(src_marks, mark_dir)
+        marks, _ = sm.load_mark_set(mark_dir)
+        with open(os.path.join(args.from_run, "summary.json")) as f:
+            src_rec = json.load(f).get("marks")
+        summary["marks"] = {"reused_from": os.path.abspath(src_marks), "source_record": src_rec}
+        src_arm = os.path.join(args.from_run, "arm_mask.png")
+        if arm_mask is None and os.path.isfile(src_arm):
+            arm_mask = cv2.imread(src_arm, cv2.IMREAD_GRAYSCALE) > 127
+            arm_source = f"reused from source run ({(src_rec or {}).get('arm_source')})"
+        log.info(f"marks: reused {sorted(marks)} from {src_marks}")
+    elif "sam3" in skip:                         # packet-only run: done, not a failure
+        write_summary()
+        print(f"packet only (--skip sam3); summary: {out}/summary.json")
+        return 0
+    else:
+        use_bg = rmask is None and bool(args.bg)
         req = Segment.Request()
         req.rgb = rgb_msg
-        req.prompts = list(args.prompts) + list(args.bg)
+        req.prompts = list(args.prompts) + (list(args.bg) if use_bg else [])
         req.threshold = float(args.threshold)
         res = node.call("sam3", req, 120)
-        if res is not None:
-            for p, m, s in zip(res.prompt, res.masks, res.scores):
-                if p not in masks:  # first = best (sorted by score desc)
-                    masks[p] = image_to_mono(m)
-                    cv2.imwrite(f"{out}/mask_{p.replace(' ', '_')}.png", masks[p])
-                    summary.setdefault("sam3", {})[p] = float(s)
-            cv2.imwrite(f"{out}/overlay.png",
-                        draw_overlay(rgb, list(masks.values()), list(masks))[..., ::-1])
-            missing = [p for p in req.prompts if p not in masks]
-            if missing:
-                log.warn(f"sam3 found nothing for: {missing}")
-    if not masks:
-        if "sam3" in skip:                      # packet-only run: done, not a failure
-            write_summary()
-            print(f"packet only (--skip sam3); summary: {out}/summary.json")
-            return 0
-        raise fp.GateStop("sam3", "no masks: nothing downstream can run")
+        if res is None:
+            raise fp.GateStop("sam3", "segmentation failed (service down or error)")
+        inst, bg, n_bg = sm.split_instances(
+            res.prompt, [image_to_mono(m) for m in res.masks], res.scores,
+            set(args.prompts), set(args.bg) if use_bg else set(), sm.values()["bg_score_min"])
+        if use_bg:
+            arm_mask = bg if bg is not None else np.zeros(depth.shape, bool)
+            arm_source = f"bg_prompt {list(args.bg)} ({n_bg} instance(s))"
+        kept, report = sm.select_instances(inst, depth=depth, K=K, plane=packet["plane"],
+                                           arm_mask=arm_mask, arm_source=arm_source)
+        report.pop("plane", None)                # recorded once, in summary["packet"]
+        summary["marks"] = {**report, "sam3": {"prompts": list(req.prompts),
+                                               "threshold": req.threshold,
+                                               "instances": len(inst)}}
+        if not kept:
+            raise fp.GateStop("marks", f"no instance survived selection ({len(inst)} from "
+                                       "SAM3); summary['marks'] lists every drop reason")
+        from . import marks_compat               # loud if the sim mount is missing
+        ms, id_map = sm.write_mark_set(rgb, kept, mark_dir)
+        marks = {mid: ms.load_mask(mid) for mid in ms.ids()}
+        summary["marks"].update(id_map={str(k): v for k, v in id_map.items()},
+                                sim=marks_compat.provenance())
+        inv = {v: k for k, v in id_map.items()}
+        print(f"\n==== marks: {len(kept)} of {len(inst)} instances  (arm: {arm_source}) ====")
+        for r in report["instances"]:
+            res_s = (f"MARK {inv[r['idx']]}" if r["idx"] in inv
+                     else "drop: " + ", ".join(r["reasons"]))
+            print(f"  {r['idx']:3d}  {r['score']:.3f}  {r['area']:8d}  {res_s}")
+        print(f"  {mark_dir}/marked.png")
+    for mid, m in marks.items():                 # per-object drivers read mask_<object>.png
+        cv2.imwrite(f"{out}/mask_{sm.obj_key(mid)}.png", m.astype(np.uint8) * 255)
+    if arm_mask is not None:
+        cv2.imwrite(f"{out}/arm_mask.png", arm_mask.astype(np.uint8) * 255)
+    summary["arm"] = {"source": arm_source,
+                      "pixels": int(arm_mask.sum()) if arm_mask is not None else 0}
 
-    # background (robot arm) removed from the depth the pose models see
+    # arm removed from the depth the pose models see
     depth_clean = depth.copy()
-    for p in args.bg:
-        if p in masks:
-            depth_clean[masks[p] > 0] = 0.0
+    if arm_mask is not None:
+        depth_clean[arm_mask] = 0.0
     depth_clean_msg = Image()
     depth_clean_msg.header = depth_msg.header
     depth_clean_msg.height, depth_clean_msg.width = depth_clean.shape
@@ -490,12 +557,20 @@ def _run(node, args, skip, out, summary, log, write_summary):
     depth_clean_msg.step = depth_clean.shape[1] * 4
     depth_clean_msg.data = depth_clean.astype(np.float32).tobytes()
 
-    # ---- per object ----------------------------------------------------
-    objs = [p for p in args.prompts if p in masks]
-    for obj in objs:
-        key = obj.replace(" ", "_")
-        rec = summary["objects"].setdefault(obj, {})
-        mask_msg = mono_to_image(masks[obj], rgb_msg.header)
+    # ---- per registered mark ------------------------------------------
+    try:
+        reg = sm.parse_register(args.register, marks)
+    except ValueError as e:
+        raise fp.GateStop("register", str(e))
+    objs = [sm.obj_key(mid) for mid in reg]
+    summary["registered"] = objs
+    if not objs:
+        log.info("--register none: marks only (pick ids from marks/marked.png, then "
+                 "--from-run <this run> --reuse-marks --register <ids>)")
+    for mid in reg:
+        obj = key = sm.obj_key(mid)
+        rec = summary["objects"].setdefault(key, {"mark": mid})
+        mask_msg = mono_to_image(marks[mid], rgb_msg.header)
         trellis_glb = ""       # canonical GLB -> Any6D's input
         final_mesh = ""        # Any6D's scaled export -> FoundationPose's input
 
@@ -562,6 +637,8 @@ def _run(node, args, skip, out, summary, log, write_summary):
                 if res is not None:
                     rec["pose_on_final"] = {"cam_T_obj": pose_to_T(res.pose).tolist(),
                                             "mesh": final_mesh}
+
+        rec["copied"] = _keep(out, key, {"trellis_glb": trellis_glb, "final_mesh": final_mesh})
 
     # ---- summary -------------------------------------------------------
     print("\n==== scene summary ====")
