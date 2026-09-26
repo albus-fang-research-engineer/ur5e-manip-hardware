@@ -207,6 +207,87 @@ For the hand-eye transform on hardware, add a `static_transform_publisher`
 `use_sim_time` on the host then shows `pose_<obj>` / `any6d_<obj>` frames
 relative to `base_link`.
 
+## Set-of-mark on a real frame (`scene_marks`)
+
+Objects are chosen by the VLM from numbered marks, not named in a prompt.
+SAM3 runs one label-free prompt (`"object"`) at a permissive score, and
+`manip_bridge/scene_marks.py` decides which instances get marks; the mark set
+is written by the sim's own `build_marks` (through `marks_compat.py`, the one
+place this repo imports sim code), so `plan_stages.py` reads it unchanged.
+
+**Capture preconditions.** The pipeline acts only on objects it can measure:
+
+- **Essential objects fully in view and not occluded.** This is the
+  registration precondition: the consensus re-rank and FoundationPose both
+  assume the object's silhouette is complete. It subsumes truncation: an
+  instance whose bbox touches the image border is dropped as `truncated` (the
+  fix is camera placement, not a mark the VLM could pick and registration
+  would then fail on). It is also what makes the part-of rule safe: SAM3
+  masks are visible pixels, so a mug standing in front of a box never falls
+  inside the box's mask, and only true parts (a lid in a teapot's
+  silhouette) trigger `part_of`. Clutter can be occluded or cut off; it is
+  simply not marked.
+- **On the table, inside the workspace.** Instances are kept only if their
+  median height above the fitted table plane is between the plane tolerance
+  and 0.5 m and their median in-plane position lies over the table.
+  Walls, floor past the table edge, shelves and the table itself are removed
+  by depth, whatever their SAM3 score.
+
+**Why the score threshold is low (0.2).** Generic `"object"` returns the same
+masks as the object nouns (IoU >= 0.995 on the reference frame) but scores
+0.3-0.4 instead of 0.7-0.95, so SAM3's default 0.5 returns nothing. A missing
+mark is an object the VLM cannot choose; an extra one is a distractor it can
+ignore. So the threshold only avoids misses, and geometry does the rejecting.
+
+**Every drop is recorded.** `selection.json` (and, from `run_scene`,
+`summary.json`) lists each instance with every reason that applied, the
+table plane, and the full parameter table. Each parameter carries its basis:
+thresholds set from one frame say `n=1`; the duplicate/part-of thresholds
+and the plane band are marked provisional until a multi-object frame
+(teapot, cup, mug, single layer) has been measured.
+
+### The frame packet (`frame_packet.py`, step 1 of `run_scene`)
+
+Everything after capture assumes a still scene seen by an aligned RGB-D
+camera whose pose in the robot base is known. The packet checks those
+assumptions once and writes them into `summary.json["packet"]`:
+
+| field | recorded | stop / degrade |
+|---|---|---|
+| frames | N synced pairs (`--frames`, default 10), reference = middle, stamp span, RGB->depth deltas | no frames: **stop** |
+| depth | per-pixel median over valid samples (holes need half of N), topic, encoding, scale, frame ids, distortion, `unstable_frac` | depth not aligned to colour (frame id or size differs): **stop** |
+| stillness | max joint displacement over the frame span | > 0.005 rad: **stop** |
+| joints | `q` + names nearest the reference (messages without all six UR arm joints are ignored, so a gripper-only `/joint_states` can't become "the arm") | none: degrade (arm removal via `--bg` prompt) |
+| `T_base_cam` | TF `base_link <- camera` at the stamp, else latest (delta recorded), else `--t-base-cam` (16 floats, source `param`) | none of these: **stop** |
+| robot mask | cuRobo FK spheres vs depth (`robot_mask`, needs `q` + `T_base_cam`) | sidecar down / error: degrade |
+| plane | fit on the median depth minus the robot mask; inliers, rms, extent; normal vs base +z | no plane or < 15% inliers: **stop**; > 5 deg from base +z: warning |
+
+A stop exits with code 2, writes `summary.json` with `summary["stop"] =
+{stage, reason}`, and runs nothing downstream. Warnings and degrades are
+printed and kept in the packet.
+
+`--from-run DIR` replays a saved run's frame (`rgb.png`, `depth_mm.png`,
+`summary.json`) through the same packet. A run that already has a packet
+replays its recorded `q`, `T_base_cam` and depth contract; an older run
+records each missing field as `absent_in_source` (a degrade), since
+replaying an old frame creates no new data:
+
+```bash
+ros2 run manip_bridge run_scene -- --from-run /data/runs/20260903_203531 \
+    --skip sam3,oriany,trellis2,any6d,pose
+```
+
+Tuning without the sidecar or a camera, from a saved run:
+
+```bash
+# 1. what SAM3 returns (writes <run>/sam3_probe*/sam3_raw.npz)
+python3 /data/runs/sam3_probe.py /data/runs/<run> --set C:mug,teapot,cup
+python3 /data/runs/sam3_probe.py /data/runs/<run> --no-defaults --set A:object \
+    --threshold 0.1 --out /data/runs/<run>/sam3_probe_t010
+# 2. what scene_marks keeps (writes <run>/marks_probe/)
+python3 /data/runs/marks_from_probe.py /data/runs/<run>
+```
+
 ## Render asset from the tracked mesh (`render_asset`)
 
 The sim repo's grounding renderers (`ground_parts.py`, `render_candidates.py`,
