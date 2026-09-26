@@ -399,6 +399,27 @@ def main():
         print(f"stopped at gate '{e.stage}'; summary: {out}/summary.json")
         return 2
     finally:
+        _shutdown(ex, spin, node, log)
+
+
+def _shutdown(ex, spin, node, log):
+    """Tear down in dependency order. rclpy.shutdown() alone, with the
+    executor still spinning in its thread, lets the interpreter finalize
+    while a callback (TF, joint_states) is inside rcl, and a C++ destructor
+    calls std::terminate: "terminate called without an active exception",
+    exit 250 -- which also destroys the 0 / 2 exit code the gates report."""
+    try:
+        ex.shutdown(timeout_sec=2.0)       # wakes the wait set, drains callbacks, stops the pool
+    except Exception as e:                  # never let teardown mask the run's exit code
+        log.warn(f"executor shutdown: {e}")
+    spin.join(timeout=3.0)
+    if spin.is_alive():
+        log.warn("executor thread still alive after shutdown")
+    try:
+        node.destroy_node()
+    except Exception as e:
+        log.warn(f"destroy_node: {e}")
+    if rclpy.ok():
         rclpy.shutdown()
 
 
