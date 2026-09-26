@@ -52,10 +52,11 @@ def main():
                     help="ask the sidecar to apply its mask-conditioned re-rank (pose_server/rerank.py) "
                          "and print the record")
     ap.add_argument("--oriany", action="store_true",
-                    help="after --rerank, have Orient Anything decide among the gate survivors: it judges the "
-                         "real masked crop and a textured render of each survivor (same framing), the survivor "
-                         "whose full rotation agrees best is selected via the sidecar's `select`. Writes "
-                         "<run>/oriany_<object>.png (annotated contact sheet) and records the table in the pose json.")
+                    help="the live bridge's yaw decision (manip_bridge/pose_decide.py, implies --rerank): "
+                         "Orient Anything reads the real masked crop (always, also when the re-rank "
+                         "declines) and each survivor render; the survivor whose yaw agrees is selected "
+                         "via the sidecar's `select`. Writes <run>/oriany_<object>.png and records the "
+                         "decision (same record /pose/estimate decide=true returns) in the pose json.")
     ap.add_argument("--oriany-addr", default=os.environ.get("ORIANY_ADDR", "tcp://127.0.0.1:5673"))
     ap.add_argument("--all", action="store_true",
                     help="ask the sidecar for every refined hypothesis + scorer score (return_all) and "
@@ -111,117 +112,58 @@ def main():
     print(f"  t    {np.round(T[:3, 3], 4).tolist()} m")
     print(f"  rpy  {np.round(rpy, 1).tolist()} deg")
 
-    oriany_table = None
-    if args.oriany and rep.get("rerank", {}).get("survivors") and "crops" in rep:
-        from PIL import Image, ImageDraw
-        survivors = list(rep["rerank"]["survivors"]); crops = np.asarray(rep["crops"]); y0, y1, x0, x1 = rep["crop_box"]
-        real_crop = np.where((mask > 0)[..., None], rgb, 255).astype(np.uint8)[y0:y1, x0:x1]
+    decision = None
+    if args.oriany:
+        # The SAME decision the live bridge makes (manip_bridge/pose_decide.py), fed by this
+        # script's sockets: this driver is the regression test of /pose/estimate decide=true.
+        try:
+            from manip_bridge import pose_decide
+        except ImportError:                              # not sourced: the workspace mount path
+            sys.path.insert(0, "/root/ros2_ws/src/manip_bridge")
+            from manip_bridge import pose_decide
+        from PIL import Image
+
         osock = zmq.Context().socket(zmq.REQ); osock.setsockopt(zmq.RCVTIMEO, 120000); osock.setsockopt(zmq.LINGER, 0)
         osock.connect(args.oriany_addr)
 
-        def ocall(payload):
-            osock.send(msgpack.packb(payload, use_bin_type=True))
+        def orient(img):
+            osock.send(msgpack.packb({"cmd": "orient", "image": np.ascontiguousarray(img, np.uint8),
+                                      "remove_bkg": False}, use_bin_type=True))
             r = msgpack.unpackb(osock.recv(), raw=False)
             if not r.get("ok"):
-                sys.exit(f"oriany: {r.get('error')}")
+                raise RuntimeError(f"oriany: {r.get('error')}")
             return r
 
-        def geo(Ra, Rb):
-            return float(np.degrees(np.arccos(np.clip((np.trace(Ra.T @ Rb) - 1) / 2, -1, 1))))
+        def select(rank):
+            return call({"cmd": "select", "obj": args.object, "rank": int(rank)}, "select")[0]["pose"]
 
-        def yaw_about(up, fa, fb):
-            """signed angle between two fronts projected onto the plane normal to `up`"""
-            up = up / np.linalg.norm(up)
-            pa = fa - up * (fa @ up); pb = fb - up * (fb @ up)
-            pa /= max(np.linalg.norm(pa), 1e-9); pb /= max(np.linalg.norm(pb), 1e-9)
-            ang = np.degrees(np.arctan2(np.cross(pa, pb) @ up, pa @ pb))
-            return float(ang)
-
-        def fold(deg, alpha):
-            """|yaw| modulo the object's symmetry order: Orient Anything's front on an
-            alpha-fold object is defined only up to 360/alpha, so a disagreement of
-            360/alpha is no disagreement"""
-            period = 360.0 / max(int(alpha), 1)
-            d = abs(deg) % period
-            return float(min(d, period - d))
-
-        def annotate(img, o, title, line):
-            im = Image.fromarray(img).convert("RGB"); d = ImageDraw.Draw(im)
-            h, w = img.shape[:2]; c = np.array([w / 2, h / 2]); L = 0.25 * min(h, w)
-            for vec, col in ((np.asarray(o["front_cam"], float), (0, 200, 0)), (np.asarray(o["up_cam"], float), (40, 90, 255))):
-                tip = c + L * vec[:2]; d.line([tuple(c), tuple(tip)], fill=col, width=3)
-                d.ellipse([tip[0] - 4, tip[1] - 4, tip[0] + 4, tip[1] + 4], fill=col)
-            d.text((4, 2), title, fill=(0, 0, 0)); d.text((4, h - 12), line, fill=(0, 0, 0))
-            return im
-
-        ocall({"cmd": "ping"})
-        o_real = ocall({"cmd": "orient", "image": real_crop, "remove_bkg": False})
-        R_real = np.asarray(o_real["R_cam"], float); up_real = np.asarray(o_real["up_cam"], float)
-        f_real = np.asarray(o_real["front_cam"], float); alpha_real = int(o_real["alpha"])
-        panels = [annotate(real_crop, o_real, "real", f"alpha {alpha_real}")]
-        rows = []
-        hyp_poses = np.asarray(rep["hypotheses"], np.float64) if "hypotheses" in rep else None
-        for k, rk in enumerate(survivors):
-            o = ocall({"cmd": "orient", "image": crops[k], "remove_bkg": False})
-            R_o = np.asarray(o["R_cam"], float); up_o = np.asarray(o["up_cam"], float); f_o = np.asarray(o["front_cam"], float)
-            g = geo(R_real, R_o)
-            upa = float(np.degrees(np.arccos(np.clip(up_real @ up_o, -1, 1))))
-            yaw = yaw_about(up_real, f_real, f_o)                 # real crop's up for BOTH sides
-            confirmable = int(o["alpha"]) != 0 and int(o["alpha"]) == alpha_real
-            rows.append(dict(rank=int(rk), geo=g, up=upa, yaw=yaw, yaw_folded=fold(yaw, alpha_real),
-                             alpha=int(o["alpha"]), confirmable=bool(confirmable)))
-            panels.append(annotate(crops[k], o, f"rank {rk}", f"yaw {yaw:+.0f} rot {g:.0f} up {upa:.0f} a{o['alpha']}"))
-
-        # ---- decision: rank by folded yaw-about-up among confirmable survivors ----
-        sidecar_rank = int(rep["rerank"]["to_rank"])
-        cand = [r for r in rows if r["confirmable"]]
-        used, best, note = "oriany", None, ""
-        if alpha_real == 0:
-            used, note = "scorer", "real crop alpha 0: Orient Anything has no confident front"
-        elif not cand:
-            used, note = "scorer", "no survivor render is confirmable (alpha 0 or alpha != real)"
-        else:
-            cand.sort(key=lambda r: r["yaw_folded"])
-            best = cand[0]
-            if len(cand) > 1 and hyp_poses is not None:
-                second = cand[1]
-                Ra, Rb = hyp_poses[best["rank"]][:3, :3], hyp_poses[second["rank"]][:3, :3]
-                apart = geo(Ra, Rb)
-                if abs(best["yaw_folded"] - second["yaw_folded"]) < 10.0 and apart > 30.0:
-                    used, note = "scorer", (f"oa_ambiguous: ranks {best['rank']} and {second['rank']} read "
-                                            f"{best['yaw_folded']:.0f} vs {second['yaw_folded']:.0f} deg but are {apart:.0f} deg apart "
-                                            f"(alpha {alpha_real} fold)")
-                    best = None
-        print(f"\n  oriany: real crop alpha {alpha_real}; {len(rows)} survivors "
-              f"({len(cand)} confirmable); decider: {used}" + (f" -- {note}" if note else ""))
-        print("    rank   yaw-about-up  folded  full-rot   up  alpha")
-        for r in sorted(rows, key=lambda r: r["yaw_folded"]):
-            flag = "   <- chosen" if best is not None and r is best else ("   (not confirmable)" if not r["confirmable"] else "")
-            print(f"    {r['rank']:4d}   {r['yaw']:+8.1f}    {r['yaw_folded']:6.1f}   {r['geo']:6.1f}  {r['up']:5.1f}   {r['alpha']}{flag}")
-        chosen_rank = int(best["rank"]) if best is not None else sidecar_rank
-        if chosen_rank != sidecar_rank:
-            sel = call({"cmd": "select", "obj": args.object, "rank": chosen_rank}, "select")
-            T = np.asarray(sel["pose"], np.float64).reshape(4, 4)
+        T_sel, decision, sheet = pose_decide.decide(rep, rgb, (mask > 0), orient, select, want_sheet=True)
+        print("\n  " + pose_decide.summary_line(decision))
+        if decision["rows"]:
+            print("    rank   yaw-about-up  folded  full-rot   up  alpha")
+            for r in sorted(decision["rows"], key=lambda r: r["yaw_folded"]):
+                flag = ("   <- chosen" if decision["decider_fired"] and r["rank"] == decision["chosen_rank"]
+                        else ("   (not confirmable)" if not r["confirmable"] else ""))
+                print(f"    {r['rank']:4d}   {r['yaw']:+8.1f}    {r['yaw_folded']:6.1f}   {r['geo']:6.1f}  "
+                      f"{r['up']:5.1f}   {r['alpha']}{flag}")
+        if T_sel is not None:
+            T = T_sel
             rpy = Rotation.from_matrix(T[:3, :3]).as_euler("xyz", degrees=True)
-            print(f"  selected rank {chosen_rank} via {used} (sidecar's rerank pick was rank {rep['rerank']['to_rank']})")
+            print(f"  selected rank {decision['chosen_rank']} (sidecar's pick was rank {decision['sidecar_rank']})")
             print(f"  t    {np.round(T[:3, 3], 4).tolist()} m\n  rpy  {np.round(rpy, 1).tolist()} deg")
-        else:
-            print(f"  oriany agrees with the sidecar's rerank pick (rank {chosen_rank})")
-        Wp = max(p.size[0] for p in panels); Hp = max(p.size[1] for p in panels)
-        sheet = Image.new("RGB", (len(panels) * (Wp + 6), Hp), "white")
-        for i, pnl in enumerate(panels):
-            sheet.paste(pnl, (i * (Wp + 6), 0))
-        sheet_path = os.path.join(args.run_dir, f"oriany_{args.object}.png"); sheet.save(sheet_path)
-        print(f"  wrote {sheet_path}")
-        oriany_table = {"real_alpha": alpha_real, "rows": rows, "chosen_rank": chosen_rank, "decider": used, "note": note}
-    elif args.oriany:
-        print("  oriany: no survivors returned (rerank declined) -- nothing to decide")
+        if sheet is not None:
+            sheet_path = os.path.join(args.run_dir, f"oriany_{args.object}.png")
+            Image.fromarray(sheet).save(sheet_path)
+            print(f"  wrote {sheet_path}")
+        if decision["hard_stop"]:
+            print("  HARD STOP: the live path would not track this registration")
 
     out = args.out or os.path.join(args.run_dir, f"fp_{args.object}.json")
     with open(out, "w") as f:
         json.dump({"object": args.object, "mesh": args.mesh, "cam_T_obj": T.tolist(),
                    "est_refine_iter": args.est_refine_iter, "seconds": dt,
-                   "estimator": "foundationpose", "rerank": rep.get("rerank"), "oriany": oriany_table}, f, indent=2)
+                   "estimator": "foundationpose", "rerank": rep.get("rerank"), "decision": decision},
+                  f, indent=2, default=lambda o: o.tolist() if hasattr(o, "tolist") else str(o))
     print(f"  pose json  {out}")
 
     if args.track:

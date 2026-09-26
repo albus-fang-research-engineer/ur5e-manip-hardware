@@ -105,6 +105,14 @@ class TrackerBridge(Node):
     def parse_estimate(self, rep, res):
         """Fill extra response fields from the sidecar reply."""
 
+    def post_register(self, req, rep, T, res, rgb, mask):
+        """-> (T, track). Runs inside the estimating window, after the sidecar
+        registered and before anything is published: a subclass may replace
+        the pose (e.g. `select` another hypothesis) without the tracker ever
+        streaming the pre-selection pose. track=False registers without
+        tracking (the caller gets the pose and the reason, nothing streams)."""
+        return T, True
+
     # ---- services ----------------------------------------------------------
     def on_estimate(self, req, res):
         if not req.obj:
@@ -125,17 +133,24 @@ class TrackerBridge(Node):
         self.get_logger().info(f"estimate '{req.obj}' ...")
         self._estimating.set()
         try:
-            rep = self.est_client.call(payload)
-        except (TimeoutError, SidecarError) as e:
-            res.success, res.message = False, f"{type(e).__name__}: {e}"
-            self.get_logger().error(res.message)
-            return res
+            try:
+                rep = self.est_client.call(payload)
+            except (TimeoutError, SidecarError) as e:
+                res.success, res.message = False, f"{type(e).__name__}: {e}"
+                self.get_logger().error(res.message)
+                return res
+            T, track = self.post_register(req, rep, np.asarray(rep["pose"], np.float64), res,
+                                          image_to_rgb(req.rgb), mask)
         finally:
             self._estimating.clear()
 
-        T = np.asarray(rep["pose"], np.float64)
         res.pose = T_to_pose(T, req.rgb.header)
         self.parse_estimate(rep, res)
+        if not track:
+            res.success = True
+            res.message = res.message or f"registered '{req.obj}' but NOT tracking"
+            self.get_logger().warn(f"{res.message}  t={T[:3, 3].round(3).tolist()}")
+            return res
 
         with self._state_lock:
             if req.obj not in self.tracked:

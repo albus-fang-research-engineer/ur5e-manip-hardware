@@ -307,6 +307,45 @@ python3 /data/runs/sam3_probe.py /data/runs/<run> --no-defaults --set A:object \
 python3 /data/runs/marks_from_probe.py /data/runs/<run>
 ```
 
+## Yaw decision (`pose_decide`, `/pose/estimate` with `decide=true`)
+
+FoundationPose's scorer is flat across a mug's yaw: the handle can land on
+the wrong side with a near-identical score. `run_scene` therefore registers
+with `decide=true` (default; `--no-decide` for A/B): the sidecar re-ranks
+its refined hypotheses against the SAM mask (`pose_server/rerank.py`) and
+renders each survivor; Orient Anything reads the real masked crop and each
+render in the same framing, and the survivor whose yaw about the real
+crop's up agrees is `select`ed. The decision is implemented once, in
+`manip_bridge/pose_decide.py`, and called by both the bridge and the offline
+driver `outputs/runs/fp_from_mesh.py --oriany` -- `test/test_pose_decide.py`
+checks they produce the same record from the same reply.
+
+Outcome (`summary.objects.m<id>.decision.reason`):
+
+| class | reasons | effect |
+|---|---|---|
+| fired | `oriany_changed`, `oriany_agrees` | survivor chosen by yaw; `front.independent = false` (the same reading chose the yaw) |
+| degrade | `rerank_u_floor` (nothing unexplained: a cup), `rerank_declined`, `rerank_missing`, `oriany_unavailable`, `crops_missing`, `oa_alpha0`, `oa_none_confirmable`, `oa_ambiguous`, `select_failed` | the re-rank / scorer pick stands; recorded |
+| hard stop | `rerank_u_frac` (the top-K disagree on the body) | object not tracked; `run_scene` exits 2 |
+
+Orient Anything reads the real crop on every path, including when the
+re-rank declines: on a cup that is the only semantic azimuth there is.
+`decision.front.front_body` is that reading in the selected pose's body
+frame when the crop reads alpha 1 (else `null`, with the reason).
+
+**Acceptance is by tolerance, not by a past run's numbers** -- FoundationPose
+is nondeterministic across registrations, which is why the decider exists.
+On `reproject_check`: handle on the mask; yaw sweep best within one sweep
+step (10 deg) of 0; median front-surface depth residual within 3 mm;
+silhouette centroid offset within 5 px.
+
+**What three replays measure.** Re-registering the same frame on the same
+mesh (`fp_from_mesh.py --oriany` on a run's `objects/m<id>/final_mesh_*.obj`)
+samples FoundationPose's run-to-run variation only -- not scene or
+viewpoint variation. All three firing is evidence the survivor set covers
+the right yaw on this frame; coverage on another object or viewpoint stays
+open until those frames exist. The three decision records are the result.
+
 ## Render asset from the tracked mesh (`render_asset`)
 
 The sim repo's grounding renderers (`ground_parts.py`, `render_candidates.py`,

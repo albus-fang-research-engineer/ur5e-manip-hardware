@@ -36,6 +36,10 @@ class Any6DBridge(TrackerBridge):
         super().__init__("any6d_bridge")
 
     def estimate_payload(self, req, rgb, depth, K, mask):
+        if req.decide:
+            raise ValueError("decide=true is FoundationPose-only (/pose/estimate); Any6D has no "
+                             "re-rank or yaw decider, and ignoring the flag would look like a "
+                             "decision was made")
         p = {"cmd": "estimate", "obj": req.obj, "rgb": rgb, "depth": depth,
              "K": K, "mask": mask, "est_refine_iter": int(req.refine_iter)}
         if req.img_to_3d:

@@ -22,7 +22,15 @@ orchestrator in embryo, and the manual "does it work, show me" harness.
                                      final_mesh_<obj>.obj (--any6d-mesh
                                      img_to_3d keeps its own InstantMesh path)
          d. /pose/estimate           mesh = Any6D's final_mesh -> FoundationPose
-                                     is the tracker of record on that file
+                                     is the tracker of record on that file.
+                                     decide=true (default; --no-decide to A/B):
+                                     re-rank + Orient Anything choose the yaw
+                                     (manip_bridge/pose_decide.py); the record is
+                                     summary.objects.m<id>.decision. A hard stop
+                                     (re-rank top-K disagree) ends the run, exit 2.
+       3a's Orient Anything call is a DIAGNOSTIC: its square-padded framing is
+       not the decider's, and nothing reads it (the decider's real-crop reading
+       is decision.oa_real / decision.front).
     4. summary table + summary.json; every artifact under --out/<stamp>/,
        including each registered object's GLB / final mesh copied into
        objects/m<id>/ (the shared sidecar paths are overwritten by the next
@@ -80,6 +88,7 @@ from manip_interfaces.srv import EstimatePose, GenerateMesh, Orient, Segment
 from . import DEPTH_TOPIC, INFO_TOPIC, RGB_TOPIC
 from . import frame_packet as fp
 from . import scene_marks as sm
+from .pose_decide import summary_line as decide_line
 from .img import (image_to_depth_m, image_to_mono, image_to_rgb,
                   mono_to_image)
 from .zmq_client import SidecarClient
@@ -351,6 +360,11 @@ def main():
     ap.add_argument("--reuse-marks", action="store_true",
                     help="with --from-run: take the source run's mark set (and arm mask) "
                          "instead of re-running SAM3, so the ids you chose stay valid")
+    ap.add_argument("--no-decide", action="store_true",
+                    help="FoundationPose without the re-rank / Orient Anything yaw decision "
+                         "(the pre-0007 path, for A/B only)")
+    ap.add_argument("--decide-debug", action="store_true",
+                    help="also save the decider's annotated contact sheet per object")
     ap.add_argument("--skip", default="",
                     help="comma list of sam3,oriany,trellis2,any6d,pose")
     ap.add_argument("--oriany-matting", action="store_true",
@@ -582,6 +596,7 @@ def _run(node, args, skip, out, summary, log, write_summary):
             if res is not None:
                 q = res.orientation.quaternion
                 rec["oriany"] = {
+                    "role": "diagnostic (square-padded framing; not read by the decider)",
                     "azimuth": res.azimuth, "elevation": res.elevation,
                     "rotation": res.rotation, "alpha": res.alpha,
                     "matting": bool(args.oriany_matting),
@@ -633,10 +648,25 @@ def _run(node, args, skip, out, summary, log, write_summary):
                 req = EstimatePose.Request()
                 req.rgb, req.depth, req.camera_info, req.mask = rgb_msg, depth_clean_msg, info, mask_msg
                 req.obj, req.mesh = key, final_mesh
-                res = node.call("pose", req, 400)
+                req.decide, req.decide_debug = not args.no_decide, bool(args.decide_debug)
+                res = node.call("pose", req, 600)
                 if res is not None:
                     rec["pose_on_final"] = {"cam_T_obj": pose_to_T(res.pose).tolist(),
-                                            "mesh": final_mesh}
+                                            "mesh": final_mesh, "decide": bool(req.decide)}
+                    if req.decide:
+                        rec["decision"] = json.loads(res.decision_json) if res.decision_json else None
+                        if res.decision_sheet.width:
+                            os.makedirs(os.path.join(out, "objects", key), exist_ok=True)
+                            cv2.imwrite(os.path.join(out, "objects", key, "decision_sheet.png"),
+                                        image_to_rgb(res.decision_sheet)[..., ::-1])
+                        if rec["decision"] is None:
+                            raise fp.GateStop("decision", f"{key}: decide=true but no decision record "
+                                                          "(stale pose bridge? rebuild + restart it)")
+                        if res.decision_hard_stop:
+                            rec["copied"] = _keep(out, key, {"trellis_glb": trellis_glb,
+                                                             "final_mesh": final_mesh})
+                            raise fp.GateStop("decision", f"{key}: {res.decision_reason} -- "
+                                                          f"{rec['decision'].get('note', '')}")
 
         rec["copied"] = _keep(out, key, {"trellis_glb": trellis_glb, "final_mesh": final_mesh})
 
@@ -663,6 +693,9 @@ def _run(node, args, skip, out, summary, log, write_summary):
                 if k == "any6d":
                     extra = f" extents={np.round(r['extents'], 3).tolist()}"
                 print(f"  {k:16s} t={T[:3, 3].round(3).tolist()}{extra}")
+        dec = rec.get("decision")
+        if dec:
+            print("  " + decide_line(dec))
         if "any6d" in ts and "pose_on_final" in ts:
             # Same mesh, same body frame (Any6D's last reset_object is on
             # the already-centred scaled mesh, so its pose compensation is

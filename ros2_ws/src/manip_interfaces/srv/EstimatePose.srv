@@ -16,9 +16,19 @@ string mesh                         # filename under the sidecar's MESH_DIR
                                     # mount the sidecar can see (/data/meshes)
 bool img_to_3d false                # Any6D only: generate the mesh from rgb
 int32 refine_iter 5
+bool decide false                   # FoundationPose only: re-rank + Orient Anything yaw
+                                    # decision (manip_bridge/pose_decide.py). Any6D rejects it.
+bool decide_debug false             # with decide: also return the annotated contact sheet
 ---
 bool success
 string message
 geometry_msgs/PoseStamped pose      # cam_T_obj, header from rgb
 float64[] extents                   # scaled-mesh AABB (m), Any6D only
 string mesh_path                    # scaled mesh on the shared mount, Any6D only
+# decide=true only. A hard stop still returns success=true so the record
+# reaches the caller, but the object is NOT tracked: the registration itself
+# is unreliable (the re-rank's top-K disagree on the body).
+bool decision_hard_stop
+string decision_reason              # pose_decide outcome class, e.g. oriany_changed, rerank_u_floor
+string decision_json                # the full decision record (rows, front, crop box, ...)
+sensor_msgs/Image decision_sheet    # rgb8 contact sheet, decide_debug only (else empty)

@@ -265,6 +265,7 @@ def main():
                                  float(sc[0] - sc[min(9, len(sc) - 1)]))
 
             elif cmd == "select":
+                obj = req["obj"]      # not the loop's last-registered obj: select names its session
                 if obj not in sessions:
                     raise KeyError(f"no session for {obj!r}")
                 pose = sessions[obj].select(int(req["rank"]))
