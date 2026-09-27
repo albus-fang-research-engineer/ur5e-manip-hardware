@@ -236,8 +236,8 @@ def _serve(sock, handler, stop):
             sock.send(msgpack.packb(handler(req), use_bin_type=True))
 
 
-@pytest.fixture
-def fake_sidecars():
+@pytest.fixture(params=["ok", "select_error", "oriany_error"])
+def fake_sidecars(request):
     zmq = pytest.importorskip("zmq")
     pytest.importorskip("msgpack_numpy").patch()
     rgb, mask = make_frame()
@@ -254,18 +254,24 @@ def fake_sidecars():
             assert req["rerank"] and req["survivor_crops"] and req["return_all"]
             return rep
         if c == "select":
+            if request.param == "select_error":
+                return {"ok": False, "error": f"no session '{req['obj']}'"}
             return {"ok": True, "pose": rep["hypotheses"][int(req["rank"])]}
         return {"ok": False, "error": c}
 
     def ori_h(req):
-        return {"ok": True} if req["cmd"] == "ping" else DEFAULT_TABLE[dominant(req["image"])]
+        if req["cmd"] == "ping":
+            return {"ok": True}
+        if request.param == "oriany_error":
+            return {"ok": False, "error": "CUDA out of memory"}
+        return DEFAULT_TABLE[dominant(req["image"])]
 
     stop = threading.Event()
     ts = [threading.Thread(target=_serve, args=(s, h, stop), daemon=True)
           for s, h in ((pose, pose_h), (ori, ori_h))]
     for t in ts:
         t.start()
-    yield f"tcp://127.0.0.1:{pp}", f"tcp://127.0.0.1:{op}", rgb, mask
+    yield f"tcp://127.0.0.1:{pp}", f"tcp://127.0.0.1:{op}", rgb, mask, request.param
     stop.set()
     for t in ts:
         t.join(1)
@@ -276,7 +282,10 @@ def fake_sidecars():
 def test_driver_and_bridge_transport_make_the_same_decision(fake_sidecars, tmp_path):
     cv2 = pytest.importorskip("cv2")
     from manip_bridge.zmq_client import SidecarClient
-    pose_addr, ori_addr, rgb, mask = fake_sidecars
+    """On every path -- success, a select error reply, an Orient Anything
+    error reply -- the driver writes its JSON and it matches the bridge's
+    record exactly (error text included: same clients, same exceptions)."""
+    pose_addr, ori_addr, rgb, mask, mode = fake_sidecars
 
     run_dir = tmp_path / "run"
     run_dir.mkdir()
@@ -302,6 +311,11 @@ def test_driver_and_bridge_transport_make_the_same_decision(fake_sidecars, tmp_p
     orient, select = pd.sidecar_fns(ori_c, pose_c, "m2")
     T_sel, bridge, _ = pd.decide(rep, rgb, mask, orient, select)
 
-    assert bridge["chosen_rank"] == driver["decision"]["chosen_rank"] == 5
     assert json.loads(json.dumps(bridge)) == driver["decision"]
-    assert np.allclose(np.asarray(driver["cam_T_obj"]), T_sel, atol=1e-6)
+    expect = {"ok": ("oriany_changed", 5), "select_error": ("select_failed", 0),
+              "oriany_error": ("oriany_unavailable", 0)}[mode]
+    assert (bridge["reason"], bridge["chosen_rank"]) == expect
+    if mode == "ok":
+        assert np.allclose(np.asarray(driver["cam_T_obj"]), T_sel, atol=1e-6)
+    else:
+        assert T_sel is None and "SidecarError" in bridge["note"]

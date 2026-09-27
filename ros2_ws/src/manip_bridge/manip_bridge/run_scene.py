@@ -425,7 +425,24 @@ def main():
         print(f"stopped at gate '{e.stage}'; summary: {out}/summary.json")
         return 2
     finally:
+        _chown_like(out, args.out, log)
         _shutdown(ex, spin, node, log)
+
+
+def _chown_like(out, ref, log):
+    """The container runs as root, so everything it writes under the bind
+    mount is root-owned on the host and host-side tools (reproject_check)
+    cannot write next to it. Hand the run dir to whoever owns --out."""
+    try:
+        st = os.stat(ref)
+        if os.geteuid() != 0 or st.st_uid == 0:
+            return
+        for d, dirs, files in os.walk(out):
+            os.chown(d, st.st_uid, st.st_gid)
+            for f in files:
+                os.chown(os.path.join(d, f), st.st_uid, st.st_gid)
+    except OSError as e:
+        log.warn(f"could not chown {out}: {e}")
 
 
 def _shutdown(ex, spin, node, log):

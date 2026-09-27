@@ -123,19 +123,14 @@ def main():
             from manip_bridge import pose_decide
         from PIL import Image
 
-        osock = zmq.Context().socket(zmq.REQ); osock.setsockopt(zmq.RCVTIMEO, 120000); osock.setsockopt(zmq.LINGER, 0)
-        osock.connect(args.oriany_addr)
-
-        def orient(img):
-            osock.send(msgpack.packb({"cmd": "orient", "image": np.ascontiguousarray(img, np.uint8),
-                                      "remove_bkg": False}, use_bin_type=True))
-            r = msgpack.unpackb(osock.recv(), raw=False)
-            if not r.get("ok"):
-                raise RuntimeError(f"oriany: {r.get('error')}")
-            return r
-
-        def select(rank):
-            return call({"cmd": "select", "obj": args.object, "rank": int(rank)}, "select")[0]["pose"]
+        # The decision's transport is the BRIDGE's, not this script's `call`: that one
+        # sys.exit()s on an error reply (SystemExit, which decide() cannot catch), so a failed
+        # `select` here would kill the run where the bridge records a select_failed degrade.
+        # Same clients -> same exception types and messages on every path, by construction.
+        from manip_bridge.zmq_client import SidecarClient
+        orient, select = pose_decide.sidecar_fns(SidecarClient(args.oriany_addr, 120_000),
+                                                 SidecarClient(args.addr, int(args.timeout * 1000)),
+                                                 args.object)
 
         T_sel, decision, sheet = pose_decide.decide(rep, rgb, (mask > 0), orient, select, want_sheet=True)
         print("\n  " + pose_decide.summary_line(decision))
