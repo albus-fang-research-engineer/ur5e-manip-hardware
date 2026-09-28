@@ -198,6 +198,10 @@ per-object drivers in `outputs/runs/` read: pass `--object m<id>`),
 (the sidecar output dirs are shared and overwritten by the next scene), and
 `summary.json`. Exit code 0 = ran, 2 = stopped at a gate (`summary["stop"]`
 says which and why). `--skip trellis2,any6d` etc. for a partial stack.
+`--final-mesh <id>=<path>` registers a mark on an existing final mesh (path as
+the pose container sees it, e.g. `/data/any6d/final_mesh_mug.obj`) and skips
+TRELLIS.2 + Any6D for it -- a one-minute loop for iterating on registration,
+and the way to exercise the bridge's `decide` path without the mesh chain.
 
 Things that silently yield *no callbacks* on replay:
 

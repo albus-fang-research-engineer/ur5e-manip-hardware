@@ -360,6 +360,10 @@ def main():
     ap.add_argument("--reuse-marks", action="store_true",
                     help="with --from-run: take the source run's mark set (and arm mask) "
                          "instead of re-running SAM3, so the ids you chose stay valid")
+    ap.add_argument("--final-mesh", action="append", default=[], metavar="ID=PATH",
+                    help="register mark ID on an existing final mesh (path as the pose "
+                         "container sees it, e.g. /data/any6d/final_mesh_mug.obj), skipping "
+                         "TRELLIS.2 and Any6D for that mark. Repeatable")
     ap.add_argument("--no-decide", action="store_true",
                     help="FoundationPose without the re-rank / Orient Anything yaw decision "
                          "(the pre-0007 path, for A/B only)")
@@ -395,6 +399,11 @@ def main():
         argv = argv[argv.index("--") + 1:]
     args = ap.parse_args(rclpy.utilities.remove_ros_args(argv))
     skip = set(filter(None, args.skip.split(",")))
+    try:
+        args.final_mesh = {int(k): v for k, _, v in (m.partition("=") for m in args.final_mesh)
+                           if v} if args.final_mesh else {}
+    except ValueError:
+        ap.error("--final-mesh wants ID=PATH, e.g. 2=/data/any6d/final_mesh_mug.obj")
     if args.reuse_marks and not args.from_run:
         ap.error("--reuse-marks needs --from-run (the run whose marks to reuse)")
     if args.register.strip().lower() != "none" and "sam3" in skip and not args.reuse_marks:
@@ -413,8 +422,9 @@ def main():
     log = node.get_logger()
 
     def write_summary():
+        # a type slip (numpy scalar/array from a ROS msg field) must never cost the run record
         with open(f"{out}/summary.json", "w") as f:
-            json.dump(summary, f, indent=2)
+            json.dump(summary, f, indent=2, default=_jsonable)
 
     try:
         return _run(node, args, skip, out, summary, log, write_summary)
@@ -427,6 +437,14 @@ def main():
     finally:
         _chown_like(out, args.out, log)
         _shutdown(ex, spin, node, log)
+
+
+def _jsonable(o):
+    if isinstance(o, np.generic):
+        return o.item()
+    if isinstance(o, np.ndarray):
+        return o.tolist()
+    return f"<unserializable {type(o).__name__}>"
 
 
 def _chown_like(out, ref, log):
@@ -595,6 +613,9 @@ def _run(node, args, skip, out, summary, log, write_summary):
         raise fp.GateStop("register", str(e))
     objs = [sm.obj_key(mid) for mid in reg]
     summary["registered"] = objs
+    stray = sorted(set(args.final_mesh) - set(reg))
+    if stray:
+        raise fp.GateStop("register", f"--final-mesh for {stray}, which are not registered ({reg})")
     if not objs:
         log.info("--register none: marks only (pick ids from marks/marked.png, then "
                  "--from-run <this run> --reuse-marks --register <ids>)")
@@ -604,6 +625,11 @@ def _run(node, args, skip, out, summary, log, write_summary):
         mask_msg = mono_to_image(marks[mid], rgb_msg.header)
         trellis_glb = ""       # canonical GLB -> Any6D's input
         final_mesh = ""        # Any6D's scaled export -> FoundationPose's input
+        override = args.final_mesh.get(mid)
+        if override:
+            final_mesh = override
+            rec["final_mesh_override"] = override
+            log.info(f"{key}: --final-mesh {override}: skipping TRELLIS.2 and Any6D")
 
         if "oriany" not in skip:
             req = Orient.Request()
@@ -617,11 +643,11 @@ def _run(node, args, skip, out, summary, log, write_summary):
                     "azimuth": res.azimuth, "elevation": res.elevation,
                     "rotation": res.rotation, "alpha": res.alpha,
                     "matting": bool(args.oriany_matting),
-                    "bbox_xyxy": list(res.bbox_xyxy),
+                    "bbox_xyxy": [int(v) for v in res.bbox_xyxy],   # int32[4]: numpy
                     "R_cam": Rotation.from_quat(
                         [q.x, q.y, q.z, q.w]).as_matrix().tolist()}
 
-        if "trellis2" not in skip:
+        if "trellis2" not in skip and not override:
             req = GenerateMesh.Request()
             req.rgb, req.mask, req.depth, req.camera_info = rgb_msg, mask_msg, depth_clean_msg, info
             req.output_name = f"{key}_{os.path.basename(out)}"
@@ -636,7 +662,7 @@ def _run(node, args, skip, out, summary, log, write_summary):
                         rmse_mm=1e3 * res.registration_rmse,
                         cam_T_obj=pose_to_T(res.object_pose).tolist())
 
-        if "any6d" not in skip:
+        if "any6d" not in skip and not override:
             req = EstimatePose.Request()
             req.rgb, req.depth, req.camera_info, req.mask = rgb_msg, depth_clean_msg, info, mask_msg
             req.obj = key
@@ -696,8 +722,8 @@ def _run(node, args, skip, out, summary, log, write_summary):
             print(f"  {'oriany':16s} az={o['azimuth']:6.1f} el={o['elevation']:6.1f} "
                   f"ro={o['rotation']:7.1f} alpha={o['alpha']} "
                   f"({'matting' if o['matting'] else 'masked crop'})"
-                  + ("   <- alpha != 1: front axis defined only up to a "
-                     "symmetry group" if o["alpha"] != 1 else ""))
+                  + ("   (diagnostic; alpha is unreliable on this object class -- the "
+                     "decider's reading is decision.front)" if o["alpha"] != 1 else ""))
         ts = {}
         for k in ("trellis2", "any6d", "pose_on_final"):
             r = rec.get(k)
