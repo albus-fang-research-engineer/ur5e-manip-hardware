@@ -64,8 +64,8 @@ class PoseBridge(TrackerBridge):
     def post_register(self, req, rep, T, res, rgb, mask):
         if not req.decide:
             return T, True
-        orient, select = pose_decide.sidecar_fns(self.oriany, self.est_client, req.obj)
-        T_sel, rec, sheet = pose_decide.decide(rep, rgb, mask, orient, select,
+        orient, select, orient_rel = pose_decide.sidecar_fns(self.oriany, self.est_client, req.obj)
+        T_sel, rec, sheet = pose_decide.decide(rep, rgb, mask, orient, select, orient_rel=orient_rel,
                                                want_sheet=bool(req.decide_debug))
         res.decision_hard_stop = bool(rec["hard_stop"])
         res.decision_reason = rec["reason"]

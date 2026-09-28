@@ -35,10 +35,13 @@ def front(deg):
     return (Ry(deg) @ np.array([1.0, 0, 0])).tolist()
 
 
-def oa(deg, alpha=1):
+def oa(deg, alpha=1, rel=None):
+    """A fake Orient Anything reply reading front at `deg`; `rel` is what
+    orient_rel reports for this image against the real crop (default: deg)."""
     R = Ry(deg)
     return {"ok": True, "alpha": alpha, "front_cam": front(deg), "up_cam": UP,
-            "R_cam": np.stack([R @ [1, 0, 0], R @ [0, 0, 1], np.array(UP)], 1).tolist()}
+            "R_cam": np.stack([R @ [1, 0, 0], R @ [0, 0, 1], np.array(UP)], 1).tolist(),
+            "_rel": deg if rel is None else rel}
 
 
 REAL = (200, 40, 40)
@@ -85,13 +88,53 @@ def dominant(img):
 
 
 def make_orient(table):
-    """table: colour -> OA reply; records every call."""
-    calls = []
+    """table: colour -> OA reply. Returns (orient, calls, orient_rel, rel_calls)."""
+    calls, rel_calls = [], []
 
     def orient(img):
         calls.append(dominant(img))
         return table[dominant(img)]
-    return orient, calls
+
+    def orient_rel(ref, tgt):
+        rel_calls.append(dominant(tgt))
+        return {"ok": True, "rel_azimuth": table[dominant(tgt)]["_rel"] - table[dominant(ref)]["_rel"]}
+    return orient, calls, orient_rel, rel_calls
+
+
+def colour(rank):
+    return (10 + (37 * rank) % 200, 60, 230 - (53 * rank) % 150)
+
+
+def scenario(real, survivors, pick, n_hyp=40):
+    """real: (read_deg, alpha); survivors: {rank: (pose_deg, read_deg, alpha[, rel_deg])}.
+    -> (rep, table). Hypothesis `rank` is Ry(pose_deg); the re-rank picked `pick`."""
+    rgb, mask = make_frame()
+    hyp = np.stack([np.eye(4) for _ in range(n_hyp)])
+    for rk, v in survivors.items():
+        hyp[rk, :3, :3] = Ry(v[0])
+    box = pd.crop_box(mask)
+    h, w = box[1] - box[0], box[3] - box[2]
+    ranks = list(survivors)
+    rep = {"ok": True, "pose": hyp[pick].astype(np.float32), "hypotheses": hyp.astype(np.float32),
+           "rerank": {"reason": "re-ranked", "to_rank": pick, "survivors": ranks, "u_frac": 0.1},
+           "crops": np.stack([np.full((h, w, 3), colour(r), np.uint8) for r in ranks]), "crop_box": box}
+    table = {REAL: oa(*real)}
+    for rk, v in survivors.items():
+        table[colour(rk)] = oa(v[1], v[2], v[3] if len(v) > 3 else None)
+    return rep, table
+
+
+def decide_on(rep, table, with_rel=True, rel_override=None):
+    rgb, mask = make_frame()
+    orient, calls, orient_rel, rel_calls = make_orient(table)
+    sel = []
+
+    def select(rank):
+        sel.append(rank)
+        return rep["hypotheses"][rank]
+    T, rec, _ = pd.decide(rep, rgb, mask, orient, select,
+                          orient_rel=(rel_override or orient_rel) if with_rel else None)
+    return T, rec, sel, rel_calls
 
 
 DEFAULT_TABLE = {REAL: oa(0), CROP_COLOURS[0]: oa(180), CROP_COLOURS[5]: oa(6), CROP_COLOURS[9]: oa(90)}
@@ -109,12 +152,11 @@ def test_crop_box_is_the_sidecars_formula_and_clips():
     assert y0 == 0 and x0 == 0 and y1 <= H and x1 <= W
 
 
-def test_yaw_about_and_fold():
+def test_yaw_about():
     up = np.array(UP)
     # front(30) = Ry(30) x; about up = -y that is a -30 deg turn
     assert pd.yaw_about(up, np.array(front(0)), np.array(front(30))) == pytest.approx(-30, abs=1e-6)
-    assert pd.fold(185, 1) == pytest.approx(175) and pd.fold(185, 2) == pytest.approx(5)
-    assert pd.fold(-95, 4) == pytest.approx(5)
+    assert abs(pd.yaw_about(up, np.array(front(0)), np.array(front(180)))) == pytest.approx(180, abs=1e-6)
 
 
 # ---------------------------------------------------------------- outcomes
@@ -122,13 +164,13 @@ def test_yaw_about_and_fold():
 def run(rep=None, table=None, select=None, mask_frame=None):
     rgb, mask = make_frame()
     rep = rep if rep is not None else make_reply(mask)
-    orient, calls = make_orient(table or DEFAULT_TABLE)
+    orient, calls, orient_rel, _ = make_orient(table or DEFAULT_TABLE)
     sel_calls = []
 
     def default_select(rank):
         sel_calls.append(rank)
         return rep["hypotheses"][rank]
-    T, rec, _ = pd.decide(rep, rgb, mask, orient, select or default_select)
+    T, rec, _ = pd.decide(rep, rgb, mask, orient, select or default_select, orient_rel=orient_rel)
     return T, rec, calls, sel_calls
 
 
@@ -139,7 +181,8 @@ def test_fires_and_selects_the_survivor_whose_yaw_agrees():
     assert np.allclose(T, make_reply(make_frame()[1])["hypotheses"][5])
     assert calls[0] == REAL and len(calls) == 4                    # real crop first, then 3 survivors
     assert rec["crop_box_source"] == "sidecar" and rec["crop_box_match"] is True
-    assert rec["front"]["independent"] is False and rec["front"]["alpha"] == 1
+    assert rec["front"]["independent"] is False and rec["front"]["alpha_reported"] == 1
+    assert rec["corroboration"]["proposed"] == {"rank": 5, "rel_az": pytest.approx(6)}
 
 
 def test_agrees_without_select():
@@ -181,10 +224,13 @@ def test_real_crop_alpha0_degrades():
     assert rec["front"]["front_body"] is None and "alpha 0" in rec["front"]["note"]
 
 
-def test_none_confirmable_degrades():
+def test_render_alpha_never_gates():
+    """Renders reading alpha 2 / 0 / 2 against a real crop reading 1: the
+    alpha-equality rule would have discarded rank 5; the front decides."""
     t = {**DEFAULT_TABLE, CROP_COLOURS[0]: oa(180, 2), CROP_COLOURS[5]: oa(6, 0), CROP_COLOURS[9]: oa(90, 2)}
     _, rec, *_ = run(table=t)
-    assert rec["reason"] == "oa_none_confirmable" and rec["chosen_rank"] == 0
+    assert rec["reason"] == "oriany_changed" and rec["chosen_rank"] == 5
+    assert [r["alpha"] for r in rec["rows"]] == [2, 0, 2]               # recorded all the same
 
 
 def test_ambiguous_degrades():
@@ -209,10 +255,12 @@ def test_select_failure_keeps_the_sidecar_pick():
     assert rec["front"]["independent"] is True                     # nothing fired in the end
 
 
-def test_alpha2_front_is_withheld():
+def test_alpha2_front_is_given_with_a_caveat():
     t = {REAL: oa(0, 2), CROP_COLOURS[0]: oa(180, 2), CROP_COLOURS[5]: oa(6, 2), CROP_COLOURS[9]: oa(90, 2)}
     _, rec, *_ = run(table=t)
-    assert rec["front"]["front_body"] is None and "180 deg" in rec["front"]["note"]
+    fr = rec["front"]
+    assert fr["front_body"] is not None and fr["alpha_reported"] == 2
+    assert "unreliable" in fr["note"] and "180 deg" in fr["note"]
 
 
 def test_crops_missing_is_named():
@@ -270,6 +318,9 @@ def fake_sidecars(request):
             return {"ok": True}
         if request.param == "oriany_error":
             return {"ok": False, "error": "CUDA out of memory"}
+        if req["cmd"] == "orient_rel":
+            ref, tgt = DEFAULT_TABLE[dominant(req["image_ref"])], DEFAULT_TABLE[dominant(req["image_tgt"])]
+            return {"ok": True, "rel_azimuth": tgt["_rel"] - ref["_rel"]}
         return DEFAULT_TABLE[dominant(req["image"])]
 
     stop = threading.Event()
@@ -314,8 +365,8 @@ def test_driver_and_bridge_transport_make_the_same_decision(fake_sidecars, tmp_p
                        "rgb": rgb, "depth": np.full((H, W), 0.5, np.float32),
                        "K": np.eye(3), "mask": mask.astype(np.uint8), "est_refine_iter": 5,
                        "rerank": True, "survivor_crops": True, "return_all": True})
-    orient, select = pd.sidecar_fns(ori_c, pose_c, "m2")
-    T_sel, bridge, _ = pd.decide(rep, rgb, mask, orient, select)
+    orient, select, orient_rel = pd.sidecar_fns(ori_c, pose_c, "m2")
+    T_sel, bridge, _ = pd.decide(rep, rgb, mask, orient, select, orient_rel=orient_rel)
 
     assert json.loads(json.dumps(bridge)) == driver["decision"]
     expect = {"ok": ("oriany_changed", 5), "select_error": ("select_failed", 0),
@@ -354,3 +405,88 @@ def test_driver_dumps_crops_for_oriany_check(fake_sidecars, tmp_path):
     assert len(sizes) == 1                                   # one framing for all
     real = np.asarray(Image.open(dump / "real_crop.png"))
     assert dominant(real) == REAL                            # the masked object, white elsewhere
+
+
+# ------------------------------------------------ the 20260926_234500 dump
+
+DUMP = {16: (13, 13, 4), 0: (72, 72, 2), 1: (108, 108, 0), 2: (108, 108, 2)}  # rank: pose, read, alpha
+
+
+def test_dump_numbers_old_rule_fails_new_rule_confirms_rank16():
+    """Real crop alpha 2; renders read 13 (a4) / 72 (a2) / 108 (a0) / 108 (a2).
+    The alpha-equality rule would have kept only ranks 0 and 2 -- both wrong,
+    the correct rank 16 excluded. The new rule confirms rank 16 at 13 deg."""
+    old_confirmable = {rk for rk, (_, _, a) in DUMP.items() if a != 0 and a == 2}
+    assert old_confirmable == {0, 2}
+    rep, table = scenario((0, 2), DUMP, pick=16)
+    T, rec, sel, rel = decide_on(rep, table)
+    assert (rec["reason"], rec["chosen_rank"]) == ("oriany_agrees", 16)
+    assert rec["agreement_deg"] == pytest.approx(13, abs=1e-6)
+    assert T is None and sel == [] and rel == []                      # confirming needs no orient_rel
+    assert rec["front"]["front_body"] is not None and rec["front"]["independent"] is True
+
+
+def test_dump_numbers_override_the_scorers_pick():
+    """Same readings, but the re-rank had kept the scorer's rank 0: the
+    decider overrides to rank 16, corroborated by orient_rel."""
+    rep, table = scenario((0, 2), DUMP, pick=0)
+    T, rec, sel, rel = decide_on(rep, table)
+    assert (rec["reason"], rec["chosen_rank"]) == ("oriany_changed", 16) and sel == [16]
+    assert rec["corroboration"]["proposed"]["rel_az"] == pytest.approx(13)
+    assert rec["corroboration"]["rerank_pick"]["rel_az"] == pytest.approx(72)
+    assert rec["front"]["independent"] is False
+
+
+# --------------------------------------------------- flipped survivors
+
+def test_flipped_survivor_reading_180_is_rejected():
+    """The re-rank picked the handle flip (rank 9, 180 deg from rank 3);
+    the front head reads it at 180: the decider takes rank 3."""
+    rep, table = scenario((0, 2), {3: (90, 5, 2), 9: (270, 180, 2)}, pick=9)
+    T, rec, sel, _ = decide_on(rep, table)
+    assert (rec["reason"], rec["chosen_rank"]) == ("oriany_changed", 3) and sel == [3]
+
+
+def test_flipped_survivor_reading_near_0_is_ambiguous():
+    """If the front head cannot tell front from back, the flip reads near 0
+    too: two candidates within the margin, 180 deg apart -> abstain."""
+    rep, table = scenario((0, 2), {3: (90, 5, 2), 9: (270, 3, 2)}, pick=9)
+    T, rec, sel, _ = decide_on(rep, table)
+    assert (rec["reason"], rec["chosen_rank"]) == ("oa_ambiguous", 9) and sel == [] and T is None
+    assert "180 deg apart" in rec["note"]
+
+
+def test_wrong_peak_is_caught_by_orient_rel():
+    """The front head landed on the wrong peak: the flip (rank 3) reads 5,
+    the correct pick (rank 9) reads 180. orient_rel, comparing the images
+    directly, disagrees -> no override."""
+    rep, table = scenario((0, 2), {3: (90, 5, 2, 170), 9: (270, 180, 2, 8)}, pick=9)
+    T, rec, sel, rel = decide_on(rep, table)
+    assert (rec["reason"], rec["chosen_rank"]) == ("oa_rel_disagrees", 9) and sel == []
+    assert sorted(rel) == sorted([colour(3), colour(9)])              # exactly the two calls
+
+
+def test_override_without_orient_rel_abstains():
+    rep, table = scenario((0, 2), DUMP, pick=0)
+    _, rec, sel, _ = decide_on(rep, table, with_rel=False)
+    assert rec["reason"] == "oa_rel_unavailable" and rec["chosen_rank"] == 0 and sel == []
+
+    def dead(ref, tgt):
+        raise TimeoutError("no reply to 'orient_rel'")
+    _, rec, sel, _ = decide_on(rep, table, rel_override=dead)
+    assert rec["reason"] == "oa_rel_unavailable" and "TimeoutError" in rec["note"] and sel == []
+
+
+def test_same_family_noise_does_not_move_the_pose():
+    """Your frame: survivors of one family read -13 and -9 deg. The -9 one
+    must not replace the re-rank's pick on 4 deg of front noise."""
+    rep, table = scenario((0, 2), {18: (0, -13, 4), 32: (8, -9, 4)}, pick=18)
+    T, rec, sel, _ = decide_on(rep, table)
+    assert (rec["reason"], rec["chosen_rank"]) == ("oriany_agrees", 18) and sel == [] and T is None
+    assert rec["agreement_deg"] == pytest.approx(13)
+
+
+def test_no_survivor_agrees():
+    rep, table = scenario((0, 2), {0: (72, 72, 2), 1: (108, 108, 0)}, pick=0)
+    _, rec, sel, _ = decide_on(rep, table)
+    assert rec["reason"] == "oa_no_agreement" and rec["chosen_rank"] == 0 and sel == []

@@ -310,28 +310,72 @@ python3 /data/runs/marks_from_probe.py /data/runs/<run>
 ## Yaw decision (`pose_decide`, `/pose/estimate` with `decide=true`)
 
 FoundationPose's scorer is flat across a mug's yaw: the handle can land on
-the wrong side with a near-identical score. `run_scene` therefore registers
-with `decide=true` (default; `--no-decide` for A/B): the sidecar re-ranks
-its refined hypotheses against the SAM mask (`pose_server/rerank.py`) and
-renders each survivor; Orient Anything reads the real masked crop and each
-render in the same framing, and the survivor whose yaw about the real
-crop's up agrees is `select`ed. The decision is implemented once, in
-`manip_bridge/pose_decide.py`, and called by both the bridge and the offline
-driver `outputs/runs/fp_from_mesh.py --oriany` -- `test/test_pose_decide.py`
-checks they produce the same record from the same reply.
+the wrong side, or behind the body, with a near-identical score. `run_scene`
+registers with `decide=true` (default; `--no-decide` for A/B), which does two
+things:
+
+1. **The re-rank** (`pose_server/rerank.py`) re-ranks the refined hypotheses
+   against the SAM mask (consensus body, unexplained-pixel coverage, precision
+   floor, depth guard). **This is what fixed the mug's yaw**: on
+   `20260903_203531` it chose a correct pose (handle on the handle, yaw sweep
+   best at 0 deg) on every registration, from scorer ranks 16-18.
+2. **Orient Anything** reads the real masked crop and a render of each re-rank
+   survivor in the same framing, and compares their fronts as an unfolded yaw
+   about the real crop's up. It **confirms** the re-rank's pick
+   (`oriany_agrees`, with the agreement angle recorded) or, with a second
+   estimation path agreeing, **overrides** it (`oriany_changed`).
+
+The decision is implemented once, in `manip_bridge/pose_decide.py`, and called
+by both the bridge and the offline driver `outputs/runs/fp_from_mesh.py
+--oriany` over the same `SidecarClient` transport -- `test/test_pose_decide.py`
+checks they produce the same record from the same reply, error paths included.
+
+The rule, and why each part is there:
+
+- **Alpha is recorded, never gating** (except real-crop alpha 0 = no confident
+  front, which abstains). On the mug, Orient Anything's alpha head was noise --
+  2 on a photo with one obvious handle, 0 / 2 / 4 on clean textured renders of
+  the same mesh -- while its front head was consistent and meaningful (front =
+  away from the handle, in photo and render; 13 deg for the correct pose, 72-108
+  deg for wrong ones). An alpha-equality gate, used until patch0010, never
+  fired, and on that frame would have kept only two wrong poses.
+- **Fire only within 30 deg** of the real crop (`oa_no_agreement` otherwise).
+- **Ambiguity from the front head's behaviour, not its alpha**: another
+  survivor within 20 deg of the best's agreement but > 30 deg away as a pose
+  -> `oa_ambiguous`. A flip the front head can't resolve reads near 0 too and
+  trips this; one it can resolve reads ~180 and loses.
+- **Same pose family = the re-rank's answer**: a best survivor within 30 deg of
+  the re-rank's pick is `oriany_agrees`; a few degrees of front noise never
+  moves the pose.
+- **An override needs `orient_rel` to agree** (`oa_rel_disagrees` otherwise):
+  `orient_rel(real, render)` must also put the new pick closer to the real
+  crop than the re-rank's pick. This guards the one failure the ambiguity check
+  can't see -- the front head choosing the wrong peak of a two-peaked
+  distribution, making the flip read ~0 and the correct pose ~180. Caveat:
+  `orient_rel` is a different head of the *same* model; it is an independent
+  estimation path (direct image comparison vs absolute peaks), not an
+  independent model. Two extra calls, only when an override is proposed.
+
+Thresholds are n=1 (one mug, one frame) and recorded with their basis in every
+decision record (`decision.params`).
 
 Outcome (`summary.objects.m<id>.decision.reason`):
 
 | class | reasons | effect |
 |---|---|---|
-| fired | `oriany_changed`, `oriany_agrees` | survivor chosen by yaw; `front.independent = false` (the same reading chose the yaw) |
-| degrade | `rerank_u_floor` (nothing unexplained: a cup), `rerank_declined`, `rerank_missing`, `oriany_unavailable`, `crops_missing`, `oa_alpha0`, `oa_none_confirmable`, `oa_ambiguous`, `select_failed` | the re-rank / scorer pick stands; recorded |
+| fired | `oriany_agrees` (confirms), `oriany_changed` (overrides, `corroboration` recorded) | `agreement_deg` recorded; `front.independent = false` only for `oriany_changed` |
+| degrade | `rerank_u_floor` (nothing unexplained: a cup), `rerank_declined`, `rerank_missing`, `oriany_unavailable`, `crops_missing`, `oa_alpha0`, `oa_no_candidates`, `oa_no_hypotheses`, `oa_no_agreement`, `oa_ambiguous`, `oa_rel_unavailable`, `oa_rel_disagrees`, `select_failed` | the re-rank / scorer pick stands; recorded |
 | hard stop | `rerank_u_frac` (the top-K disagree on the body) | object not tracked; `run_scene` exits 2 |
 
-Orient Anything reads the real crop on every path, including when the
-re-rank declines: on a cup that is the only semantic azimuth there is.
-`decision.front.front_body` is that reading in the selected pose's body
-frame when the crop reads alpha 1 (else `null`, with the reason).
+Orient Anything reads the real crop on every path, including when the re-rank
+declines. `decision.front.front_body` is that reading in the selected pose's
+body frame whenever the real crop reads alpha != 0; a reported fold > 1 is
+attached as a caveat (`alpha_reported`, `note`) rather than withholding it.
+
+**Not yet tested on real data:** the decider as a *selector* (every registration
+so far had survivors of one pose family, so it could only confirm), and a true
+180 deg flip among survivors. `fp_from_mesh.py --dump-crops DIR --crop-ranks ...`
+plus `oriany_check.py DIR` is the two-sided test for any new object or view.
 
 **Acceptance is by tolerance, not by a past run's numbers** -- FoundationPose
 is nondeterministic across registrations, which is why the decider exists.

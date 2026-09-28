@@ -133,19 +133,23 @@ def main():
         # `select` here would kill the run where the bridge records a select_failed degrade.
         # Same clients -> same exception types and messages on every path, by construction.
         from manip_bridge.zmq_client import SidecarClient
-        orient, select = pose_decide.sidecar_fns(SidecarClient(args.oriany_addr, 120_000),
-                                                 SidecarClient(args.addr, int(args.timeout * 1000)),
-                                                 args.object)
+        orient, select, orient_rel = pose_decide.sidecar_fns(SidecarClient(args.oriany_addr, 120_000),
+                                                             SidecarClient(args.addr, int(args.timeout * 1000)),
+                                                             args.object)
 
-        T_sel, decision, sheet = pose_decide.decide(rep, rgb, (mask > 0), orient, select, want_sheet=True)
+        T_sel, decision, sheet = pose_decide.decide(rep, rgb, (mask > 0), orient, select,
+                                                    orient_rel=orient_rel, want_sheet=True)
         print("\n  " + pose_decide.summary_line(decision))
         if decision["rows"]:
-            print("    rank   yaw-about-up  folded  full-rot   up  alpha")
-            for r in sorted(decision["rows"], key=lambda r: r["yaw_folded"]):
-                flag = ("   <- chosen" if decision["decider_fired"] and r["rank"] == decision["chosen_rank"]
-                        else ("   (not confirmable)" if not r["confirmable"] else ""))
-                print(f"    {r['rank']:4d}   {r['yaw']:+8.1f}    {r['yaw_folded']:6.1f}   {r['geo']:6.1f}  "
+            print("    rank   yaw-about-up   |yaw|  full-rot   up  alpha   (alpha recorded, never gating)")
+            for r in sorted(decision["rows"], key=lambda r: r["yaw_abs"]):
+                flag = "   <- chosen" if r["rank"] == decision["chosen_rank"] else ""
+                print(f"    {r['rank']:4d}   {r['yaw']:+8.1f}     {r['yaw_abs']:6.1f}   {r['geo']:6.1f}  "
                       f"{r['up']:5.1f}   {r['alpha']}{flag}")
+        if decision.get("corroboration"):
+            c = decision["corroboration"]
+            print(f"  orient_rel: proposed rank {c['proposed']['rank']} {c['proposed']['rel_az']:+.0f} deg vs "
+                  f"re-rank pick {c['rerank_pick']['rank']} {c['rerank_pick']['rel_az']:+.0f} deg")
         if T_sel is not None:
             T = T_sel
             rpy = Rotation.from_matrix(T[:3, :3]).as_euler("xyz", degrees=True)
