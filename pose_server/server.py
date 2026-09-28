@@ -49,6 +49,11 @@ SAM mask can be evaluated before any in-server re-rank is enabled.
       -> {"ok": True, "pose": 4x4 float32}
 
   {"cmd": "release", "obj": "mustard"} -> {"ok": True}
+  {"cmd": "crops", "obj", "ranks": [int], "K", "mask"}
+      -> {"ok": True, "crops": NxHxWx3 uint8, "crop_box": [y0,y1,x0,x1], "ranks"}
+         textured renders of any hypothesis ranks of a registered session,
+         survivor-crop framing (diagnostics: oriany_check's two-sided test)
+
   {"cmd": "ping"} -> {"ok": True}
 
 Depth convention: meters, invalid = 0 (matches FoundationPose's readers).
@@ -271,6 +276,18 @@ def main():
                 pose = sessions[obj].select(int(req["rank"]))
                 log.info("select %s: rank %d", obj, int(req["rank"]))
                 rep = {"ok": True, "pose": pose}
+
+            elif cmd == "crops":
+                # renders of ARBITRARY hypothesis ranks of a registered session, in the
+                # survivor-crop framing -- for diagnostics (oriany_check's two-sided test
+                # needs a known-wrong pose next to the chosen one, not only survivors)
+                obj = req["obj"]
+                if obj not in sessions:
+                    raise KeyError(f"no session for {obj!r}")
+                ranks = [int(r) for r in req["ranks"]]
+                crops, box = sessions[obj].survivor_crops(
+                    np.asarray(req["K"], np.float64).reshape(3, 3), req["mask"], ranks)
+                rep = {"ok": True, "crops": crops, "crop_box": box, "ranks": ranks}
 
             elif cmd == "track":
                 sess = sessions[req["obj"]]

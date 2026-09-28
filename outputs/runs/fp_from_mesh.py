@@ -47,6 +47,11 @@ def main():
     ap.add_argument("--track-refine-iter", type=int, default=2)
     ap.add_argument("--release", action="store_true")
     ap.add_argument("--timeout", type=float, default=600.0)
+    ap.add_argument("--dump-crops", default=None, metavar="DIR",
+                    help="write real_crop.png + render_rank<N>.png (survivor-crop framing) for "
+                         "oriany_check.py: ranks 0 (scorer's pick), the final pose, and --crop-ranks")
+    ap.add_argument("--crop-ranks", type=int, nargs="*", default=[],
+                    help="extra hypothesis ranks to render with --dump-crops")
     ap.add_argument("--out", default=None, help="pose json path; default <run_dir>/fp_<object>.json")
     ap.add_argument("--rerank", action="store_true",
                     help="ask the sidecar to apply its mask-conditioned re-rank (pose_server/rerank.py) "
@@ -152,6 +157,23 @@ def main():
             print(f"  wrote {sheet_path}")
         if decision["hard_stop"]:
             print("  HARD STOP: the live path would not track this registration")
+
+    if args.dump_crops:
+        # oriany_check.py's two-sided test: the real masked crop and textured renders of chosen
+        # hypothesis ranks, all in the sidecar's survivor-crop framing (white background)
+        from PIL import Image
+        final = decision["chosen_rank"] if decision else (rep.get("rerank") or {}).get("to_rank", 0)
+        ranks = list(dict.fromkeys(args.crop_ranks + [0, int(final)]))
+        crep, _ = call({"cmd": "crops", "obj": args.object, "ranks": ranks,
+                        "K": K.astype(np.float32), "mask": mask}, "crops")
+        y0, y1, x0, x1 = crep["crop_box"]
+        os.makedirs(args.dump_crops, exist_ok=True)
+        real = np.where((mask > 0)[..., None], rgb, 255).astype(np.uint8)[y0:y1, x0:x1]
+        Image.fromarray(real).save(os.path.join(args.dump_crops, "real_crop.png"))
+        for r, c in zip(crep["ranks"], crep["crops"]):
+            Image.fromarray(np.asarray(c, np.uint8)).save(os.path.join(args.dump_crops, f"render_rank{r}.png"))
+        print(f"\n  dumped real_crop.png + render_rank{{{','.join(map(str, crep['ranks']))}}}.png -> {args.dump_crops}"
+              f"  (final pose = rank {final})")
 
     out = args.out or os.path.join(args.run_dir, f"fp_{args.object}.json")
     with open(out, "w") as f:

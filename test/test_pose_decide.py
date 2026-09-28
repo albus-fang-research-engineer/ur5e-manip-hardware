@@ -253,6 +253,12 @@ def fake_sidecars(request):
         if c == "register":
             assert req["rerank"] and req["survivor_crops"] and req["return_all"]
             return rep
+        if c == "crops":
+            box = pd.crop_box(np.asarray(req["mask"]) > 0)
+            h, w = box[1] - box[0], box[3] - box[2]
+            return {"ok": True, "crop_box": box, "ranks": list(req["ranks"]),
+                    "crops": np.stack([np.full((h, w, 3), CROP_COLOURS.get(int(r), (1, 2, 3)), np.uint8)
+                                       for r in req["ranks"]])}
         if c == "select":
             if request.param == "select_error":
                 return {"ok": False, "error": f"no session '{req['obj']}'"}
@@ -319,3 +325,32 @@ def test_driver_and_bridge_transport_make_the_same_decision(fake_sidecars, tmp_p
         assert np.allclose(np.asarray(driver["cam_T_obj"]), T_sel, atol=1e-6)
     else:
         assert T_sel is None and "SidecarError" in bridge["note"]
+
+
+@pytest.mark.parametrize("fake_sidecars", ["ok"], indirect=True)
+def test_driver_dumps_crops_for_oriany_check(fake_sidecars, tmp_path):
+    """--dump-crops writes what oriany_check.py reads: real_crop.png and
+    render_rank<N>.png for rank 0, the final pose and --crop-ranks, all in
+    one framing (same size)."""
+    cv2 = pytest.importorskip("cv2")
+    from PIL import Image
+    pose_addr, ori_addr, rgb, mask, _ = fake_sidecars
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    cv2.imwrite(str(run_dir / "rgb.png"), rgb[..., ::-1])
+    cv2.imwrite(str(run_dir / "mask_m2.png"), mask.astype(np.uint8) * 255)
+    cv2.imwrite(str(run_dir / "depth_mm.png"), np.full((H, W), 500, np.uint16))
+    (run_dir / "summary.json").write_text(json.dumps({"frame": {"K": [[150, 0, 80], [0, 150, 60], [0, 0, 1]]}}))
+    dump = tmp_path / "oa"
+    r = subprocess.run([sys.executable, str(REPO_ROOT / "outputs" / "runs" / "fp_from_mesh.py"), str(run_dir),
+                        "--mesh", "/m.obj", "--object", "m2", "--oriany", "--addr", pose_addr,
+                        "--oriany-addr", ori_addr, "--timeout", "20", "--dump-crops", str(dump),
+                        "--crop-ranks", "9"],
+                       capture_output=True, text=True, env={**os.environ, "PYTHONPATH": str(BRIDGE)}, timeout=60)
+    assert r.returncode == 0, r.stdout + r.stderr
+    names = sorted(p.name for p in dump.iterdir())
+    assert names == ["real_crop.png", "render_rank0.png", "render_rank5.png", "render_rank9.png"]
+    sizes = {Image.open(dump / n).size for n in names}
+    assert len(sizes) == 1                                   # one framing for all
+    real = np.asarray(Image.open(dump / "real_crop.png"))
+    assert dominant(real) == REAL                            # the masked object, white elsewhere
