@@ -522,6 +522,49 @@ identity, recovered `s`/`c`, refusal of wrong reconstruction / scrambled
 order / face mismatch / uncentred / flipped, texture wiring, and a MuJoCo
 render that must show both checker colours.
 
+## Symbol check (`outputs/runs/check_symbols.py`, milestone 1 acceptance)
+
+The registration-vs-symbols split: `reproject_check.py` asks "is the
+REGISTRATION right" (whole-mesh silhouette + depth residual);
+`check_symbols.py` asks "are the SYMBOLS right, given that registration" --
+it projects a `frames.json` through `pose_on_final.cam_T_obj` onto the saved
+frame and gates each symbol. It is the gate grounding output must pass
+before any VLM call consumes real geometry (milestone 1's deliverable), and
+it is validated first: synthetic tests in `test/test_check_symbols.py`, then
+the hand-authored fixtures in `outputs/runs/fixtures/` (positive control all
+green, displaced-`handle_center` control red at that symbol only) on the
+accepted registration.
+
+    python3 outputs/runs/check_symbols.py outputs/runs/<run> --key m2 \
+        --frames outputs/runs/fixtures/mug_frames_hand.json
+    # --pose-json fp_mug.json for driver-world registrations
+
+Two residuals per point, both through the same `cam_T_obj`: `vs_measured`
+(symbol z vs measured depth at its pixel, median over mask-interior valid
+pixels -- a bare window at a rim pixel is half background) and `vs_mesh`
+(symbol z vs the mesh front surface along that ray, vertex z-buffer). A
+correct centerline symbol reads ~ +half the local thickness on BOTH; their
+difference is symbol-independent -- the local registration/fidelity residual.
+Per-point `depth_check` in the fixture selects the gate (`surface` /
+`interior` / `skip`; see `fixtures/README.md`). Triage on a failure:
+
+    diff large            fidelity/registration at that pixel (undersized
+                          TRELLIS handle etc.) -- reach for the ruler
+    vs_mesh out of band   symbol not on/inside the mesh there -- grounding bug
+    not_in_mask/off_mesh  gross placement -- grounding bug
+
+Axes gate against named referents: `up_axis` vs the packet's table normal
+(camera frame, oriented toward the camera = up) at the same 5 deg as
+`plane_up_warn_deg`; front-class axes are report-only (their referent,
+`decision.front`, is itself an estimate -- a tight bound would fail correct
+groundings on decider noise). Quantities are drawn, never gated. Thresholds
+live in `PARAMS` with their n=1 basis recorded into every output JSON --
+revisit at the teapot, do not extrapolate a scaling law from one mug.
+
+Preconditions, same as the yaw decider: single-layer, non-occluded scene
+capture (no occlusion machinery by design), and a densely reconstructed
+mesh (the vertex z-buffer; TRELLIS/Any6D outputs qualify).
+
 ## Orient Anything V2 sidecar (port 5673)
 
 Category-free canonical **up / front** from one RGB crop. It is the
