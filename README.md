@@ -568,6 +568,39 @@ Preconditions, same as the yaw decider: single-layer, non-occluded scene
 capture (no occlusion machinery by design), and a densely reconstructed
 mesh (the vertex z-buffer; TRELLIS/Any6D outputs qualify).
 
+## Part masks for grounding (`outputs/runs/make_part_masks.py`, task D)
+
+The producer of the masks tree `ground_object --provider masks` reads:
+renders the tracked mesh's eight canonical views via
+`manip_bridge/render_compat.py` (the render-only sim compat; view parity
+with grounding is structural -- ground_object calls the same
+`render_depth_views` with cameras deterministic from the vertex bounds),
+segments each view per part name through the SAM3 sidecar
+(`{"cmd": "segment", ...}` convention), and writes L-mode 0/255 masks as
+`<masks-root>/<obj>/<view>/<part>.png`. Part names are data (`--parts` now,
+VLM call #1 later). Mask dirs are keyed off the view PNG filenames the
+render wrote ('+' -> 'p', '-' -> 'n'), never a re-implemented transform:
+sim's read_mask_dir applies the transform at lookup and silently skips
+missing view dirs, so a naming mismatch would degrade grounding quietly.
+Empty SAM3 results write no file but are recorded in the per-object
+manifest (with sim provenance) and printed; a part with no mask in any
+view exits nonzero. Renders are segmented first; the real camera frame
+only substitutes if check_symbols later shows texture-driven mask
+failures. Runs in the ros2 container (MuJoCo + osmesa + sim mount + zmq):
+
+    python3 outputs/runs/make_part_masks.py /data/runs/<stamp>/assets \
+        --name mug --parts handle,body,rim \
+        --masks-root /data/runs/<stamp>/grounding/sam
+
+Step-4 foresight: grounding's frames.json names symbols `<part>_center` /
+`<part>_axis` (part_grounding) plus caller-supplied `up_axis`; the
+hand-fixture name `opening_center` never reappears, its free-space
+geometry transfers to `rim_center`, and `body_center` sits deeper than
+the interior band by construction. Until the seam patch emits per-symbol
+`depth_check`, the check_symbols invocation on grounding output is
+`--depth-check rim_center=skip body_center=skip handle_center=interior` --
+a correct grounding failing without those flags is a misread, not a bug.
+
 ## Orient Anything V2 sidecar (port 5673)
 
 Category-free canonical **up / front** from one RGB crop. It is the

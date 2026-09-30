@@ -23,7 +23,8 @@ MOUNT = "/opt/manip-sim"
 
 
 def _is_sim_module(name):
-    return name == "manip_sim" or name.startswith("manip_sim.")
+    return (name == "manip_sim" or name.startswith("manip_sim.")
+            or name == "scripts" or name.startswith("scripts."))  # sim's namespace pkg
 
 
 def violations(source, filename="<src>"):

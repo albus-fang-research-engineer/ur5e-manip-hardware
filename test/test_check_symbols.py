@@ -228,3 +228,12 @@ def test_depth_check_flag_for_fieldless_output(scene):
     assert rec["points"]["opening_like"]["depth_check"] == "skip"
     with pytest.raises(SystemExit):                          # typo'd mode refused
         cs.main(base + ["--depth-check", "opening_like=off"])
+def test_depth_check_unknown_name_refused(scene):
+    # the flag's other refusal: a name not in the frames file exits, so a
+    # typo'd symbol name cannot silently no-op and re-arm the step-4 trap
+    rd = scene["rd"]
+    fieldless = rd / "fieldless2_frames.json"
+    fieldless.write_text(json.dumps(_frames({"opening_like": {"xyz": [0.085, 0, 0]}})))
+    with pytest.raises(SystemExit):
+        cs.main([str(rd), "--frames", str(fieldless), "--key", "m2",
+                 "--depth-check", "nonexistent=skip"])
