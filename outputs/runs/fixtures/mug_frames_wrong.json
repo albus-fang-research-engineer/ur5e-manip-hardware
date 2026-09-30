@@ -1,0 +1,51 @@
+{
+ "object": "mug",
+ "coordinates": "body frame of final_mesh_mug.obj (identity transform)",
+ "points": {
+  "handle_center": {
+   "xyz": [
+    0.08499999999999999,
+    0.0026,
+    0.006
+   ],
+   "depth_check": "interior",
+   "status": "hand",
+   "comment": "DELIBERATELY displaced +30 mm (negative control)"
+  },
+  "opening_center": {
+   "xyz": [
+    -0.0126,
+    0.0332,
+    0.0107
+   ],
+   "depth_check": "skip",
+   "status": "hand"
+  },
+  "rim_front": {
+   "xyz": [
+    -0.0125,
+    0.0518,
+    -0.0316
+   ],
+   "status": "hand"
+  }
+ },
+ "axes": {
+  "up_axis": {
+   "xyz": [
+    -0.0648,
+    0.916,
+    0.3958
+   ],
+   "status": "hand",
+   "comment": "out of the opening"
+  }
+ },
+ "quantities": {
+  "rim_radius": {
+   "value": 0.0458,
+   "status": "hand",
+   "comment": "ruler pending (mug not at bench); mesh claims 91.6 mm dia"
+  }
+ }
+}
