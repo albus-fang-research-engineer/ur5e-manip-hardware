@@ -557,7 +557,10 @@ Axes gate against named referents: `up_axis` vs the packet's table normal
 (camera frame, oriented toward the camera = up) at the same 5 deg as
 `plane_up_warn_deg`; front-class axes are report-only (their referent,
 `decision.front`, is itself an estimate -- a tight bound would fail correct
-groundings on decider noise). Quantities are drawn, never gated. Thresholds
+groundings on decider noise). `--depth-check NAME=MODE` supplies modes for
+field-less grounding output (`symbols_from_parts` emits no `depth_check`;
+without it a correct `opening_center` reads ~ -80 mm and fails); a field in
+the file wins over the flag. Quantities are drawn, never gated. Thresholds
 live in `PARAMS` with their n=1 basis recorded into every output JSON --
 revisit at the teapot, do not extrapolate a scaling law from one mug.
 

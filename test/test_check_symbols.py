@@ -95,6 +95,11 @@ def test_surface_point(scene):
     r = rec["points"]["front_wall"]
     assert r["status"] == "pass" and r["depth_check"] == "surface"
     assert abs(r["vs_mesh_mm"]) < 3 and abs(r["vs_measured_mm"]) < 3
+    # hand-computed pixel, independent of the module's projection (the depth
+    # image is splatted through vertex_zbuffer, so this breaks the loop):
+    # X_cam = 0.04*[0,0,-1] + 0.035*[0,-1,0] + [0,0,0.5] = [0, -0.035, 0.46]
+    # u = 600*0/0.46 + 320 = 320;  v = 240 - 600*0.035/0.46 = 194.34783
+    assert np.allclose(r["px"], [320.0, 240.0 - 600 * 0.035 / 0.46], atol=1e-3)
 
 
 def test_interior_centerline(scene):
@@ -197,3 +202,29 @@ def test_main_verdicts_and_outputs(scene):
     assert rec["verdict"]["pass"] and (rd / "symbols_good.png").exists()
     assert rec["params"]["surface_tol_m"]["basis"]      # thresholds travel with the record
     assert json.loads((rd / "symbols_bad.json").read_text())["verdict"]["pass"] is False
+
+
+def test_depth_check_flag_for_fieldless_output(scene):
+    # grounding's symbols_from_parts emits no depth_check field: a correct
+    # free-space symbol fails under the surface default and passes once the
+    # flag supplies the mode; a schema field wins over the flag.
+    rd = scene["rd"]
+    fieldless = rd / "fieldless_frames.json"
+    fieldless.write_text(json.dumps(_frames(
+        {"opening_like": {"xyz": [0.085, 0, 0]}})))          # no depth_check
+    base = [str(rd), "--frames", str(fieldless), "--key", "m2"]
+    assert cs.main(base + ["--out-prefix", str(rd / "s_nofield")]) == 1
+    assert cs.main(base + ["--depth-check", "opening_like=skip",
+                           "--out-prefix", str(rd / "s_flag")]) == 0
+    rec = json.loads((rd / "s_flag.json").read_text())
+    assert rec["points"]["opening_like"]["depth_check"] == "skip"
+    carried = rd / "carried_frames.json"                     # schema field present
+    carried.write_text(json.dumps(_frames(
+        {"opening_like": {"xyz": [0.085, 0, 0], "depth_check": "skip"}})))
+    assert cs.main([str(rd), "--frames", str(carried), "--key", "m2",
+                    "--depth-check", "opening_like=interior",
+                    "--out-prefix", str(rd / "s_schema")]) == 0
+    rec = json.loads((rd / "s_schema.json").read_text())
+    assert rec["points"]["opening_like"]["depth_check"] == "skip"
+    with pytest.raises(SystemExit):                          # typo'd mode refused
+        cs.main(base + ["--depth-check", "opening_like=off"])

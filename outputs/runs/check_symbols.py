@@ -313,6 +313,11 @@ def main(argv=None):
     ap.add_argument("--object", default=None, help="legacy mask name fallback (mask_<object>.png)")
     ap.add_argument("--mesh", default=None)
     ap.add_argument("--pose-json", default=None, help='JSON with "cam_T_obj" (driver-world override)')
+    ap.add_argument("--depth-check", nargs="*", default=[], metavar="NAME=MODE",
+                    help="supply depth_check modes (surface|interior|skip) for symbols whose "
+                         "frames.json carries none -- grounding's symbols_from_parts emits no "
+                         "such field, so e.g. opening_center=skip at milestone-1 step 4. A "
+                         "field present in the file wins over the flag.")
     ap.add_argument("--out-prefix", default=None, help="default <run>/symbols_<key>")
     a = ap.parse_args(argv)
     rd = a.run_dir
@@ -350,6 +355,13 @@ def main(argv=None):
     depth = depth.astype(np.float64) * 1e-3
 
     frames = json.load(open(a.frames))
+    for spec in a.depth_check:
+        name, _, mode = spec.partition("=")
+        if mode not in ("surface", "interior", "skip"):
+            sys.exit(f"--depth-check {spec}: mode must be surface|interior|skip")
+        if name not in frames.get("points", {}):
+            sys.exit(f"--depth-check {spec}: no point '{name}' in {a.frames}")
+        frames["points"][name].setdefault("depth_check", mode)   # schema field wins
     rec, aux = evaluate(frames, T, V, mask, depth, K, plane)
     rec.update(run=os.path.abspath(rd), key=a.key, frames=os.path.abspath(a.frames),
                mesh=os.path.abspath(mesh_path), pose_source=pose_src,
