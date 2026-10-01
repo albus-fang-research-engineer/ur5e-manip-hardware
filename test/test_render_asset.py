@@ -277,3 +277,203 @@ def test_render_shows_texture(asset):
     blue_dom = (hue[:, 2] > hue[:, 0] + 60).mean()
     assert red_dom > 0.15 and blue_dom > 0.15, \
         f"expected both checker colours on the object, got red {red_dom:.2f} blue {blue_dom:.2f}"
+
+
+# ------------------------------------------------------------------ canonical copy (rotate=R)
+
+import hashlib                                                # noqa: E402
+
+from manip_bridge.render_asset import (                       # noqa: E402
+    main as render_asset_main, rotation_from_json, validate_rotation,
+)
+
+SIM_DIR = Path(os.environ.get("SIM_DIR", Path(__file__).resolve().parents[2] / "ur5e-manip-sim")).resolve()
+
+
+def _rot(axis, deg):
+    from scipy.spatial.transform import Rotation
+    a = np.asarray(axis, float)
+    return Rotation.from_rotvec(np.deg2rad(deg) * a / np.linalg.norm(a)).as_matrix()
+
+
+R_CANON = _rot([0.3, -1.0, 0.2], 67.0)       # a TRELLIS-sized tip, arbitrary axis
+
+
+@pytest.fixture(scope="module")
+def canon(pair, tmp_path_factory):
+    """Identity (tracking) asset and canonical copy built from the same pair,
+    in separate roots -- the intended layout (<run>/assets, <run>/assets_canon)."""
+    final, canonical = pair
+    root = tmp_path_factory.mktemp("run")
+    ident = build_render_asset(final, canonical, root / "assets" / "mug", "mug", require_texture=True)
+    rot = build_render_asset(final, canonical, root / "assets_canon" / "mug", "mug",
+                             require_texture=True, rotate=R_CANON)
+    return final, ident, rot
+
+
+def _lines(path, prefix):
+    return [l for l in Path(path).read_text().splitlines() if l.startswith(prefix)]
+
+
+def test_canonical_copy_is_final_mesh_at_R(canon):
+    final, ident, rot = canon
+    Vf, Ff = read_obj(final)
+    Vr, Fr = read_obj(Path(rot.obj))
+    assert np.abs(Vr - Vf @ R_CANON).max() < 1e-8                       # the vertices ARE V @ R
+    assert np.array_equal(Fr, Ff)
+    assert _lines(rot.obj, "vt ") == _lines(ident.obj, "vt ")            # uv unchanged
+    assert _lines(rot.obj, "f ") == _lines(ident.obj, "f ")
+    assert not _lines(rot.obj, "vn"), "a normal line must never be written unrotated"
+    assert Path(rot.texture).read_bytes() == Path(ident.texture).read_bytes()
+    # proofs ran on the unrotated final_mesh: same fit as the identity build
+    assert rot.scale_xyz == ident.scale_xyz and rot.centre_xyz == ident.centre_xyz
+    assert np.allclose(rot.bounds_min, Vr.min(0)) and np.allclose(rot.bounds_max, Vr.max(0))
+
+
+def test_canonical_copy_is_never_a_tracking_asset(canon):
+    _, ident, rot = canon
+    mesh_dir = Path(rot.obj).parent
+    assert rot.fp_obj is None
+    assert not list(mesh_dir.glob("*_fp.obj")) and not list(mesh_dir.glob("*.mtl"))
+    assert "NOT a tracking asset" in rot.transform
+    assert "CANONICAL COPY" in Path(rot.obj).read_text().splitlines()[0]
+    assert ident.fp_obj is not None                                     # identity build unchanged
+
+
+def test_record_carries_applied_rotation_and_hash(canon):
+    _, ident, rot = canon
+    doc = json.loads((Path(rot.out_dir) / "render_asset.json").read_text())
+    assert np.allclose(doc["rotation_body_from_canon"], R_CANON, atol=0)
+    assert doc["obj_sha256"] == hashlib.sha256(Path(rot.obj).read_bytes()).hexdigest()
+    idoc = json.loads((Path(ident.out_dir) / "render_asset.json").read_text())
+    assert idoc["rotation_body_from_canon"] is None
+    assert idoc["obj_sha256"] == hashlib.sha256(Path(ident.obj).read_bytes()).hexdigest()
+    assert idoc["obj_sha256"] != doc["obj_sha256"]
+
+
+@pytest.mark.parametrize("bad, match", [
+    (R_CANON * 1.01, "orthonormal"),
+    (np.diag([1.0, 1.0, -1.0]), "reflection"),
+    (np.eye(3)[:2], "3x3"),
+    (np.full((3, 3), np.nan), "3x3"),
+])
+def test_bad_rotation_refused(pair, tmp_path, bad, match):
+    final, canonical = pair
+    with pytest.raises(RenderAssetError, match=match):
+        build_render_asset(final, canonical, tmp_path / "mug", "mug", rotate=bad)
+    assert not (tmp_path / "mug").exists(), "refused before writing anything"
+
+
+def test_dir_kinds_do_not_mix(pair, tmp_path):
+    final, canonical = pair
+    ident_dir, canon_dir = tmp_path / "assets" / "mug", tmp_path / "assets_canon" / "mug"
+    build_render_asset(final, canonical, ident_dir, "mug", require_texture=True)
+    with pytest.raises(RenderAssetError, match="tracking"):
+        build_render_asset(final, canonical, ident_dir, "mug", rotate=R_CANON)
+    assert json.loads((ident_dir / "render_asset.json").read_text())["rotation_body_from_canon"] is None
+    build_render_asset(final, canonical, canon_dir, "mug", rotate=R_CANON)
+    with pytest.raises(RenderAssetError, match="rotated canonical copy"):
+        build_render_asset(final, canonical, canon_dir, "mug")
+    # an untextured identity build has no _fp.obj: its json alone marks the kind
+    plain_dir = tmp_path / "plain" / "mug"
+    build_render_asset(final, canonical, plain_dir, "mug")
+    (plain_dir / "meshes" / "mug_fp.obj").unlink(missing_ok=True)
+    with pytest.raises(RenderAssetError, match="tracking"):
+        build_render_asset(final, canonical, plain_dir, "mug", rotate=R_CANON)
+
+
+def test_rotated_rebuild_over_rotated_is_allowed(pair, tmp_path):
+    """Iterating R (e.g. an OA front shows up on a later run) rebuilds in
+    place; the record, hash and geometry follow the new R, and a stale check
+    render does not survive."""
+    final, canonical = pair
+    d = tmp_path / "assets_canon" / "mug"
+    first = build_render_asset(final, canonical, d, "mug", rotate=R_CANON)
+    (d / "mug_check.png").write_bytes(b"stale")
+    R2 = _rot([0, 0, 1], 30.0) @ R_CANON
+    second = build_render_asset(final, canonical, d, "mug", rotate=R2)
+    assert not (d / "mug_check.png").exists()
+    assert np.allclose(json.loads((d / "render_asset.json").read_text())["rotation_body_from_canon"], R2)
+    assert second.obj_sha256 != first.obj_sha256
+    Vf, _ = read_obj(final)
+    assert np.abs(read_obj(Path(second.obj))[0] - Vf @ R2).max() < 1e-8
+
+
+def test_writer_bug_is_caught_by_read_back(pair, tmp_path, monkeypatch):
+    """The read-back is a real check, not a tautology: a writer that drifts
+    by 10 um is refused."""
+    import manip_bridge.render_asset as ra
+    final, canonical = pair
+    real = ra.write_obj
+
+    def drifting(path, V, F, uv, header=""):
+        real(path, V + np.array([1e-5, 0, 0]), F, uv, header)
+    monkeypatch.setattr(ra, "write_obj", drifting)
+    with pytest.raises(RenderAssetError, match="read back"):
+        build_render_asset(final, canonical, tmp_path / "mug", "mug", rotate=R_CANON)
+
+
+def test_rotate_from_json(pair, tmp_path):
+    final, canonical = pair
+    good = tmp_path / "canonical.json"
+    good.write_text(json.dumps({"R_body_from_canon": R_CANON.tolist(), "up": {}}))
+    assert np.allclose(rotation_from_json(good), R_CANON)
+    bad = tmp_path / "other.json"
+    bad.write_text(json.dumps({"R": R_CANON.tolist()}))
+    with pytest.raises(RenderAssetError, match="R_body_from_canon"):
+        rotation_from_json(bad)
+    refl = tmp_path / "refl.json"
+    refl.write_text(json.dumps({"R_body_from_canon": np.diag([1.0, -1.0, 1.0]).tolist()}))
+    with pytest.raises(RenderAssetError, match="reflection"):
+        rotation_from_json(refl)
+    # end to end through the CLI
+    assert render_asset_main(["--final", str(final), "--canonical", str(canonical), "--name", "mug",
+                              "--out", str(tmp_path / "assets_canon"),
+                              "--rotate-from", str(good)]) == 0
+    doc = json.loads((tmp_path / "assets_canon" / "mug" / "render_asset.json").read_text())
+    assert np.allclose(doc["rotation_body_from_canon"], R_CANON)
+    assert doc["fp_obj"] is None
+
+
+def test_validate_rotation_accepts_json_round_trip():
+    """R as canonical_frame writes it (json floats) passes the 1e-6 gate."""
+    R = np.asarray(json.loads(json.dumps(R_CANON.tolist())))
+    assert np.array_equal(validate_rotation(R), R)
+
+
+@pytest.mark.skipif(not (SIM_DIR / "scripts" / "ground_parts.py").is_file(),
+                    reason="no sim checkout (set SIM_DIR)")
+def test_sim_load_obj_reads_the_canonical_copy(canon, tmp_path):
+    """Parity with what grounding actually reads: the sim's own parser
+    (through render_compat, the one sanctioned import path) on the written
+    canonical OBJ, against final_mesh @ R -- not against read_obj, which
+    would be circular. In a subprocess: test_make_part_masks installs a stub
+    render_compat in sys.modules, and this must see the real one."""
+    import subprocess
+    final, _, rot = canon
+    Vf, Ff = read_obj(final)
+    np.save(tmp_path / "want_V.npy", Vf @ R_CANON)
+    np.save(tmp_path / "want_F.npy", Ff)
+    bridge = Path(__file__).resolve().parents[1] / "ros2_ws" / "src" / "manip_bridge"
+    code = (
+        "import sys, numpy as np; from pathlib import Path\n"
+        "from manip_bridge.render_compat import load_obj\n"
+        f"V, F = load_obj(Path({rot.obj!r}))\n"
+        f"d = Path({str(tmp_path)!r})\n"
+        "err = float(np.abs(np.asarray(V, float) - np.load(d / 'want_V.npy')).max())\n"
+        "assert err < 1e-8, err\n"
+        "assert np.array_equal(np.asarray(F), np.load(d / 'want_F.npy'))\n")
+    env = dict(os.environ, PYTHONPATH=os.pathsep.join([str(SIM_DIR), str(bridge)]))
+    r = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr[-2000:]
+
+
+def test_canonical_copy_renders_textured(canon):
+    if not _gl_ok():
+        pytest.skip("no MuJoCo GL backend (set MUJOCO_GL=egl|osmesa; osmesa needs libosmesa6)")
+    _, _, rot = canon
+    img = render_check(Path(rot.out_dir), "mug", px=320).astype(np.int32)
+    obj_px = np.abs(img - img[0, 0]).sum(-1) > 30
+    assert obj_px.sum() > 0.05 * img.shape[0] * img.shape[1], "object not in view"
+    hue = img[obj_px]
+    assert (hue[:, 0] > hue[:, 2] + 60).mean() > 0.15 and (hue[:, 2] > hue[:, 0] + 60).mean() > 0.15

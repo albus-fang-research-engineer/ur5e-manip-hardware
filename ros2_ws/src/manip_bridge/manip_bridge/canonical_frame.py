@@ -33,10 +33,13 @@ the canonical frame is the rest frame (the marker asset is its scanned rest
 pose), not a semantic frame.
 
 Pure numpy apart from the sim refinement it calls through refine_compat.
+That import is deferred into canonical_frame() so that to_canonical /
+to_body -- the only rotation algebra, which render_asset uses to write the
+canonical copy -- import without the sim mount. refine_compat's diagnostic
+ImportError (empty mount, shadowed package) still fires, at the first
+canonical_frame() call.
 """
 import numpy as np
-
-from manip_bridge import refine_compat as rc
 
 # (value, basis) -- n=1 calibrations recorded as such (check_symbols convention).
 PARAMS = {
@@ -107,6 +110,8 @@ def canonical_frame(V, F, cam_T_obj, n_cam, oa_real=None, params=None):
                decision.front, so it cannot come from a different
                registration than the one everything else uses.
     """
+    from manip_bridge import refine_compat as rc     # deferred: see module docstring
+
     p = values(params)
     V = np.asarray(V, float)
     F = np.asarray(F, int)

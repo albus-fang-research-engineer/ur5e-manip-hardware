@@ -64,6 +64,30 @@ the path it was built at (the same path inside Ros2Bridge, /data/runs/...);
 rebuild rather than move. `render_asset.json` records both source paths,
 the fitted s and c, the residuals, and whether a texture was found.
 
+Canonical copy (`rotate=R`, CLI `--rotate-from JSON`). The sim's grounding
+stack assumes assets are converted upright (ground_parts.py UP_BODY = +z,
+canonical_cameras look-at z-up); a TRELLIS frame is not (the mug's up is 67
+deg off +z). With `rotate`, the same build writes a RENDER-ONLY copy whose
+vertices are `final_mesh @ R` (canonical_frame.to_canonical: R's columns are
+the canonical front/lateral/up axes in final_mesh coordinates; rotation about
+the body origin, no re-centring, so the map back is exactly x_body = R x_c).
+  * every correspondence / centre proof above still runs on the UNROTATED
+    final_mesh -- they are claims about the tracked file, not the copy;
+  * faces, uv and texture are written unchanged; the OBJ carries no `vn`, so
+    MuJoCo computes normals from the rotated geometry;
+  * no `<name>_fp.obj` / `.mtl`: the copy can never become a tracking mesh;
+  * `render_asset.json` records `rotation_body_from_canon` (null on identity
+    builds) -- the rotation actually applied to the vertices, and the one the
+    grounding seam reads to map symbols back -- plus `obj_sha256` of the
+    written visual OBJ, so a masks tree rendered from an earlier geometry
+    can be told apart from this one;
+  * an output dir holds ONE kind: a rotated build refuses a dir holding a
+    tracking asset (identity json or `_fp.obj`), an identity build refuses a
+    rotated dir; same-kind rebuilds overwrite in place.
+Every build reads its written OBJ back with `read_obj` and refuses unless the
+faces are identical and the vertices match what was meant to be written
+within tol_m (`%.9g` keeps ~1e-10 m for a 0.1 m object).
+
 Not done here, on purpose: no collision hulls, no sites, no mass. This is
 a render asset; `build_model` strips `_col_` entries anyway.
 
@@ -73,6 +97,10 @@ a render asset; `build_model` strips `_col_` entries anyway.
     ros2 run manip_bridge render_asset -- \\
         --final /data/any6d/final_mesh_mug.obj \\
         --canonical /data/meshes/mug_<stamp>.glb --name mug --out DIR --check
+    ros2 run manip_bridge render_asset -- \\
+        --final /data/any6d/final_mesh_mug.obj \\
+        --canonical /data/meshes/mug_<stamp>.glb --name mug \\
+        --out /data/runs/<stamp>/assets_canon --rotate-from canonical.json --check
 
 `--check` renders one view with MuJoCo (MUJOCO_GL=egl in Ros2Bridge; osmesa
 without a GPU) to <out>/<name>_check.png -- if that image is flat grey, the
@@ -82,6 +110,7 @@ texture wiring is broken and SAM3 on the canonical renders will be too.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 import xml.etree.ElementTree as ET
@@ -90,8 +119,12 @@ from pathlib import Path
 
 import numpy as np
 
+from manip_bridge.canonical_frame import to_canonical
+
 DEFAULT_TOL_M = 1e-6          # per-axis affine fit residual the build tolerates
 DEFAULT_CENTRE_TOL_M = 1e-4   # |bbox centre| of final_mesh -> pose frame == file frame
+ROTATION_TOL = 1e-6           # |R^T R - I|, |det R - 1| a canonical rotation may carry
+ROTATION_KEY = "R_body_from_canon"   # canonical_frame's record key, read by --rotate-from
 BODY_NAME = "object"          # what frames.json / PoseReader name the body
 
 
@@ -118,6 +151,8 @@ class RenderAsset:
     n_faces: int
     bounds_min: list[float]
     bounds_max: list[float]
+    rotation_body_from_canon: list[list[float]] | None = None
+    obj_sha256: str = ""
 
 
 # ------------------------------------------------------------------ loading
@@ -215,15 +250,67 @@ def check_correspondence(name: str, V_final: np.ndarray, F_final: np.ndarray,
     return s, c, resid
 
 
+def validate_rotation(R) -> np.ndarray:
+    """A proper rotation or RenderAssetError: 3x3, orthonormal, det +1. A
+    reflection would mirror the mesh (handle on the wrong side) and still
+    render plausibly, so it is refused here rather than noticed later."""
+    R = np.asarray(R, dtype=np.float64)
+    if R.shape != (3, 3) or not np.all(np.isfinite(R)):
+        raise RenderAssetError(f"rotation must be a finite 3x3 matrix, got shape {R.shape}")
+    err = float(np.abs(R.T @ R - np.eye(3)).max())
+    if err > ROTATION_TOL:
+        raise RenderAssetError(f"rotation is not orthonormal (|R^T R - I| = {err:.2e})")
+    if abs(np.linalg.det(R) - 1.0) > ROTATION_TOL:
+        raise RenderAssetError(f"rotation has det {np.linalg.det(R):+.6f}: a reflection, "
+                               "not a rotation")
+    return R
+
+
+def check_dir_kind(out_dir: Path, name: str, rotated: bool) -> None:
+    """One kind of asset per dir. A rotated visual mesh next to a stale
+    identity `_fp.obj` (or the reverse) is the hazard: tracking and grounding
+    would read different frames from one directory. Same-kind rebuilds
+    (e.g. a new R) overwrite in place."""
+    rec_path = out_dir / "render_asset.json"
+    has_prev, prev_rot = rec_path.is_file(), None
+    if has_prev:
+        try:
+            prev_rot = json.loads(rec_path.read_text()).get("rotation_body_from_canon")
+        except (OSError, ValueError) as e:
+            raise RenderAssetError(f"{rec_path}: unreadable ({e}); remove the dir and rebuild") from e
+    fp = out_dir / "meshes" / f"{name}_fp.obj"
+    if rotated and (fp.exists() or (has_prev and prev_rot is None)):
+        raise RenderAssetError(
+            f"{out_dir} holds a tracking (identity) asset; the canonical copy must not share its "
+            "dir -- write it elsewhere (e.g. <run>/assets_canon)")
+    if not rotated and has_prev and prev_rot is not None:
+        raise RenderAssetError(
+            f"{out_dir} holds a rotated canonical copy; an identity (tracking) asset must not "
+            "share its dir -- write it elsewhere (e.g. <run>/assets)")
+
+
+def rotation_from_json(path: Path) -> np.ndarray:
+    """R from a canonical_frame record (canonical.json, or a probe dump)."""
+    try:
+        doc = json.loads(Path(path).read_text())
+    except (OSError, ValueError) as e:
+        raise RenderAssetError(f"--rotate-from {path}: unreadable ({e})") from e
+    if not isinstance(doc, dict) or ROTATION_KEY not in doc:
+        raise RenderAssetError(f"--rotate-from {path}: no {ROTATION_KEY!r} key -- not a "
+                               "canonical_frame record")
+    return validate_rotation(doc[ROTATION_KEY])
+
+
 # ------------------------------------------------------------------ writers
 
-def write_obj(path: Path, V: np.ndarray, F: np.ndarray, uv: np.ndarray | None) -> None:
+def write_obj(path: Path, V: np.ndarray, F: np.ndarray, uv: np.ndarray | None,
+              header: str = "identity transform of final_mesh") -> None:
     """Wavefront OBJ: `v` (exactly the final_mesh vertices), `vt` per vertex
     when textured, `f v/vt` (MuJoCo reads it; the sim's load_obj takes the
     `v` index before the slash). No `mtllib`: MuJoCo ignores MTL and the
     MJCF carries the material."""
     with open(path, "w") as f:
-        f.write(f"# render asset, identity transform of final_mesh, {len(V)} v {len(F)} f\n")
+        f.write(f"# render asset, {header}, {len(V)} v {len(F)} f\n")
         for v in V:
             f.write(f"v {v[0]:.9g} {v[1]:.9g} {v[2]:.9g}\n")
         if uv is not None:
@@ -289,11 +376,16 @@ def write_mjcf(path: Path, name: str, obj_rel: str, texture_abs: Path | None) ->
 def build_render_asset(final_mesh: Path, canonical_glb: Path, out_dir: Path, name: str,
                        tol_m: float = DEFAULT_TOL_M,
                        centre_tol_m: float = DEFAULT_CENTRE_TOL_M,
-                       require_texture: bool = False) -> RenderAsset:
+                       require_texture: bool = False,
+                       rotate: np.ndarray | None = None) -> RenderAsset:
     """final_mesh (tracked geometry) + canonical GLB (texture by index) ->
     render asset dir. Refuses on any failed correspondence or centre check,
-    and (with require_texture) on a canonical mesh with no colour texture."""
+    and (with require_texture) on a canonical mesh with no colour texture.
+    With `rotate` (R, columns = canonical axes in final_mesh coords), writes
+    the render-only canonical copy final_mesh @ R instead -- see the module
+    docstring."""
     final_mesh, canonical_glb, out_dir = Path(final_mesh), Path(canonical_glb), Path(out_dir)
+    R = None if rotate is None else validate_rotation(rotate)
     if not final_mesh.is_file():
         raise RenderAssetError(f"final_mesh missing: {final_mesh}")
     if not canonical_glb.is_file():
@@ -316,8 +408,15 @@ def build_render_asset(final_mesh: Path, canonical_glb: Path, out_dir: Path, nam
     if img is None and require_texture:
         raise RenderAssetError(f"{name}: {canonical_glb.name} carries no colour texture")
 
+    # every proof above is on the UNROTATED final_mesh; rotation is a write-time step
+    V_out = V if R is None else to_canonical(V, R)
+    check_dir_kind(out_dir, name, rotated=R is not None)
+
     mesh_dir = out_dir / "meshes"
     mesh_dir.mkdir(parents=True, exist_ok=True)
+    stale_check = out_dir / f"{name}_check.png"
+    if stale_check.exists():
+        stale_check.unlink()          # a check render of an earlier geometry would mislead
     obj_path = mesh_dir / f"{name}_visual.obj"
     tex_path = None
     uv = None
@@ -327,9 +426,19 @@ def build_render_asset(final_mesh: Path, canonical_glb: Path, out_dir: Path, nam
             raise RenderAssetError(f"{name}: {len(uv)} uv for {len(V)} vertices")
         tex_path = (mesh_dir / f"{name}_texture.png").resolve()
         img.save(tex_path)
-    write_obj(obj_path, V, F, uv)
+    write_obj(obj_path, V_out, F, uv,
+              header="identity transform of final_mesh" if R is None else
+                     "CANONICAL COPY final_mesh @ R (render-only, not a tracking mesh)")
+    V_back, F_back = read_obj(obj_path)
+    if F_back.shape != F.shape or not np.array_equal(F_back, F):
+        raise RenderAssetError(f"{name}: written OBJ faces do not read back identically")
+    w_resid = float(np.abs(V_back - V_out).max())
+    if w_resid > tol_m:
+        raise RenderAssetError(f"{name}: written OBJ vertices read back {w_resid:.2e} m off "
+                               f"(tol {tol_m:.1e})")
+    obj_sha = hashlib.sha256(obj_path.read_bytes()).hexdigest()
     fp_obj = None
-    if uv is not None:
+    if uv is not None and R is None:
         fp_obj = mesh_dir / f"{name}_fp.obj"
         write_fp_obj(fp_obj, V, F, uv, tex_path.name)
     xml_path = out_dir / f"{name}.xml"
@@ -340,12 +449,18 @@ def build_render_asset(final_mesh: Path, canonical_glb: Path, out_dir: Path, nam
         obj=str(obj_path.resolve()), texture=str(tex_path) if tex_path else None,
         fp_obj=str(fp_obj.resolve()) if fp_obj else None,
         final_mesh=str(final_mesh.resolve()), canonical_glb=str(canonical_glb.resolve()),
-        transform="identity: vertices = final_mesh vertices verbatim; "
-                  "final = diag(scale_xyz) . (canonical - centre_xyz) is the recorded fit",
+        transform=("identity: vertices = final_mesh vertices verbatim; "
+                   "final = diag(scale_xyz) . (canonical - centre_xyz) is the recorded fit"
+                   if R is None else
+                   "canonical copy: vertices = final_mesh @ rotation_body_from_canon (columns = "
+                   "canonical axes in final_mesh coords); map back x_body = R x_c; render-only, "
+                   "NOT a tracking asset; scale/centre fit is of the unrotated final_mesh"),
         scale_xyz=s.tolist(), centre_xyz=c.tolist(), fit_residual_m=resid,
         bbox_centre_m=bbox_centre.tolist(),
         n_vertices=int(len(V)), n_faces=int(len(F)),
-        bounds_min=V.min(0).tolist(), bounds_max=V.max(0).tolist())
+        bounds_min=V_out.min(0).tolist(), bounds_max=V_out.max(0).tolist(),
+        rotation_body_from_canon=None if R is None else R.tolist(),
+        obj_sha256=obj_sha)
     (out_dir / "render_asset.json").write_text(json.dumps(asdict(rec), indent=2) + "\n")
     return rec
 
@@ -429,6 +544,9 @@ def main(argv=None) -> int:
     ap.add_argument("--centre-tol", type=float, default=DEFAULT_CENTRE_TOL_M)
     ap.add_argument("--require-texture", action="store_true")
     ap.add_argument("--check", action="store_true", help="render <name>_check.png")
+    ap.add_argument("--rotate-from", type=Path, default=None,
+                    help="canonical_frame record (canonical.json): write the render-only "
+                         "canonical copy final_mesh @ R_body_from_canon; no _fp.obj")
     argv = list(sys.argv[1:] if argv is None else argv)
     if "--" in argv:
         argv = argv[argv.index("--") + 1:]
@@ -445,11 +563,16 @@ def main(argv=None) -> int:
     name = args.name or args.object or final.stem.replace("final_mesh_", "")
 
     out = args.out / name
+    rotate = rotation_from_json(args.rotate_from) if args.rotate_from else None
     rec = build_render_asset(final, canonical, out, name, tol_m=args.tol,
-                             centre_tol_m=args.centre_tol, require_texture=args.require_texture)
+                             centre_tol_m=args.centre_tol, require_texture=args.require_texture,
+                             rotate=rotate)
     print(f"[render-asset] {name}: {rec.n_vertices} v {rec.n_faces} f, "
           f"scale {np.round(rec.scale_xyz, 4).tolist()} residual {rec.fit_residual_m:.1e} m, "
           f"texture {'yes' if rec.texture else 'NO'} -> {rec.out_dir}")
+    if rotate is not None:
+        print(f"[render-asset] CANONICAL COPY (render-only, no _fp.obj): vertices = final_mesh @ R "
+              f"from {args.rotate_from}; obj sha256 {rec.obj_sha256[:12]}")
     if rec.fp_obj:
         print(f"[render-asset] FoundationPose-facing textured OBJ -> {rec.fp_obj} "
               f"(+ .mtl, same PNG); register on this file for a textured scorer input")

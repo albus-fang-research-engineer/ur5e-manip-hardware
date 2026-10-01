@@ -113,7 +113,7 @@ def ang(u, v):
 # ------------------------------------------------------------------ tests
 
 def test_compat_contract(cf):
-    rc = cf.rc
+    import manip_bridge.refine_compat as rc
     assert set(rc.__all__) == {"MAX_SNAP_DEG", "SEMANTIC_SIGMA_DEG", "RefineResult", "AzimuthResult",
                                "FrameResult", "refine_axis", "azimuth_from_semantic",
                                "assemble_frame", "provenance", "SOURCES"}
@@ -196,6 +196,19 @@ def test_oa_up_is_diagnostic_only(cf):
     ref, _ = cf.canonical_frame(V, F, T, n_cam, scene()[4])
     assert abs(rec["oa_up_angle_deg"] - 90.0) < 2.0
     assert np.allclose(R, ref, atol=1e-12)
+
+
+def test_algebra_imports_without_sim():
+    """render_asset writes the canonical copy with to_canonical; that must not
+    need the sim mount (render_asset is sim-free)."""
+    import subprocess
+    code = ("import sys; sys.path.insert(0, %r); "
+            "from manip_bridge.canonical_frame import to_canonical, to_body; "
+            "import numpy as np; R = np.eye(3)[[1, 2, 0]].T; "
+            "assert np.allclose(to_body(to_canonical(np.ones((2, 3)), R), R), 1); "
+            "assert not any(m.startswith('manip_sim') for m in sys.modules)") % str(BRIDGE)
+    env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
+    subprocess.run([sys.executable, "-c", code], check=True, env=env, cwd="/")
 
 
 def test_deterministic(cf):

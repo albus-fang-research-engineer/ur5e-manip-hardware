@@ -26,6 +26,25 @@ PX = 64
 VNAMES = ["x+", "x-", "top"]          # raw sim-style names containing +/-
 
 
+_STUBBED = ("manip_bridge", "manip_bridge.render_compat", "manip_bridge.zmq_client")
+
+
+@pytest.fixture(autouse=True)
+def _restore_stubbed_modules():
+    """_stub_modules replaces the manip_bridge package itself in sys.modules
+    with a plain (non-package) module; left in place it breaks every later
+    in-process `import manip_bridge.<x>` in the same pytest session, so the
+    outcome of other suites depended on file order. Put back whatever was
+    there before each test."""
+    saved = {k: sys.modules.get(k) for k in _STUBBED}
+    yield
+    for k, v in saved.items():
+        if v is None:
+            sys.modules.pop(k, None)
+        else:
+            sys.modules[k] = v
+
+
 def _stub_modules(sam_behavior):
     """Install manip_bridge.render_compat / zmq_client stubs; return the pkg."""
     pkg = types.ModuleType("manip_bridge")
