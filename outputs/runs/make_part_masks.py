@@ -18,21 +18,35 @@ error; SystemExit fires only when everything is empty). Mask dirs are
 therefore keyed off the view PNG filenames the render actually wrote, never
 by re-implementing the transform.
 
-An empty SAM3 result writes no file (sim treats a missing part file as
-"unlabelled in this view") but is recorded in the manifest and printed. A
-part with no mask in ANY view exits nonzero: grounding cannot fit it.
+An empty SAM3 result writes no file but is recorded in the manifest and
+printed. A part with no mask in ANY view exits nonzero: grounding cannot fit
+it. Voting consequence: every rendered view gets a dir here, and sim's
+read_mask_dir enters a view into masks_by_view as soon as its dir exists
+(ground_parts.py:129-132), so lift_masks counts that view in `seen` for every
+sample visible in it (part_grounding.py:129-132) -- a view where SAM3 found a
+part nowhere is a "no" vote for that part, not an abstention. Same as the
+oracle provider, which rasterizes every view.
+
+The manifest records the asset geometry it rendered (render_asset.json's
+obj_sha256 + whether it was a rotated canonical copy): views are rendered
+from the asset's vertices, so a masks tree is only valid for the exact
+geometry it was made from.
 
 Runs in the ros2 container (MuJoCo + osmesa + the sim mount + zmq live
 there; MUJOCO_GL=osmesa or egl per docker/Dockerfile.ros2):
 
-    python3 outputs/runs/make_part_masks.py /data/runs/<stamp>/assets \\
-        --name mug --parts handle,body,rim \\
-        --masks-root /data/runs/<stamp>/grounding/sam
+    python3 /data/runs/make_part_masks.py /data/runs/<stamp>/assets_canon/mug \\
+        --name mug --parts handle,rim \\
+        --masks-root /data/runs/<stamp>/masks_canon --timeout-ms 180000
+
+(/data/runs is ./outputs/runs inside Ros2Bridge; the asset is the upright
+canonical copy from canonicalize_asset.py. `body` is not an M1 part: SAM3
+has no noun that finds it -- see the README.)
 
 Step-4 note for the downstream check: grounding's frames.json names symbols
 <part>_center / <part>_axis (plus caller-supplied up_axis) with no
 depth_check field until the seam patch emits one, so check_symbols wants
-    --depth-check rim_center=skip body_center=skip handle_center=interior
+    --depth-check rim_center=skip handle_center=interior
 """
 import argparse
 import json
@@ -89,7 +103,14 @@ def main(argv=None) -> int:
           f"{time.time() - t0:.1f}s -> {views_out}")
 
     sam = SidecarClient(a.sam3, timeout_ms=a.timeout_ms)
-    manifest = {"name": a.name, "asset_dir": str(asset_dir.resolve()), "px": a.px,
+    ra_json = asset_dir / "render_asset.json"
+    asset_rec = None
+    if ra_json.is_file():
+        ra = json.loads(ra_json.read_text())
+        asset_rec = {"obj_sha256": ra.get("obj_sha256"),
+                     "rotated": ra.get("rotation_body_from_canon") is not None}
+    manifest = {"name": a.name, "asset_dir": str(asset_dir.resolve()), "asset": asset_rec,
+                "px": a.px,
                 "parts": parts, "sam3": a.sam3, "masks_root": str(root.resolve()),
                 "views": {}, "sim_provenance": provenance()}
     hits = {p: 0 for p in parts}

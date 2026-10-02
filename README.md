@@ -568,6 +568,75 @@ Preconditions, same as the yaw decider: single-layer, non-occluded scene
 capture (no occlusion machinery by design), and a densely reconstructed
 mesh (the vertex z-buffer; TRELLIS/Any6D outputs qualify).
 
+## Canonical render asset (`outputs/runs/canonicalize_asset.py`)
+
+Sim's part grounding assumes upright assets (`ground_parts.py` `UP_BODY =
++z`; `canonical_cameras` look-at is z-up). A tracked mesh keeps the TRELLIS
+output frame -- the mug's up is 67 deg off +z -- so its eight grounding views
+come out tipped, and SAM3, which consumes those views, segments a tipped mug
+worse. Rather than thread a rotation through the sim, hardware builds an
+upright, render-only COPY of the tracked mesh and grounds on that:
+
+    summary.json --canonical_frame--> R --render_asset(rotate=R)--> <run>/assets_canon/<name>/
+
+- **R** (`manip_bridge/canonical_frame.py`): columns are canonical
+  front / lateral / up in the tracked mesh's body frame. Up = the table
+  normal through `pose_on_final`, refined by a revolution-axis fit (sim
+  `refine_axis`) and accepted only within 5 deg of the table (check_symbols'
+  own up tolerance), else the table normal. Front = Orient Anything's
+  real-crop front through the same pose, projected perpendicular to up
+  (semantic route; `alpha != 1` means the sign of x is not semantically
+  fixed). OA's up is a recorded diagnostic only -- it called a tumbled mug
+  upright.
+- **The copy** (`render_asset --rotate-from`, or the driver): vertices
+  `final_mesh @ R`, faces/uv/texture unchanged, no `_fp.obj` -- it can never
+  be tracked. Rotation about the body origin, so symbols map back exactly
+  as `x_body = R x_c`. `render_asset.json` `rotation_body_from_canon` is the
+  single source of R for that map-back; `canonical.json` beside it records
+  how R was derived (frame record, resolved inputs, sim provenance,
+  `obj_sha256`). The tracked asset, `cam_T_obj`, frames.json and
+  check_symbols all stay in the tracked mesh's frame.
+
+In the ros2 container (`/data/runs` is `./outputs/runs` there, which is
+where the run dirs and these drivers live; the SAM3 sidecar must be up, and
+its first call loads the model, hence the long timeout):
+
+    export PYTHONPATH=/root/ros2_ws/src/manip_bridge:$PYTHONPATH
+    RUN=/data/runs/<stamp>
+    python3 /data/runs/canonicalize_asset.py --run $RUN --check \
+        [--key m2] [--canonical /data/meshes/<glb>]    # --canonical: required on --final-mesh runs
+    python3 /data/runs/make_part_masks.py $RUN/assets_canon/mug --name mug \
+        --parts handle,rim --masks-root $RUN/masks_canon --timeout-ms 180000
+
+`--key` is required when several objects are registered (the driver refuses
+and lists them; it never prompts). A same-kind rebuild overwrites in place;
+a masks tree made before a rebuild is stale if `obj_sha256` changed, and the
+masks manifest records the hash it rendered so the seam can refuse it.
+
+Findings on run `20260928_190618` (mug), recorded because the next object
+will revisit them:
+- Up refined 2.07 deg from the table normal (rms 1.34 mm); handle lands on -x.
+- On upright views SAM3 masks `handle` (exactly the 6 views where it is
+  visible) and `rim` (the lip band; a full thin ring from `top`) cleanly.
+- **`body` is not an M1 part.** No noun finds it: `body` 0/8 views,
+  `cylinder` 0/8, `cup body` 2/8, `cup` 4/8, `mug body` 5/8 (the alias to use
+  if a later task needs a body region). Even `mug` fails in `px` and `iso`:
+  the two views with the handle hidden, where SAM3 does not recognize the
+  object at all -- a recognition blind spot, not vocabulary (the dark render
+  may contribute; lighting is unexplored). A body grounded from those masks
+  would be a "blob" (`fit_part`: centroid + a mean-to-centroid direction)
+  missing its front, and nothing in either repo consumes `body_center` /
+  `body_axis`.
+- Why rim survives its empty views and body would not -- the exact voting
+  rule: `read_mask_dir` enters a view as soon as its dir exists
+  (`ground_parts.py:129-132`; make_part_masks writes a dir per view), and
+  `lift_masks` adds every visible sample of every entered view to `seen`
+  (`part_grounding.py:129-132`), labelling a sample only on
+  `votes * 2 > seen`. A view with no mask for a part is therefore a "no" vote
+  for it. Front-rim points should still win (`top`'s full ring, `iso`, `+y`
+  against `px`, `-y` -- the seam run will show it); body-front points, seen
+  mainly from `px`/`iso`, would not.
+
 ## Part masks for grounding (`outputs/runs/make_part_masks.py`, task D)
 
 The producer of the masks tree `ground_object --provider masks` reads:
@@ -583,22 +652,27 @@ render wrote ('+' -> 'p', '-' -> 'n'), never a re-implemented transform:
 sim's read_mask_dir applies the transform at lookup and silently skips
 missing view dirs, so a naming mismatch would degrade grounding quietly.
 Empty SAM3 results write no file but are recorded in the per-object
-manifest (with sim provenance) and printed; a part with no mask in any
+manifest (with sim provenance) and printed -- and still count as a "no"
+vote for that part in that view (see the voting rule above); a part with no mask in any
 view exits nonzero. Renders are segmented first; the real camera frame
 only substitutes if check_symbols later shows texture-driven mask
 failures. Runs in the ros2 container (MuJoCo + osmesa + sim mount + zmq):
 
-    python3 outputs/runs/make_part_masks.py /data/runs/<stamp>/assets \
-        --name mug --parts handle,body,rim \
-        --masks-root /data/runs/<stamp>/grounding/sam
+    python3 /data/runs/make_part_masks.py /data/runs/<stamp>/assets_canon/mug \
+        --name mug --parts handle,rim \
+        --masks-root /data/runs/<stamp>/masks_canon --timeout-ms 180000
+
+The asset is the upright canonical copy (section above); `body` is not an
+M1 part (same section). The manifest records the asset's `obj_sha256` and
+whether it was a rotated copy: a masks tree is valid only for the geometry
+it was rendered from.
 
 Step-4 foresight: grounding's frames.json names symbols `<part>_center` /
 `<part>_axis` (part_grounding) plus caller-supplied `up_axis`; the
-hand-fixture name `opening_center` never reappears, its free-space
-geometry transfers to `rim_center`, and `body_center` sits deeper than
-the interior band by construction. Until the seam patch emits per-symbol
+hand-fixture name `opening_center` never reappears and its free-space
+geometry transfers to `rim_center`. Until the seam patch emits per-symbol
 `depth_check`, the check_symbols invocation on grounding output is
-`--depth-check rim_center=skip body_center=skip handle_center=interior` --
+`--depth-check rim_center=skip handle_center=interior` --
 a correct grounding failing without those flags is a misread, not a bug.
 
 ## Orient Anything V2 sidecar (port 5673)

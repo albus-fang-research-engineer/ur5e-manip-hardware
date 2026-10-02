@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Throwaway probe for canon step 1: run canonical_frame on a saved run and
+"""SUPERSEDED by canonicalize_asset.py (the documented path); kept as a REPL
+probe only. Its input plumbing is a copy of the driver's and may drift from it.
+
+Throwaway probe for canon step 1: run canonical_frame on a saved run and
 print the record. Not part of the patch series -- step 3's driver replaces it.
 
     python3 try_canonical_frame.py --run /data/runs/20260928_190618 \

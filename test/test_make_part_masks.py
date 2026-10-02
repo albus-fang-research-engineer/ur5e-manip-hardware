@@ -103,12 +103,14 @@ def _full_mask():
     return m
 
 
-def _run(tmp_path, sam_behavior, parts="handle,body"):
+def _run(tmp_path, sam_behavior, parts="handle,body", render_asset_json=None):
     _stub_modules(sam_behavior)
     drv = _load_driver()
     asset = tmp_path / "assets"
     (asset / "meshes").mkdir(parents=True)
     (asset / "meshes" / "mug_visual.obj").write_text("v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n")
+    if render_asset_json is not None:
+        (asset / "render_asset.json").write_text(json.dumps(render_asset_json))
     root = tmp_path / "sam"
     rc = drv.main([str(asset), "--name", "mug", "--parts", parts,
                    "--masks-root", str(root)])
@@ -173,3 +175,20 @@ def test_manifest_provenance_and_counts(tmp_path):
     p = man["views"]["top"]["parts"]["handle"]
     assert p["instances"] == 2 and p["px"] == int(_full_mask().sum())
     assert man["parts"] == ["handle", "body"] and man["name"] == "mug"
+
+
+def test_manifest_records_rendered_geometry(tmp_path):
+    """A masks tree is valid only for the geometry it was rendered from: the
+    manifest carries render_asset.json's obj_sha256 and whether the asset
+    was a rotated canonical copy, so the seam can refuse a stale tree."""
+    full = lambda p: {"masks": np.stack([_full_mask()])}
+    rc, obj = _run(tmp_path / "a", full, render_asset_json={
+        "obj_sha256": "ab" * 32, "rotation_body_from_canon": np.eye(3).tolist()})
+    man = json.loads((obj / "manifest.json").read_text())
+    assert rc == 0 and man["asset"] == {"obj_sha256": "ab" * 32, "rotated": True}
+    rc, obj = _run(tmp_path / "b", full, render_asset_json={
+        "obj_sha256": "cd" * 32, "rotation_body_from_canon": None})
+    assert json.loads((obj / "manifest.json").read_text())["asset"] == \
+        {"obj_sha256": "cd" * 32, "rotated": False}
+    rc, obj = _run(tmp_path / "c", full)                        # pre-step-2 asset: no json
+    assert json.loads((obj / "manifest.json").read_text())["asset"] is None
