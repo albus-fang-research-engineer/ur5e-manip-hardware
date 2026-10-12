@@ -69,6 +69,48 @@ def to_body(Xc, R):
     return np.asarray(Xc, float) @ np.asarray(R, float).T
 
 
+BODY_COORDINATES = ("body frame of the TRACKED mesh (Any6D final_mesh; what pose_on_final's "
+                    "cam_T_obj maps) -- grounded on the canonical copy and mapped back by "
+                    "x_body = R x_c, see provenance.canonical")
+
+
+def frames_to_body(frames, R, canonical_provenance=None, decimals=6):
+    """A frames.json document grounded on the canonical copy -> the same
+    document in the tracked mesh's body frame. The map-back, in one place.
+
+      points  xyz -> R xyz        (rotation about the shared origin: the copy
+      axes    xyz -> R xyz         was V @ R with no re-centring)
+      quantities unchanged        (radius, length: rotation-invariant)
+
+    Every other field of every entry is carried verbatim -- status, comment,
+    sigma_deg (an angle, rotation-invariant), depth_check and winding (the
+    winding number is invariant under a rotation of mesh and point
+    together). `coordinates` is restated; the original document's
+    provenance is kept and `provenance.canonical` is set from the caller.
+    The input is not modified.
+
+    Precision: grounding rounds xyz to 1e-4 m before it reaches here; the
+    output is rounded to 1e-6 m so this map adds no rounding of its own
+    (worst case 0.09 mm from the upstream rounding, carried through R)."""
+    import copy
+    R = np.asarray(R, float)
+    if R.shape != (3, 3) or np.abs(R.T @ R - np.eye(3)).max() > 1e-6 \
+            or abs(np.linalg.det(R) - 1.0) > 1e-6:
+        raise ValueError("frames_to_body: R is not a proper rotation")
+    out = copy.deepcopy(frames)
+    for section in ("points", "axes"):
+        for name, entry in out.get(section, {}).items():
+            x = to_body(np.asarray(entry["xyz"], float)[None], R)[0]
+            if section == "axes":
+                x = x / np.linalg.norm(x)
+            entry["xyz"] = [round(float(v), decimals) for v in x]
+    out["coordinates"] = BODY_COORDINATES
+    prov = out.setdefault("provenance", {})
+    if canonical_provenance is not None:
+        prov["canonical"] = canonical_provenance
+    return out
+
+
 def surface_samples(V, F, n, rng):
     """Area-weighted points on the triangle surface. Vertex density on a
     TRELLIS mesh is not uniform, and the revolution fit weights every point

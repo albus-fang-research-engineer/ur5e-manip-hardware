@@ -44,9 +44,9 @@ canonical copy from canonicalize_asset.py. `body` is not an M1 part: SAM3
 has no noun that finds it -- see the README.)
 
 Step-4 note for the downstream check: grounding's frames.json names symbols
-<part>_center / <part>_axis (plus caller-supplied up_axis) with no
-depth_check field until the seam patch emits one, so check_symbols wants
-    --depth-check rim_center=skip handle_center=interior
+<part>_center / <part>_axis (plus caller-supplied up_axis), and since the
+grounding seam every point carries its own depth_check (ground_asset.py),
+so check_symbols needs no --depth-check flags on it.
 """
 import argparse
 import json

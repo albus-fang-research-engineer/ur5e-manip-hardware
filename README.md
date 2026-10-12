@@ -607,6 +607,8 @@ its first call loads the model, hence the long timeout):
         [--key m2] [--canonical /data/meshes/<glb>]    # --canonical: required on --final-mesh runs
     python3 /data/runs/make_part_masks.py $RUN/assets_canon/mug --name mug \
         --parts handle,rim --masks-root $RUN/masks_canon --timeout-ms 180000
+    python3 /data/runs/ground_asset.py --run $RUN          # the seam, section below
+    python3 /data/runs/check_symbols.py $RUN --key m2 --frames $RUN/grounding/m2/frames.json
 
 `--key` is required when several objects are registered (the driver refuses
 and lists them; it never prompts). A same-kind rebuild overwrites in place;
@@ -670,10 +672,88 @@ it was rendered from.
 Step-4 foresight: grounding's frames.json names symbols `<part>_center` /
 `<part>_axis` (part_grounding) plus caller-supplied `up_axis`; the
 hand-fixture name `opening_center` never reappears and its free-space
-geometry transfers to `rim_center`. Until the seam patch emits per-symbol
-`depth_check`, the check_symbols invocation on grounding output is
-`--depth-check rim_center=skip handle_center=interior` --
-a correct grounding failing without those flags is a misread, not a bug.
+geometry transfers to `rim_center`. Since the grounding seam every grounded
+point carries its own `depth_check` (next section), so check_symbols runs on
+grounding output with no `--depth-check` flags; the flag remains for
+field-less files, and a field in the file always wins over it.
+
+## Grounding seam (`outputs/runs/ground_asset.py`)
+
+The last step of milestone 1: the canonical asset plus its masks tree in,
+frames.json in the TRACKED mesh's body frame out, judged by check_symbols.
+
+    ground_object (sim, via manip_bridge/grounding_compat.py) on <run>/assets_canon/<name>
+        -> <run>/grounding/canon/<name>/frames.json     canonical frame (+ candidates, views)
+    frames_to_body (canonical_frame.py): points / axes R x, quantities unchanged
+        -> <run>/grounding/<key>/frames.json             tracked body frame -> check_symbols
+
+**Sim checkout.** The container mounts whatever `~/ur5e-manip-sim` has
+checked out, and the seam needs the `grounding-seam` branch (off
+insert-marker `a23de1e`): `GroundingError`, `ground_object(up_sigma_deg=)`,
+and per-point `depth_check` + `winding` with `provenance.depth_semantics`.
+`grounding_compat` refuses an older checkout at import, naming the branch.
+Switching that checkout later silently changes what hardware imports; every
+frames.json records the sim commit and file hashes under
+`provenance.canonical.sim`. `grounding_compat` and `render_compat` both
+import `scripts/ground_parts.py` -- split by capability (grounding vs
+render-only), a declared deviation from one-compat-per-module.
+
+**Gates, all before grounding, each refusal naming its fix (exit 2):** the
+asset must be the rotated canonical copy whose OBJ still hashes to its
+record and whose `canonical.json` carries the same R and hash; the masks
+manifest must exist, be for this asset's name and exact geometry
+(`obj_sha256`, `rotated: true`), and list every requested part with a mask
+in at least one view; up must be `refined` (a `table_normal` up has no
+trusted sigma, and compile_tsr reads a missing sigma as 0.0 -- policy parked
+until a specimen exists). After grounding, the mesh must have 0
+inconsistent edges once vertices are merged by position (UV seams cut a
+TRELLIS mesh into ~236 charts by index; merged, the mug's final_mesh is 0
+inconsistent / 3 boundary / 0 non-manifold). A refusal removes any previous
+`<run>/grounding/<key>/frames.json` first, so check_symbols never reads a
+stale success. Exit 1 when a part came back ungrounded (frames still written).
+
+**What grounding passes in.** `up_sigma_deg = max(fit_sigma_deg,
+angle_to_table_deg)` from canonical.json (2.07 deg on the mug), plumbed
+through `ground_object` so `lateral_axis`'s sigma is derived from it.
+`front` = canonical +x with the azimuth's sigma when it was accepted, else
+none; `provenance.canonical.front` records `{front_source,
+front_independent, alpha, front_sign_fixed}` on every run, with
+`front_sign_fixed = (alpha == 1)` -- at the mug's alpha 2 the 20 deg sigma is
+a cone around +x but the true uncertainty includes the 180 deg flip.
+
+**depth_check.** Decided in the sim by the generalized winding number of
+each point against the grounding mesh -- inside material -> `interior`,
+outside -> `skip` -- never by primitive: a ring's center, a blob centroid in
+an opening and a curved line fit's center (the PCA axis through the
+centroid of a C-strap sits ~8 mm inside the curve) are free space; a
+straight spout's center is material. At the surface the label is arbitrary
+and benign: check_symbols' interior band [-5, +30] mm accepts a point a few
+mm either side, `skip` gates on placement only (test_check_symbols pins it,
+with the 6 mm case that is a real misplacement). A point whose |winding| is
+between 0.2 and 0.8 is looking through a hole or open boundary -- its label is
+a coin flip -- and is listed under `provenance.canonical.depth_marginal`
+and printed; none is expected on the closed mug mesh.
+
+**Reading the M1 acceptance run.**
+
+    python3 /data/runs/ground_asset.py --run $RUN
+    python3 /data/runs/check_symbols.py $RUN --key m2 --frames $RUN/grounding/m2/frames.json
+
+- `up_axis` passing is a PLUMBING check, not grounding evidence: canonical
+  up can sit at most 5 deg from the table normal (the snap cap is
+  check_symbols' own tolerance), measured against the same plane through
+  the same pose, so this gate can only fail through the map-back or the
+  input plumbing. Expect ~2.1 deg.
+- The grounding evidence is `rim_*` and `handle_*`: `rim_center` skip and
+  in-mask; `handle_*` per their winding labels.
+- Two failures are pre-stated geometry findings, not grounding bugs, both
+  of the parked `mask_mesh_mismatch` class (they do not waive the gate):
+  (1) the undersized TRELLIS strap -- an `interior` handle symbol reads
+  `not_in_mask` with `vs_mesh` in band (on the mesh, off the real handle,
+  as the positive control showed); (2) a `skip` `handle_center` -- a ring or
+  blob fit, or a curved line fit -- sits in the handle's opening and can read
+  `not_in_mask`; told apart by `skip` plus the primitive named in the
+  point's comment.
 
 ## Orient Anything V2 sidecar (port 5673)
 

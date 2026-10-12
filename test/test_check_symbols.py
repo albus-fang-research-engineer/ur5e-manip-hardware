@@ -237,3 +237,25 @@ def test_depth_check_unknown_name_refused(scene):
     with pytest.raises(SystemExit):
         cs.main([str(rd), "--frames", str(fieldless), "--key", "m2",
                  "--depth-check", "nonexistent=skip"])
+
+
+@pytest.mark.parametrize("x, label_flip_benign", [
+    (0.068, True),     # 2 mm under the handle's camera-facing surface (x = 0.07)
+    (0.072, True),     # 2 mm in front of it
+    (0.076, False),    # 6 mm in front: past the -5 mm interior band edge
+])
+def test_near_surface_label_flip_is_benign(scene, x, label_flip_benign):
+    """Grounding labels a point interior/skip by its winding number, which is
+    only arbitrary AT the surface. There either label must pass: `interior`
+    because the band accepts a few mm either side of the front surface,
+    `skip` because it gates on in-mask placement only. The bound is the
+    band's lower edge (interior_lo_m = -5 mm): 6 mm out, `interior` fails --
+    that is a real misplacement, not a label artefact."""
+    for label in ("interior", "skip"):
+        rec = _eval(scene, _frames({"p": {"xyz": [x, 0.0, 0.0], "depth_check": label}}))
+        r = rec["points"]["p"]
+        if label == "skip" or label_flip_benign:
+            assert r["status"].startswith("pass"), (label, r)
+        else:
+            assert r["status"] == "fail" and r["fail_reasons"] == ["vs_mesh_band"], r
+            assert r["vs_mesh_mm"] < 1e3 * cs.values()["interior_lo_m"]
