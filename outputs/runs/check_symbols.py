@@ -25,9 +25,18 @@ Gating depends on the symbol's `depth_check` field in frames.json
             mesh along this ray"; a correct point reads ~ +half the local
             thickness on BOTH residuals) and |diff| small.
   skip      free-space symbol (e.g. opening_center: the ray hits the far
-            inner wall, both residuals are meaningless): drawn and gated on
-            in-mask placement only.
-All points must land inside the (slightly dilated) instance mask.
+            inner wall, both residuals are meaningless): drawn, residuals
+            recorded, gated on placement only.
+Placement: surface/interior points must land inside the (slightly dilated)
+instance mask -- material landing in a hole is wrong. skip points must land
+inside the mask's OUTLINE: the mask with its enclosed holes filled
+(binary_fill_holes), then dilated the same way. Free space belonging to the
+object -- a cup's mouth, a handle's opening seen side-on -- is a hole in the
+mask but inside the outline; space merely between the object's parts and the
+background (a concavity open to the image) is not enclosed and still fails.
+The loop must be closed in the mask for its opening to count. Both bits are
+recorded per point (in_mask, in_outline); a skip point passing only through
+the fill reads "pass(skip, in opening)".
 
 Axes are gated per named referent: up_axis against the frame packet's table
 plane normal (camera frame; fit_table_plane orients it toward the camera,
@@ -41,7 +50,8 @@ Triage on a failure:
                                not the grounding code.
   vs_mesh out of its band   -> the symbol is not on/inside the mesh where it
                                claims to be: grounding bug.
-  not_in_mask / off_mesh    -> gross placement error: grounding bug.
+  not_in_mask / off_mesh /
+  not_in_outline (skip)     -> gross placement error: grounding bug.
 
 Preconditions: single-layer, non-occluded scene capture (the yaw-decider
 precondition; there is deliberately no occlusion machinery here).
@@ -64,7 +74,7 @@ import sys
 import numpy as np
 import trimesh
 from PIL import Image, ImageDraw
-from scipy.ndimage import binary_dilation, binary_erosion
+from scipy.ndimage import binary_dilation, binary_erosion, binary_fill_holes
 
 # (value, basis) -- n=1 calibrations are recorded as such, revisited when the
 # teapot runs; do not turn these into scaling laws off one object.
@@ -142,6 +152,7 @@ def evaluate(frames, T, V_body, mask, depth, K, plane, params=None):
     bbox_diag = float(np.hypot(np.ptp(xs), np.ptp(ys))) if len(xs) else 0.0
     it = max(1, int(round(prm["mask_dilate_frac"] * bbox_diag)))
     mask_dil = binary_dilation(mask, iterations=it)
+    outline_dil = binary_dilation(binary_fill_holes(mask), iterations=it)   # skip placement
 
     rec = {"params": {k: {"value": v, "basis": PARAMS[k][1]} for k, v in values().items()},
            "mesh_diameter_m": diam, "points": {}, "axes": {}, "quantities": {}}
@@ -171,7 +182,11 @@ def evaluate(frames, T, V_body, mask, depth, K, plane, params=None):
             continue
 
         r["in_mask"] = bool(mask_dil[v, u])
-        if not r["in_mask"]:
+        r["in_outline"] = bool(outline_dil[v, u])
+        if check == "skip":
+            if not r["in_outline"]:
+                reasons.append("not_in_outline")
+        elif not r["in_mask"]:
             reasons.append("not_in_mask")
 
         zw = _window(zbuf, u, v, half)
@@ -205,7 +220,8 @@ def evaluate(frames, T, V_body, mask, depth, K, plane, params=None):
             if vs_meas is None:
                 r["note"] = "no valid depth in window: vs_measured not gated"
 
-        r["status"] = "fail" if reasons else ("pass" if check != "skip" else "pass(skip)")
+        r["status"] = ("fail" if reasons else "pass" if check != "skip"
+                       else "pass(skip)" if r["in_mask"] else "pass(skip, in opening)")
         r["fail_reasons"] = reasons
         rec["points"][name] = r
         if reasons:
@@ -254,7 +270,8 @@ def draw_overlay(rgb, rec, aux, frames, K, out_png):
     arr[mask_edge] = (0, 200, 0)
     im = Image.fromarray(arr)
     dr = ImageDraw.Draw(im)
-    col = {"pass": (0, 220, 0), "pass(skip)": (0, 200, 220), "fail": (255, 40, 40)}
+    col = {"pass": (0, 220, 0), "pass(skip)": (0, 200, 220),
+           "pass(skip, in opening)": (0, 200, 220), "fail": (255, 40, 40)}
     for name, r in rec["points"].items():
         if "px" not in r:
             continue

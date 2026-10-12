@@ -552,6 +552,17 @@ Per-point `depth_check` in the fixture selects the gate (`surface` /
                           TRELLIS handle etc.) -- reach for the ruler
     vs_mesh out of band   symbol not on/inside the mesh there -- grounding bug
     not_in_mask/off_mesh  gross placement -- grounding bug
+    not_in_outline        a skip (free-space) symbol outside the object's
+                          outline -- grounding bug
+
+Placement: `surface` / `interior` points must land in the (dilated) mask --
+material landing in a hole is wrong. `skip` points must land in the mask's
+OUTLINE: enclosed holes filled (`binary_fill_holes`), then dilated the same
+way, so free space belonging to the object -- a cup's mouth, a handle's
+opening seen side-on -- counts, while a concavity open to the background
+does not. The loop must be closed in the mask for its opening to count.
+`in_mask` and `in_outline` are both recorded; a skip point inside only
+through the fill reads `pass(skip, in opening)`.
 
 Axes gate against named referents: `up_axis` vs the packet's table normal
 (camera frame, oriented toward the camera = up) at the same 5 deg as
@@ -744,16 +755,30 @@ and printed; none is expected on the closed mug mesh.
   check_symbols' own tolerance), measured against the same plane through
   the same pose, so this gate can only fail through the map-back or the
   input plumbing. Expect ~2.1 deg.
-- The grounding evidence is `rim_*` and `handle_*`: `rim_center` skip and
-  in-mask; `handle_*` per their winding labels.
-- Two failures are pre-stated geometry findings, not grounding bugs, both
-  of the parked `mask_mesh_mismatch` class (they do not waive the gate):
-  (1) the undersized TRELLIS strap -- an `interior` handle symbol reads
-  `not_in_mask` with `vs_mesh` in band (on the mesh, off the real handle,
-  as the positive control showed); (2) a `skip` `handle_center` -- a ring or
-  blob fit, or a curved line fit -- sits in the handle's opening and can read
-  `not_in_mask`; told apart by `skip` plus the primitive named in the
-  point's comment.
+- The grounding evidence is `rim_*` and `handle_*`. On the mug every
+  grounded point is free space (winding 0): `rim_center` in the mouth,
+  `handle_center` and `handle_tip` off a curved strap. So the gate is
+  placement-gated, with depth measured, recorded and consistent wherever it
+  is defined -- not depth-gated. The M1 criterion as first written assumed a
+  depth-gated `handle_center`; the winding work showed that is geometrically
+  impossible for a curved handle (its line-fit center sits in the opening),
+  so the criterion is restated to this, not met by inventing a symbol.
+- Measured on `20260928_190618`: `rim_center` -52 mm `vs_mesh` (the far
+  interior wall behind the mouth), `handle_tip` -4.8 mm (just past the
+  strap's end); `handle_center` 56 mm from the axis, in the 41-60 mm gap
+  between body wall and strap, 5.1 mm from the nearest vertex -- its pixel
+  is background in the image AND in the mesh projection (`vs_mesh` none),
+  so mask and mesh agree; it passes as `pass(skip, in opening)`. The ring
+  fit's radius, 46.2 mm, matches the mesh-measured 45.8 mm.
+- One pre-stated geometry finding remains, of the parked
+  `mask_mesh_mismatch` class (it does not waive the gate): the undersized
+  TRELLIS strap -- an `interior` handle symbol reading `not_in_mask` with
+  `vs_mesh` in band (on the mesh, off the real handle, as the positive
+  control showed).
+- Parked for M3: a curved handle's `handle_center` is not on the strap, so
+  a grasp must not target it. An on-strap `handle_surface` point, emitted
+  `surface`-labelled, is to be designed at M3 against the grasp
+  requirements (pad clearance, approach side, the ruler's handle reach).
 
 ## Orient Anything V2 sidecar (port 5673)
 

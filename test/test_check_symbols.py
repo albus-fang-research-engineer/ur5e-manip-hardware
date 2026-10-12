@@ -259,3 +259,74 @@ def test_near_surface_label_flip_is_benign(scene, x, label_flip_benign):
         else:
             assert r["status"] == "fail" and r["fail_reasons"] == ["vs_mesh_band"], r
             assert r["vs_mesh_mm"] < 1e3 * cs.values()["interior_lo_m"]
+
+
+# ------------------------------------------------------- skip placement: the mask's outline
+#
+# A free-space symbol (a handle's opening seen side-on, a cup's mouth) can
+# project onto a HOLE of the instance mask. skip points are placed against
+# the mask with its enclosed holes filled; surface/interior points stay on
+# the raw mask. The holes below are punched into the fixture's mask on the
+# cylinder's face, away from the handle.
+
+_HOLE_BODY = [0.04, 0.025, 0.03]            # on the cylinder face, beside the handle
+
+
+def _px(xyz):
+    Xc = R @ np.asarray(xyz, float) + T[:3, 3]
+    return 320.0 + 600.0 * Xc[0] / Xc[2], 240.0 + 600.0 * Xc[1] / Xc[2]
+
+
+def _eval_mask(scene, mask, points):
+    rec, _ = cs.evaluate(_frames(points), T, np.asarray(scene["mesh"].vertices),
+                         mask, scene["depth"], K, {"n": [0.0, -1.0, 0.0]})
+    return rec
+
+
+def _with_hole(scene, open_to_edge=False):
+    m = scene["mask"].copy()
+    u0, v0 = _px(_HOLE_BODY)
+    vv, uu = np.mgrid[0:H, 0:W]
+    if open_to_edge:                          # a slot from the hole out past the silhouette
+        m[(np.abs(vv - v0) <= 7) & (uu >= u0 - 8)] = False
+    else:
+        m[(uu - u0) ** 2 + (vv - v0) ** 2 <= 8 ** 2] = False
+    return m
+
+
+def test_skip_in_enclosed_opening_passes_on_the_outline(scene):
+    rec = _eval_mask(scene, _with_hole(scene), {"opening": {"xyz": _HOLE_BODY, "depth_check": "skip"}})
+    r = rec["points"]["opening"]
+    assert r["in_mask"] is False and r["in_outline"] is True
+    assert r["status"] == "pass(skip, in opening)" and rec["verdict"]["pass"]
+
+
+def test_material_in_a_hole_still_fails(scene):
+    for label in ("surface", "interior"):
+        rec = _eval_mask(scene, _with_hole(scene), {"p": {"xyz": _HOLE_BODY, "depth_check": label}})
+        r = rec["points"]["p"]
+        assert r["status"] == "fail" and "not_in_mask" in r["fail_reasons"], label
+        assert r["in_outline"] is True
+
+
+def test_skip_outside_the_outline_fails(scene):
+    rec = _eval(scene, _frames({"stray": {"xyz": [0.0, 0.15, 0.0], "depth_check": "skip"}}))
+    r = rec["points"]["stray"]
+    assert r["status"] == "fail" and r["fail_reasons"] == ["not_in_outline"]
+    assert r["in_mask"] is False and r["in_outline"] is False
+
+
+def test_opening_not_closed_in_the_mask_is_not_filled(scene):
+    """The caveat, pinned: a hole that reaches the silhouette edge is not
+    enclosed, so it is not filled and a skip point there fails. On hardware
+    that means the handle loop must be closed in the SAM mask."""
+    rec = _eval_mask(scene, _with_hole(scene, open_to_edge=True),
+                     {"opening": {"xyz": _HOLE_BODY, "depth_check": "skip"}})
+    r = rec["points"]["opening"]
+    assert r["in_outline"] is False and r["fail_reasons"] == ["not_in_outline"]
+
+
+def test_skip_in_mask_still_reads_plain_pass_skip(scene):
+    rec = _eval(scene, _frames({"o": {"xyz": [0.085, 0, 0], "depth_check": "skip"}}))
+    r = rec["points"]["o"]
+    assert r["status"] == "pass(skip)" and r["in_mask"] and r["in_outline"]
