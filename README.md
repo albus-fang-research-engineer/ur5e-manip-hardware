@@ -780,6 +780,54 @@ and printed; none is expected on the closed mug mesh.
   `surface`-labelled, is to be designed at M3 against the grasp
   requirements (pad clearance, approach side, the ruler's handle reach).
 
+## VLM call #1 on a run (`outputs/runs/plan_scene.py`, milestone 2)
+
+The task text plus the run's marked image (`<run>/marks/marked.png`, the
+set-of-mark `run_scene` built) go to call #1 through
+`manip_bridge/vlm_compat.py` (the sim's `Client.plan_stages`, mark-addressed).
+The stage plan comes back with the parts the model wants grounded, and the
+driver prints, per object, the commands that ground exactly those parts --
+`make_part_masks` -> `ground_asset` -> `check_symbols`, with a
+`canonicalize_asset` line first if the object has no canonical asset yet.
+The hand-typed `--parts handle,rim` of milestone 1 is replaced by the
+model's output.
+
+    export PYTHONPATH=/root/ros2_ws/src/manip_bridge:$PYTHONPATH   # + ANTHROPIC_API_KEY
+    python3 /data/runs/plan_scene.py --run $RUN --task "pick up the mug by its handle"
+    python3 /data/runs/plan_scene.py --run $RUN --task "..." --replay $RUN/stage_plan/plan.log.json
+
+Writes `<run>/stage_plan/plan.json` (plan, per-object parts, mark -> run key,
+checks, model, sim provenance) and `plan.log.json` (every raw response;
+`--replay` feeds them back with no API call). The model is
+`MANIP_VLM_MODEL` (default `claude-sonnet-4-6`). Outputs of the printed
+commands land in `<run>/masks_vlm_<plan hash>/` and `<run>/grounding_vlm/`,
+beside milestone 1's, not over them.
+
+Checks: `registered[<obj>]` (the plan's mark was registered by run_scene --
+else exit 2 naming `--register <id>`) and `parts[<obj>]` (every used object
+has >= 1 part -- an empty list would ground nothing and pass every later
+gate; `make_part_masks` and `ground_asset` refuse it too) block grounding.
+`structure[grasp<interaction]` is recorded and printed, never enforced: it
+is the one contract rule that survives without a task file. The artifact
+is still written when grounding is refused, so the plan is inspectable.
+
+**Why there is no `plan_stages` hardware mode.** `scripts/plan_stages.py`
+verifies call #1 against three answer keys hardware cannot have -- the
+scene manifest's authored part pools, `marks.gt.json`, and the task
+contract (`tasks/*.json`, keyed on object names) -- and binds roles only
+through those pools. What hardware needs from call #1 now is the part
+names flowing into grounding, which this driver does directly. Role binding
+(which stage is the grasp / the interaction, for calls #2/#3) is deferred
+to the step that brings calls #2/#3 to hardware, which must generalize
+`emit_constraints`' pour-tea hardcoding anyway. Until then every artifact
+carries a blocking `roles[deferred]` check: it does not stop grounding, and
+plan_stages' own reader (`load_bindings`, via
+`manip_bridge/stageplan_compat.py`) refuses the file by that name --
+without it, empty roles would load and fail later as a `KeyError` in
+`emit_constraints`. The artifact otherwise uses plan_stages' layout, so
+calls #2/#3 extend these same files (test_plan_scene pins this by loading
+it, not by its shape).
+
 ## Orient Anything V2 sidecar (port 5673)
 
 Category-free canonical **up / front** from one RGB crop. It is the

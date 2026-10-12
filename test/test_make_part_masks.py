@@ -192,3 +192,11 @@ def test_manifest_records_rendered_geometry(tmp_path):
         {"obj_sha256": "cd" * 32, "rotated": False}
     rc, obj = _run(tmp_path / "c", full)                        # pre-step-2 asset: no json
     assert json.loads((obj / "manifest.json").read_text())["asset"] is None
+
+
+def test_empty_parts_is_refused(tmp_path):
+    """No parts -> nothing to miss -> exit 0 with an empty manifest, which
+    would ground nothing while every later gate passes. Refused up front."""
+    with pytest.raises(SystemExit) as e:
+        _run(tmp_path, lambda p: {"masks": np.stack([_full_mask()])}, parts=" , ")
+    assert e.value.code == 2

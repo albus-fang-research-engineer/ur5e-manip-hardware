@@ -87,6 +87,9 @@ def main(argv=None) -> int:
 
     asset_dir = Path(a.asset_dir)
     parts = [p.strip() for p in a.parts.split(",") if p.strip()]
+    if not parts:
+        ap.error("--parts is empty: nothing to segment, and an empty masks tree would ground "
+                 "nothing while every later gate passes")
     root = Path(a.masks_root)
     obj_out = root / a.name
     views_out = Path(a.views_out) if a.views_out else obj_out / "_views"

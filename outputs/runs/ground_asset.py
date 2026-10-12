@@ -160,6 +160,10 @@ def check_masks(masks_root: Path, name: str, sha: str, parts_arg: str | None) ->
                           f"copy -- {fix}")
     have = list(man.get("parts") or [])
     parts = [p.strip() for p in parts_arg.split(",") if p.strip()] if parts_arg else have
+    if not parts:
+        raise SeamRefusal(f"no parts to ground: --parts gave none and {man_path} lists none -- "
+                          "frames.json would carry the canonical axes only and pass check_symbols "
+                          "on up_axis alone")
     extra = [p for p in parts if p not in have]
     if extra:
         raise SeamRefusal(f"parts {extra} are not in the masks manifest {have} -- segment "

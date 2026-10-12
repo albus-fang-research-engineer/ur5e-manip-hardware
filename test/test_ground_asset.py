@@ -483,3 +483,13 @@ def test_end_to_end_on_the_tilted_mug(tmp_path):
     assert body["provenance"]["depth_semantics"]["boundary_edges"] > 0
     assert body["provenance"]["canonical"]["front"]["front_sign_fixed"] is False   # alpha 2
     assert body["provenance"]["depth_semantics"]["inconsistent_edges"] == 0
+
+
+def test_no_parts_is_refused(tmp_path):
+    """The other end of the same quiet path: a manifest with no parts and no
+    --parts would ground only the canonical axes and pass on up_axis alone."""
+    run = _fake_run(tmp_path, parts=())
+    st = StubBackend()
+    with pytest.raises(drv.SeamRefusal, match="no parts to ground"):
+        drv.ground(run, backend=st.backend())
+    assert st.calls == []
