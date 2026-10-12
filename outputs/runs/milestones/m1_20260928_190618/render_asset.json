@@ -1,0 +1,57 @@
+{
+  "name": "mug",
+  "out_dir": "/data/runs/20260928_190618/assets_canon/mug",
+  "xml": "/data/runs/20260928_190618/assets_canon/mug/mug.xml",
+  "obj": "/data/runs/20260928_190618/assets_canon/mug/meshes/mug_visual.obj",
+  "texture": "/data/runs/20260928_190618/assets_canon/mug/meshes/mug_texture.png",
+  "fp_obj": null,
+  "final_mesh": "/data/any6d/final_mesh_mug.obj",
+  "canonical_glb": "/data/meshes/mug_offline_1787436994_metric.glb",
+  "transform": "canonical copy: vertices = final_mesh @ rotation_body_from_canon (columns = canonical axes in final_mesh coords); map back x_body = R x_c; render-only, NOT a tracking asset; scale/centre fit is of the unrotated final_mesh",
+  "scale_xyz": [
+    0.9790649924769669,
+    1.0425371045840488,
+    1.0079474060339186
+  ],
+  "centre_xyz": [
+    4.106810122097263e-05,
+    -6.506791446527666e-05,
+    -2.648103825059122e-06
+  ],
+  "fit_residual_m": 6.9160945512236616e-09,
+  "bbox_centre_m": [
+    0.0,
+    0.0,
+    0.0
+  ],
+  "n_vertices": 106500,
+  "n_faces": 188411,
+  "bounds_min": [
+    -0.05398056883193275,
+    -0.04774440046715486,
+    -0.04961843157275466
+  ],
+  "bounds_max": [
+    0.05663324955171646,
+    0.04971822801979489,
+    0.036921720129710366
+  ],
+  "rotation_body_from_canon": [
+    [
+      -0.9054362214130689,
+      -0.42433994253786556,
+      0.010993730949270308
+    ],
+    [
+      0.17085193250268735,
+      -0.34060247197855825,
+      0.9245537157148809
+    ],
+    [
+      -0.38858057866203394,
+      0.8390027230283919,
+      0.38089311445289015
+    ]
+  ],
+  "obj_sha256": "79a1e7ac9e3cd94f681efd1fde827dff64f04f610ae2217c7e3077a19f5d42d6"
+}

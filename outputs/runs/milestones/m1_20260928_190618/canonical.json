@@ -1,0 +1,128 @@
+{
+ "R_body_from_canon": [
+  [
+   -0.9054362214130689,
+   -0.42433994253786556,
+   0.010993730949270308
+  ],
+  [
+   0.17085193250268735,
+   -0.34060247197855825,
+   0.9245537157148809
+  ],
+  [
+   -0.38858057866203394,
+   0.8390027230283919,
+   0.38089311445289015
+  ]
+ ],
+ "convention": "columns [x=front, y=up x front, z=up] in the tracked mesh's body frame; canonical copy V_c = V @ R; map back x_body = R @ x_c",
+ "up": {
+  "source": "refined",
+  "seed": "table_normal_through_pose",
+  "direction_body": [
+   0.010993730949270308,
+   0.9245537157148809,
+   0.38089311445289015
+  ],
+  "table_normal_body": [
+   -0.01166999008882368,
+   0.9134710146220557,
+   0.40673642174838387
+  ],
+  "angle_to_table_deg": 2.0693922475948168,
+  "fit_snap_deg": 2.0693922475948168,
+  "fit_sigma_deg": 0.1277181503098449,
+  "fit_rms_m": 0.0013441882966273365,
+  "fit_inliers": 5276,
+  "fit_note": ""
+ },
+ "oa_up_angle_deg": 10.679351453900948,
+ "azimuth": {
+  "route": "semantic",
+  "accepted": true,
+  "sigma_deg": 20.033732906202825,
+  "conditioning": 0.9983161946722181,
+  "alpha_reported": 2,
+  "front_body_oa": [
+   -0.9045493529629446,
+   0.11693395534996483,
+   -0.4100206313596073
+  ],
+  "note": ""
+ },
+ "note": "azimuth via semantic",
+ "params": {
+  "up_snap_max_deg": {
+   "value": 5.0,
+   "basis": "= check_symbols up_axis_tol_deg: the refined up may not move further from the table normal than C's own up gate tolerates; C measured the mug's ring-fit up 3.1 deg off the table normal on 20260928_190618; n=1"
+  },
+  "n_samples": {
+   "value": 6000,
+   "basis": "area-weighted surface samples for the revolution fit; the fit is multistart least squares, cost linear in samples"
+  },
+  "sample_seed": {
+   "value": 0,
+   "basis": "fixed: the frame must be reproducible run to run"
+  }
+ },
+ "inputs": {
+  "run": "/data/runs/20260928_190618",
+  "summary": "/data/runs/20260928_190618/summary.json",
+  "key": "m2",
+  "final_mesh": "/data/any6d/final_mesh_mug.obj",
+  "canonical_glb": "/data/meshes/mug_offline_1787436994_metric.glb",
+  "cam_T_obj": [
+   [
+    -0.7748591946047826,
+    0.15478057404612056,
+    -0.6128916726750179,
+    -0.0775756910443306
+   ],
+   [
+    0.41408876523750504,
+    -0.6082890476750736,
+    -0.6771373043797179,
+    0.09669642150402069
+   ],
+   [
+    -0.477622992579405,
+    -0.7784776222708688,
+    0.40724546477890744,
+    0.48706772923469543
+   ],
+   [
+    0.0,
+    0.0,
+    0.0,
+    1.0
+   ]
+  ],
+  "plane_n_cam": [
+   -0.09885519872425275,
+   -0.835903229565201,
+   -0.5399013247693096
+  ],
+  "oa_real_present": true
+ },
+ "asset": {
+  "dir": "/data/runs/20260928_190618/assets_canon/mug",
+  "name": "mug",
+  "obj_sha256": "79a1e7ac9e3cd94f681efd1fde827dff64f04f610ae2217c7e3077a19f5d42d6",
+  "render_asset_json": "render_asset.json"
+ },
+ "sim": {
+  "root": "/opt/manip-sim",
+  "commit": "a23de1e7f1805e8067dd3da52a61650186c5abed",
+  "dirty": true,
+  "dirty_sources": [],
+  "files": {
+   "manip_sim/refine.py": "18f3494032f2d8917a37b76354202458d9d5757012a3ab9ccec0cadc111ad66d",
+   "manip_sim/refine_frame.py": "4a56ae73803ed3b178d81ecb8714b744baf033185732c8ed03039373ff4c8504"
+  }
+ },
+ "warnings": [
+  "Orient Anything alpha 2: the front is defined only up to symmetry, so the SIGN of canonical x is not semantically fixed (nothing downstream depends on it)"
+ ],
+ "frame_seconds": 1.73
+}

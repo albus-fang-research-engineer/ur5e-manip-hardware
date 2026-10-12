@@ -1,0 +1,147 @@
+{
+ "name": "mug",
+ "asset_dir": "/data/runs/20260928_190618/assets_canon/mug",
+ "asset": {
+  "obj_sha256": "79a1e7ac9e3cd94f681efd1fde827dff64f04f610ae2217c7e3077a19f5d42d6",
+  "rotated": true
+ },
+ "px": 640,
+ "parts": [
+  "handle",
+  "rim"
+ ],
+ "sam3": "tcp://127.0.0.1:5670",
+ "masks_root": "/data/runs/20260928_190618/masks_canon",
+ "views": {
+  "+x": {
+   "file": "px",
+   "parts": {
+    "handle": {
+     "written": false,
+     "instances": 0,
+     "px": 0
+    },
+    "rim": {
+     "written": false,
+     "instances": 0,
+     "px": 0
+    }
+   }
+  },
+  "-x": {
+   "file": "nx",
+   "parts": {
+    "handle": {
+     "written": true,
+     "instances": 1,
+     "px": 16242
+    },
+    "rim": {
+     "written": true,
+     "instances": 1,
+     "px": 5429
+    }
+   }
+  },
+  "+y": {
+   "file": "py",
+   "parts": {
+    "handle": {
+     "written": true,
+     "instances": 1,
+     "px": 6502
+    },
+    "rim": {
+     "written": true,
+     "instances": 1,
+     "px": 8342
+    }
+   }
+  },
+  "-y": {
+   "file": "ny",
+   "parts": {
+    "handle": {
+     "written": true,
+     "instances": 1,
+     "px": 10059
+    },
+    "rim": {
+     "written": false,
+     "instances": 0,
+     "px": 0
+    }
+   }
+  },
+  "top": {
+   "file": "top",
+   "parts": {
+    "handle": {
+     "written": true,
+     "instances": 1,
+     "px": 4586
+    },
+    "rim": {
+     "written": true,
+     "instances": 1,
+     "px": 29039
+    }
+   }
+  },
+  "bottom": {
+   "file": "bottom",
+   "parts": {
+    "handle": {
+     "written": true,
+     "instances": 1,
+     "px": 5454
+    },
+    "rim": {
+     "written": false,
+     "instances": 0,
+     "px": 0
+    }
+   }
+  },
+  "iso": {
+   "file": "iso",
+   "parts": {
+    "handle": {
+     "written": false,
+     "instances": 0,
+     "px": 0
+    },
+    "rim": {
+     "written": true,
+     "instances": 1,
+     "px": 11069
+    }
+   }
+  },
+  "iso-opp": {
+   "file": "isonopp",
+   "parts": {
+    "handle": {
+     "written": true,
+     "instances": 1,
+     "px": 11588
+    },
+    "rim": {
+     "written": true,
+     "instances": 1,
+     "px": 8270
+    }
+   }
+  }
+ },
+ "sim_provenance": {
+  "root": "/opt/manip-sim",
+  "commit": "a23de1e7f1805e8067dd3da52a61650186c5abed",
+  "dirty": true,
+  "dirty_sources": [],
+  "files": {
+   "scripts/ground_parts.py": "faa6e989cb861b6f89ec567cc9339b3d279a13e38e9c227592499cc779d5de58",
+   "manip_sim/proposal.py": "51705349a8c0539a4a6148ab13c3866a8695c8b885d4a4205793af6890506b59"
+  }
+ }
+}

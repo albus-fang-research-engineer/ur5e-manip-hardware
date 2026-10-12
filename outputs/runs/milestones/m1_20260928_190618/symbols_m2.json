@@ -1,0 +1,195 @@
+{
+ "params": {
+  "surface_tol_m": {
+   "value": 0.012,
+   "basis": "RealSense D435 + accepted-registration depth residual p90 ~8 mm; n=1 (mug, 20260928_190618)"
+  },
+  "interior_lo_m": {
+   "value": -0.005,
+   "basis": "vertex z-buffer window discretisation slack"
+  },
+  "interior_hi_m": {
+   "value": 0.03,
+   "basis": "mug handle thickness ~15 mm + margin; n=1"
+  },
+  "diff_tol_m": {
+   "value": 0.012,
+   "basis": "same registration/fidelity bound as surface_tol_m"
+  },
+  "up_axis_tol_deg": {
+   "value": 5.0,
+   "basis": "matches frame_packet plane_up_warn_deg; table fit + registration; n=1"
+  },
+  "window_px": {
+   "value": 5,
+   "basis": "odd side of the depth / z-buffer sampling window"
+  },
+  "mask_dilate_frac": {
+   "value": 0.02,
+   "basis": "in-mask gate dilation, fraction of mask bbox diagonal"
+  }
+ },
+ "mesh_diameter_m": 0.18782297148341576,
+ "points": {
+  "handle_center": {
+   "depth_check": "skip",
+   "xyz_body": [
+    0.04586,
+    -0.000963,
+    0.003376
+   ],
+   "px": [
+    420.11482082207664,
+    585.9908997583075
+   ],
+   "z_sym_m": 0.4672884734343444,
+   "in_mask": false,
+   "in_outline": true,
+   "vs_mesh_mm": null,
+   "n_depth_px": 0,
+   "vs_measured_mm": null,
+   "diff_mm": null,
+   "status": "pass(skip, in opening)",
+   "fail_reasons": []
+  },
+  "handle_tip": {
+   "depth_check": "skip",
+   "xyz_body": [
+    0.050435,
+    0.020278,
+    0.013121
+   ],
+   "px": [
+    400.28290545306066,
+    557.8278057837289
+   ],
+   "z_sym_m": 0.4525363121229085,
+   "in_mask": true,
+   "in_outline": true,
+   "vs_mesh_mm": -4.827543646028443,
+   "n_depth_px": 25,
+   "vs_measured_mm": -12.463687877091512,
+   "diff_mm": -7.636144231063069,
+   "status": "pass(skip)",
+   "fail_reasons": []
+  },
+  "rim_center": {
+   "depth_check": "skip",
+   "xyz_body": [
+    -0.009386,
+    0.031474,
+    0.00946
+   ],
+   "px": [
+    506.9836666336213,
+    494.1269454291738
+   ],
+   "z_sym_m": 0.47090143605650087,
+   "in_mask": true,
+   "in_outline": true,
+   "vs_mesh_mm": -52.12253927713978,
+   "n_depth_px": 25,
+   "vs_measured_mm": -54.09856394349916,
+   "diff_mm": -1.9760246663593772,
+   "status": "pass(skip)",
+   "fail_reasons": []
+  }
+ },
+ "axes": {
+  "up_axis": {
+   "xyz_body": [
+    0.010993997557128517,
+    0.9245537945637073,
+    0.38089291536541314
+   ],
+   "anchor_body": [
+    -0.004222450429013734,
+    -0.004530624240281563,
+    -0.004599094979248723
+   ],
+   "referent": "table_plane_normal",
+   "angle_deg": 2.069411385295406,
+   "status": "pass"
+  },
+  "front_axis": {
+   "xyz_body": [
+    -0.9054360228346441,
+    0.17085200430880218,
+    -0.3885810097998189
+   ],
+   "anchor_body": [
+    -0.004222450429013734,
+    -0.004530624240281563,
+    -0.004599094979248723
+   ],
+   "referent": null,
+   "status": "report_only",
+   "note": "no measured referent (front-class referents are decider estimates; gate deferred)"
+  },
+  "lateral_axis": {
+   "xyz_body": [
+    -0.42433995926060764,
+    -0.3406019672999988,
+    0.8390029194502701
+   ],
+   "anchor_body": [
+    -0.004222450429013734,
+    -0.004530624240281563,
+    -0.004599094979248723
+   ],
+   "referent": null,
+   "status": "report_only",
+   "note": "no measured referent (front-class referents are decider estimates; gate deferred)"
+  },
+  "handle_axis": {
+   "xyz_body": [
+    0.19093298870278178,
+    0.8939419471067974,
+    0.40547797600847707
+   ],
+   "anchor_body": [
+    -0.004222450429013734,
+    -0.004530624240281563,
+    -0.004599094979248723
+   ],
+   "referent": null,
+   "status": "report_only",
+   "note": "no measured referent (front-class referents are decider estimates; gate deferred)"
+  },
+  "rim_axis": {
+   "xyz_body": [
+    -0.0172970008727202,
+    0.8876550447866364,
+    0.4601840232185855
+   ],
+   "anchor_body": [
+    -0.004222450429013734,
+    -0.004530624240281563,
+    -0.004599094979248723
+   ],
+   "referent": null,
+   "status": "report_only",
+   "note": "no measured referent (front-class referents are decider estimates; gate deferred)"
+  }
+ },
+ "quantities": {
+  "handle_length": {
+   "value": 0.0579,
+   "status": "drawn_only"
+  },
+  "rim_radius": {
+   "value": 0.0462,
+   "status": "drawn_only"
+  }
+ },
+ "verdict": {
+  "pass": true,
+  "failures": []
+ },
+ "run": "/data/runs/20260928_190618",
+ "key": "m2",
+ "frames": "/data/runs/20260928_190618/grounding/m2/frames.json",
+ "mesh": "/data/any6d/final_mesh_mug.obj",
+ "pose_source": "summary objects[m2].pose_on_final",
+ "plane_frame": "camera (fit_table_plane, normal toward camera = up)"
+}
