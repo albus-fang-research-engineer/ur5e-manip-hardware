@@ -20,7 +20,9 @@ its fix (exit 2):
   masks     manifest.json must exist (an aborted make_part_masks leaves a
             manifest-less tree); its name must be the asset's, and its asset
             record must be this exact geometry (obj_sha256) and rotated; every
-            part requested must be in the manifest with a mask in >= 1 view.
+            part requested must be in the manifest (a part SAM3 was never asked
+            for is a command mismatch, not a perception result), and at least
+            one of them must have a mask in >= 1 view.
   up sigma  only from a REFINED up: sigma = max(fit_sigma_deg,
             angle_to_table_deg). A table_normal up has no trusted sigma (a
             rejected refinement; and compile_tsr reads a missing sigma as 0.0,
@@ -47,8 +49,16 @@ run, schema constant: front_sign_fixed is (alpha == 1) -- at alpha 2 the
 sigma describes a cone around +x but the true uncertainty includes the 180
 deg flip, which M2's coupling must treat as +-x equivalent.
 
-Exit: 0 every requested part grounded; 1 some part came back ungrounded
-(frames still written, recorded); 2 refused (nothing body-frame written --
+Dropped parts: a requested part that IS in the manifest but has no mask in
+any view (SAM3 found it nowhere -- the mug's "body" in M2) is dropped, not
+refused: the rest is grounded and the drop is recorded in
+provenance.canonical.parts_dropped {part: reason}, beside parts_requested
+(what was asked -- e.g. the VLM's part list) and parts_grounded (what was
+handed to ground_object). Same policy as sim plan_stages' --grounding
+parts_dropped. So plan_scene's printed commands run unedited.
+
+Exit: 0 every requested part grounded; 1 some part was dropped or came back
+ungrounded (frames still written, recorded); 2 refused (nothing body-frame written --
 a previous run's <out>/<key>/frames.json is removed first, so a refusal
 never leaves a stale success behind for check_symbols).
 
@@ -138,6 +148,8 @@ def check_asset(asset_dir: Path) -> dict:
 
 
 def check_masks(masks_root: Path, name: str, sha: str, parts_arg: str | None) -> tuple:
+    """(requested, kept, dropped {part: reason}, manifest path). Refuses only
+    when nothing requested has a mask; a part with none anywhere is dropped."""
     man_path = masks_root / name / "manifest.json"
     if not man_path.is_file():
         raise SeamRefusal(f"{man_path} not found: a masks tree without a manifest is an "
@@ -169,12 +181,14 @@ def check_masks(masks_root: Path, name: str, sha: str, parts_arg: str | None) ->
         raise SeamRefusal(f"parts {extra} are not in the masks manifest {have} -- segment "
                           "them with make_part_masks.py --parts, or drop them")
     views = man.get("views") or {}
-    empty = [p for p in parts
-             if not any((v.get("parts") or {}).get(p, {}).get("written") for v in views.values())]
-    if empty:
-        raise SeamRefusal(f"parts {empty} have no mask in any view ({man_path}) -- nothing to "
-                          "ground them from")
-    return parts, man_path
+    dropped = {p: f"no mask in any of {len(views)} views of {man_path}" for p in parts
+               if not any((v.get("parts") or {}).get(p, {}).get("written") for v in views.values())}
+    kept = [p for p in parts if p not in dropped]
+    if not kept:
+        raise SeamRefusal(f"none of the requested parts {parts} has a mask in any view "
+                          f"({man_path}) -- nothing to ground; look at make_part_masks' overlays "
+                          "(prompt wording, view lighting) before re-running")
+    return parts, kept, dropped, man_path
 
 
 def up_sigma(canonical: dict) -> tuple[float, str]:
@@ -237,7 +251,7 @@ def ground(run, name=None, asset=None, masks_root=None, parts=None, out=None, ba
     if body_path.exists():
         body_path.unlink()                    # a refusal must not leave a stale success
     masks_root = Path(masks_root) if masks_root else run / "masks_canon"
-    part_list, man_path = check_masks(masks_root, a["name"], a["sha"], parts)
+    requested, part_list, dropped, man_path = check_masks(masks_root, a["name"], a["sha"], parts)
     sig_up, sig_basis = up_sigma(can)
     front, sig_front, front_rec = front_block(can)
 
@@ -272,17 +286,18 @@ def ground(run, name=None, asset=None, masks_root=None, parts=None, out=None, ba
         "canonical_json": str((asset_dir / "canonical.json").resolve()),
         "canonical_frames": str(canon_path.resolve()),
         "masks_root": str(masks_root.resolve()), "masks_manifest": str(man_path.resolve()),
-        "parts_requested": part_list, "primitives": primitives,
+        "parts_requested": requested, "parts_grounded": part_list, "parts_dropped": dropped,
+        "primitives": primitives,
         "up_sigma": {"value_deg": sig_up, "basis": sig_basis},
         "front": front_rec, "depth_marginal": marginal, "sim": prov()})
     body_path.parent.mkdir(parents=True, exist_ok=True)
     body_path.write_text(json.dumps(body, indent=2) + "\n")
     ungrounded = sorted(p for p, k in primitives.items() if k == "ungrounded")
     report = {"key": key, "name": a["name"], "body_path": str(body_path),
-              "canon_path": str(canon_path), "ungrounded": ungrounded,
+              "canon_path": str(canon_path), "ungrounded": ungrounded, "dropped": dropped,
               "up_sigma": sig_up, "front": front_rec, "depth_semantics": ds,
               "depth_marginal": marginal}
-    return (1 if ungrounded else 0), body, report
+    return (1 if ungrounded or dropped else 0), body, report
 
 
 def main(argv=None) -> int:
@@ -317,6 +332,8 @@ def main(argv=None) -> int:
     print(f"[ground-asset] up sigma {rep['up_sigma']:.2f} deg; front "
           f"{'none' if f['front_source'] is None else 'canonical +x'} (alpha {f['alpha']}, "
           f"sign fixed {f['front_sign_fixed']}, independent {f['front_independent']})")
+    for n, why in sorted(rep["dropped"].items()):
+        print(f"[ground-asset] DROPPED: {n} ({why}) -- recorded in parts_dropped; exit 1")
     if rep["ungrounded"]:
         print(f"[ground-asset] UNGROUNDED: {rep['ungrounded']} (frames written; exit 1)")
     print("[ground-asset] next:\n    python3 /data/runs/check_symbols.py "

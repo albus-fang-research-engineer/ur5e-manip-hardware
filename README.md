@@ -713,15 +713,25 @@ render-only), a declared deviation from one-compat-per-module.
 asset must be the rotated canonical copy whose OBJ still hashes to its
 record and whose `canonical.json` carries the same R and hash; the masks
 manifest must exist, be for this asset's name and exact geometry
-(`obj_sha256`, `rotated: true`), and list every requested part with a mask
-in at least one view; up must be `refined` (a `table_normal` up has no
+(`obj_sha256`, `rotated: true`), and list every requested part (a part
+SAM3 was never asked for is a command mismatch), with at least one of them
+masked in some view; up must be `refined` (a `table_normal` up has no
 trusted sigma, and compile_tsr reads a missing sigma as 0.0 -- policy parked
 until a specimen exists). After grounding, the mesh must have 0
 inconsistent edges once vertices are merged by position (UV seams cut a
 TRELLIS mesh into ~236 charts by index; merged, the mug's final_mesh is 0
 inconsistent / 3 boundary / 0 non-manifold). A refusal removes any previous
 `<run>/grounding/<key>/frames.json` first, so check_symbols never reads a
-stale success. Exit 1 when a part came back ungrounded (frames still written).
+stale success.
+
+**Dropped parts (exit 1, not a refusal).** A requested part that is in the
+manifest but has no mask in any view -- SAM3 found it nowhere, like the
+mug's `body` in M2 -- is dropped; the rest is grounded and
+`provenance.canonical` records `parts_requested`, `parts_grounded` and
+`parts_dropped {part: reason}` (sim plan_stages' `--grounding` policy). The
+console prints `DROPPED: <part> (...)`. Exit 1 when a part was dropped or
+came back ungrounded (frames still written), so chain the printed commands
+with `;` or run them one by one, not with `&&`.
 
 **What grounding passes in.** `up_sigma_deg = max(fit_sigma_deg,
 angle_to_table_deg)` from canonical.json (2.07 deg on the mug), plumbed
@@ -790,7 +800,8 @@ driver prints, per object, the commands that ground exactly those parts --
 `make_part_masks` -> `ground_asset` -> `check_symbols`, with a
 `canonicalize_asset` line first if the object has no canonical asset yet.
 The hand-typed `--parts handle,rim` of milestone 1 is replaced by the
-model's output.
+model's output; a part the model named but SAM3 cannot find is dropped and
+recorded by `ground_asset` (exit 1), so the printed commands run unedited.
 
     export PYTHONPATH=/root/ros2_ws/src/manip_bridge:$PYTHONPATH   # + ANTHROPIC_API_KEY
     python3 /data/runs/plan_scene.py --run $RUN --task "pick up the mug by its handle"

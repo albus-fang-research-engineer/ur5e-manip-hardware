@@ -337,6 +337,9 @@ def main(argv=None):
                          "field present in the file wins over the flag.")
     ap.add_argument("--out-prefix", default=None, help="default <run>/symbols_<key>")
     a = ap.parse_args(argv)
+    if not os.path.isfile(a.frames):
+        sys.exit(f"--frames {a.frames}: not found -- run ground_asset.py first (a refusal "
+                 "removes the previous frames.json on purpose)")
     rd = a.run_dir
 
     with open(os.path.join(rd, "summary.json")) as f:

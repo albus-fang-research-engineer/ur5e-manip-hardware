@@ -264,15 +264,49 @@ def test_input_refusals_before_grounding(tmp_path, what, match):
 
 
 def test_parts_gates(tmp_path):
+    """A part SAM3 was never asked for is a command mismatch: refused."""
     run = _fake_run(tmp_path)
+    st = StubBackend()
     with pytest.raises(drv.SeamRefusal, match=r"\['spout'\] are not in the masks manifest"):
-        drv.ground(run, parts="handle,spout", backend=StubBackend().backend())
+        drv.ground(run, parts="handle,spout", backend=st.backend())
+    assert st.calls == []
     run2 = _fake_run(tmp_path / "b", written={"handle": True, "rim": False})
-    with pytest.raises(drv.SeamRefusal, match=r"\['rim'\] have no mask in any view"):
-        drv.ground(run2, backend=StubBackend().backend())
     st = StubBackend(primitives={"handle": "line"})
-    code, _, _ = drv.ground(run2, parts="handle", backend=st.backend())
+    code, body, _ = drv.ground(run2, parts="handle", backend=st.backend())
     assert code == 0 and st.calls[0]["parts"] == ("handle",)
+    assert body["provenance"]["canonical"]["parts_dropped"] == {}
+
+
+def test_part_with_no_mask_is_dropped_not_refused(tmp_path, capsys, monkeypatch):
+    """M2: the VLM named handle,body; SAM3 found body in no view. The rest is
+    grounded, the drop recorded, exit 1 -- plan_scene's commands run unedited."""
+    run = _fake_run(tmp_path, written={"handle": True, "rim": False})
+    st = StubBackend(primitives={"handle": "line"})
+    code, body, rep = drv.ground(run, parts="handle,rim", backend=st.backend())
+    assert code == 1 and st.calls[0]["parts"] == ("handle",)
+    c = body["provenance"]["canonical"]
+    assert c["parts_requested"] == ["handle", "rim"] and c["parts_grounded"] == ["handle"]
+    assert list(c["parts_dropped"]) == ["rim"]
+    assert c["parts_dropped"]["rim"].startswith("no mask in any of 3 views of ")
+    assert rep["dropped"] == c["parts_dropped"] and rep["ungrounded"] == []
+    assert (run / "grounding" / "m2" / "frames.json").is_file()
+    # the CLI says so and exits 1, still printing the check_symbols command
+    monkeypatch.setattr(drv, "_backend", StubBackend(primitives={"handle": "line"}).backend)
+    assert drv.main(["--run", str(run)]) == 1                # default parts = manifest's
+    out = capsys.readouterr().out
+    assert "DROPPED: rim (no mask in any of 3 views" in out and "check_symbols.py" in out
+
+
+def test_no_requested_part_has_a_mask_is_refused(tmp_path):
+    run = _fake_run(tmp_path, written={"handle": False, "rim": False})
+    body = run / "grounding" / "m2" / "frames.json"
+    body.parent.mkdir(parents=True)
+    body.write_text("{}")                                     # a previous success
+    st = StubBackend()
+    with pytest.raises(drv.SeamRefusal, match=r"none of the requested parts \['handle', 'rim'\] "
+                                              r"has a mask in any view"):
+        drv.ground(run, backend=st.backend())
+    assert st.calls == [] and not body.exists()
 
 
 def test_table_normal_up_is_refused_naming_its_numbers(tmp_path):

@@ -228,6 +228,16 @@ def test_depth_check_flag_for_fieldless_output(scene):
     assert rec["points"]["opening_like"]["depth_check"] == "skip"
     with pytest.raises(SystemExit):                          # typo'd mode refused
         cs.main(base + ["--depth-check", "opening_like=off"])
+def test_missing_frames_is_a_one_line_error(scene, tmp_path):
+    """ground_asset removes frames.json on a refusal; check_symbols must say
+    so, not traceback."""
+    missing = tmp_path / "grounding" / "m2" / "frames.json"
+    with pytest.raises(SystemExit) as e:
+        cs.main([str(scene["rd"]), "--frames", str(missing), "--key", "m2"])
+    assert str(e.value) == (f"--frames {missing}: not found -- run ground_asset.py first "
+                            "(a refusal removes the previous frames.json on purpose)")
+
+
 def test_depth_check_unknown_name_refused(scene):
     # the flag's other refusal: a name not in the frames file exits, so a
     # typo'd symbol name cannot silently no-op and re-arm the step-4 trap
