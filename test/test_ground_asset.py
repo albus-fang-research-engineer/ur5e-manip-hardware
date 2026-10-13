@@ -350,6 +350,8 @@ def test_cli(tmp_path, capsys, monkeypatch):
     assert drv.main(["--run", str(run)]) == 0
     out = capsys.readouterr().out
     assert "check_symbols.py" in out and "--key m2" in out and "frames.json" in out
+    # never the run root, where M1's symbols_<key> acceptance record lives
+    assert f"--out-prefix {run / 'grounding'}/symbols_m2" in out
     assert "sign fixed False" in out
     _corrupt(run, "manifest_sha")
     assert drv.main(["--run", str(run)]) == 2

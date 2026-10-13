@@ -733,12 +733,12 @@ console prints `DROPPED: <part> (...)`. Exit 1 when a part was dropped or
 came back ungrounded (frames still written), so chain the printed commands
 with `;` or run them one by one, not with `&&`.
 
-This loosening is provisional: it is safe only while roles are deferred
-(`roles[deferred]` blocks every consumer). When calls #2/#3 bring role
-binding to hardware, a dropped part that a bound role requires must become
-fatal again -- sim's rule, "whether the drop is fatal is decided by the
-contract checks" (a dropped `handle` fails `role[grasp]`; a dropped `body`
-fails nothing). The calls #2/#3 step owns that check and its test.
+Whether a drop is fatal is decided downstream, at `plan_scene --grounding`
+(sim's rule: "whether the drop is fatal is decided by the contract
+checks"): a bound role whose stage has no surviving part on its object
+blocks there. Roles bind structurally on hardware (no task contract), so a
+drop that leaves the stage another part -- `handle` dropped, `body`
+survives -- is not caught at binding; see "After grounding" below.
 
 **What grounding passes in.** `up_sigma_deg = max(fit_sigma_deg,
 angle_to_table_deg)` from canonical.json (2.07 deg on the mug), plumbed
@@ -833,18 +833,53 @@ is still written when grounding is refused, so the plan is inspectable.
 verifies call #1 against three answer keys hardware cannot have -- the
 scene manifest's authored part pools, `marks.gt.json`, and the task
 contract (`tasks/*.json`, keyed on object names) -- and binds roles only
-through those pools. What hardware needs from call #1 now is the part
-names flowing into grounding, which this driver does directly. Role binding
-(which stage is the grasp / the interaction, for calls #2/#3) is deferred
-to the step that brings calls #2/#3 to hardware, which must generalize
-`emit_constraints`' pour-tea hardcoding anyway. Until then every artifact
-carries a blocking `roles[deferred]` check: it does not stop grounding, and
-plan_stages' own reader (`load_bindings`, via
+through those pools. What hardware needs from call #1 first is the part
+names flowing into grounding, which this driver does directly. Before
+grounding every artifact carries a blocking `roles[deferred]` check: it
+does not stop grounding, and plan_stages' own reader (`load_bindings`, via
 `manip_bridge/stageplan_compat.py`) refuses the file by that name --
 without it, empty roles would load and fail later as a `KeyError` in
 `emit_constraints`. The artifact otherwise uses plan_stages' layout, so
 calls #2/#3 extend these same files (test_plan_scene pins this by loading
 it, not by its shape).
+
+**After grounding (`--replay LOG --grounding DIR`, no API call).** Once the
+printed commands have run, the same plan is replayed against what was
+grounded and `plan.json` is rewritten -- sim's `plan_stages --replay
+--grounding`, on hardware:
+
+    python3 /data/runs/plan_scene.py --run $RUN --task "pick up the mug by its handle" \
+        --replay $RUN/stage_plan/plan.log.json --grounding $RUN/grounding_vlm
+
+- *gate:* every used object's `DIR/<key>/frames.json` must come from this
+  plan (`provenance.canonical.masks_root` is `masks_vlm_<plan sha8>`);
+  a grounding from another plan is refused.
+- *prune:* parts the plan named that did not ground (dropped, ungrounded,
+  or never requested) leave `plan_grounded` and are recorded in
+  `parts_dropped`, with reasons under `hardware.parts_dropped_reasons`.
+- *verify:* sim's `verify` with an empty spec (`STRUCTURAL_SPEC`):
+  `identity[]`, `grounds[]`, `menu[]` against the grounded pool
+  (`DIR/canon/<name>/candidates.json`), all blocking; no contract checks.
+- *roles, structural:* grasp = the first active-only stage. `role[grasp]`
+  blocks when that stage has no surviving part on its object -- there the
+  drop is fatal. Other stages are recorded as `unbound[stage<i>]` (mover
+  roles bind at milestone 4); a plan with no active-only stage blocks as
+  `roles[none]`.
+
+Hardware binds roles by structure only, per the 2026-09-12 rule (contract
+tag checks are an eval fixture; active-only = grasp, active+passive =
+interaction). A placeholder-keyed task-requirements file that would name
+the part each role needs was considered and declined on 2026-10-12: neither
+OmniManip nor ReKep has one, and it would add a hand-written file per task.
+The cost, stated: "handle dropped, body survives" binds the grasp to the
+body's stage. It is caught by looking, as OmniManip does -- call #2 sees
+"grasp mug by handle" with no handle marks, its overlay on the real frame,
+and later the call-#4 critic -- not at binding.
+
+Read the bound artifact with `stageplan_compat.load_structural(path)`,
+never bare `load_bindings(path)`: that default is sim's
+`tasks/pour_tea.json`, whose `after` ordering would be applied to any
+hardware role sharing a pour-tea role name.
 
 ## Orient Anything V2 sidecar (port 5673)
 

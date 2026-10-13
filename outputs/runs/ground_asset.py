@@ -56,11 +56,11 @@ provenance.canonical.parts_dropped {part: reason}, beside parts_requested
 (what was asked -- e.g. the VLM's part list) and parts_grounded (what was
 handed to ground_object). Same policy as sim plan_stages' --grounding
 parts_dropped. So plan_scene's printed commands run unedited.
-PROVISIONAL: safe only while roles are deferred. When calls #2/#3 bring role
-binding to hardware, a dropped part that a bound role requires must be
-fatal again (sim: "whether the drop is fatal is decided by the contract
-checks" -- a dropped handle fails role[grasp], a dropped body fails
-nothing); that check lives in the calls #2/#3 step, not here.
+Whether a drop is fatal is decided downstream, by plan_scene --grounding
+(sim: "whether the drop is fatal is decided by the contract checks"): a
+bound role whose stage has no surviving part on its object blocks there.
+Hardware binds roles structurally (no task contract), so "handle dropped,
+body survives" is NOT caught at binding -- see plan_scene's docstring.
 
 Exit: 0 every requested part grounded; 1 some part was dropped or came back
 ungrounded (frames still written, recorded); 2 refused (nothing body-frame written --
@@ -301,7 +301,7 @@ def ground(run, name=None, asset=None, masks_root=None, parts=None, out=None, ba
     report = {"key": key, "name": a["name"], "body_path": str(body_path),
               "canon_path": str(canon_path), "ungrounded": ungrounded, "dropped": dropped,
               "up_sigma": sig_up, "front": front_rec, "depth_semantics": ds,
-              "depth_marginal": marginal}
+              "depth_marginal": marginal, "out": str(out)}
     return (1 if ungrounded or dropped else 0), body, report
 
 
@@ -342,7 +342,8 @@ def main(argv=None) -> int:
     if rep["ungrounded"]:
         print(f"[ground-asset] UNGROUNDED: {rep['ungrounded']} (frames written; exit 1)")
     print("[ground-asset] next:\n    python3 /data/runs/check_symbols.py "
-          f"{Path(a.run)} --key {rep['key']} --frames {rep['body_path']}")
+          f"{Path(a.run)} --key {rep['key']} --frames {rep['body_path']} "
+          f"--out-prefix {rep['out']}/symbols_{rep['key']}")
     return code
 
 
