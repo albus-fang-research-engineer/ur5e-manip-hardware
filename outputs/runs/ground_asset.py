@@ -56,6 +56,11 @@ provenance.canonical.parts_dropped {part: reason}, beside parts_requested
 (what was asked -- e.g. the VLM's part list) and parts_grounded (what was
 handed to ground_object). Same policy as sim plan_stages' --grounding
 parts_dropped. So plan_scene's printed commands run unedited.
+PROVISIONAL: safe only while roles are deferred. When calls #2/#3 bring role
+binding to hardware, a dropped part that a bound role requires must be
+fatal again (sim: "whether the drop is fatal is decided by the contract
+checks" -- a dropped handle fails role[grasp], a dropped body fails
+nothing); that check lives in the calls #2/#3 step, not here.
 
 Exit: 0 every requested part grounded; 1 some part was dropped or came back
 ungrounded (frames still written, recorded); 2 refused (nothing body-frame written --

@@ -733,6 +733,13 @@ console prints `DROPPED: <part> (...)`. Exit 1 when a part was dropped or
 came back ungrounded (frames still written), so chain the printed commands
 with `;` or run them one by one, not with `&&`.
 
+This loosening is provisional: it is safe only while roles are deferred
+(`roles[deferred]` blocks every consumer). When calls #2/#3 bring role
+binding to hardware, a dropped part that a bound role requires must become
+fatal again -- sim's rule, "whether the drop is fatal is decided by the
+contract checks" (a dropped `handle` fails `role[grasp]`; a dropped `body`
+fails nothing). The calls #2/#3 step owns that check and its test.
+
 **What grounding passes in.** `up_sigma_deg = max(fit_sigma_deg,
 angle_to_table_deg)` from canonical.json (2.07 deg on the mug), plumbed
 through `ground_object` so `lateral_axis`'s sigma is derived from it.
