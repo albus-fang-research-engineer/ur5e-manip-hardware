@@ -881,6 +881,54 @@ never bare `load_bindings(path)`: that default is sim's
 `tasks/pour_tea.json`, whose `after` ordering would be applied to any
 hardware role sharing a pour-tea role name.
 
+## VLM call #2 on a run (`outputs/runs/select_scene.py`, milestone 2)
+
+For each role `plan_scene --grounding` bound, the model picks the
+interaction point from marked canonical views of the grounded object, and
+the pick is resolved and drawn on the real frame.
+
+    python3 /data/runs/select_scene.py --run $RUN
+    python3 /data/runs/select_scene.py --run $RUN --replay $RUN/call2/selections.log.json
+
+- *inputs:* the bound `stage_plan/plan.json`, read with
+  `stageplan_compat.load_structural` (a blocked or unbound plan is refused by
+  plan_stages' own reader), and per object `grounding_vlm/canon/<name>/` --
+  `ground_object` already leaves a full asset dir there (frames.json,
+  candidates.json, `<name>.xml` and `meshes/` links), so no asset is built.
+- *gates:* each bound object's `grounding_vlm/<key>/frames.json` must still
+  hash to what `plan_scene --grounding` recorded; the menu rebuilt from
+  candidates.json (`vlm_subset` over the grounded parts, `menu_from_pool`)
+  must equal the render manifest's (marks and accepted IDs are one
+  artifact); an off-menu ID goes through the sim parser's rejection and
+  retry; a licit ID that cannot anchor a frame fails `resolve_selection`.
+- *renders:* sim `render_candidates.run_vlm` on the canonical (upright) copy,
+  through `manip_bridge/candidates_compat.py`: eight 1024 px views, <= 8
+  marks, under `<out>/vlm/<name>/`. run_vlm writes to its module global
+  `VLM_DIR`, read inside the function at call time; the compat sets it for
+  the call, refuses if the sim no longer has it, restores it in a
+  `finally`, and requires this call's manifest (stale one removed first,
+  `source` checked). The clean fix -- an `out_dir` parameter on run_vlm --
+  rides with the next sim patch that touches render_candidates.
+- *outputs:* `<out>/selections.json` in exactly sim's role-keyed format
+  (`load_selections` reads it back; the test proves it that way),
+  `<out>/selections.log.json` (model, stage sent, menu, raw responses,
+  resolved point in canonical / body / pixel coordinates, sim provenance),
+  and `<out>/selection_<role>.png`.
+
+**The overlay is the check.** The selected point is mapped canonical ->
+body (`R_body_from_canon`) -> camera (`pose_on_final`) -> pixel (summary K)
+and drawn on `rgb.png` with the other menu marks; `in_outline` records
+whether it falls inside the object's mask with enclosed holes filled,
+dilated as check_symbols does. Report-only, printed as a WARNING when false:
+this is where a pick on the wrong part is caught, including structural
+binding's known gap ("handle dropped, body survives").
+
+Point-only scheme (sim's default): no axis is selected; `resolve_selection`
+anchors the frame's axis on the canonical up by explicit default and says so
+in `axis_source`. Direction semantics are call #3's, which waits for the
+two-object recording; milestone 3's grasp takes the point from here and its
+approach from its own corridor TSR.
+
 ## Orient Anything V2 sidecar (port 5673)
 
 Category-free canonical **up / front** from one RGB crop. It is the

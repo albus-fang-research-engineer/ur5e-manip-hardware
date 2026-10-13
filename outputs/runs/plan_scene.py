@@ -101,6 +101,7 @@ from pathlib import Path
 
 try:
     from manip_bridge import marks_compat, vlm_compat
+    from manip_bridge.vlm_record import RecordingTransport, ReplayTransport
 except ImportError as e:
     sys.exit(f"plan_scene: cannot import manip_bridge ({e}). In the ros2 container:\n"
              "    export PYTHONPATH=/root/ros2_ws/src/manip_bridge:$PYTHONPATH")
@@ -110,40 +111,6 @@ DEFERRED = "roles[deferred]"
 
 class PlanRefusal(Exception):
     """An input the driver will not run on; the message names the fix."""
-
-
-# ------------------------------------------------------------------ transports
-
-class RecordingTransport:
-    """Wraps the live transport so every raw response survives into the log
-    (Client.logs keeps the accepted text and the rejections, not each raw
-    attempt)."""
-
-    def __init__(self, inner=None):
-        self.inner = inner
-        self.raw: list[str] = []
-
-    def __call__(self, payload: dict) -> str:
-        text = (self.inner or vlm_compat.live_transport)(payload)
-        self.raw.append(text)
-        return text
-
-
-class ReplayTransport:
-    """Returns recorded responses in order; never reaches the network."""
-
-    def __init__(self, responses: list[str]):
-        self.responses = list(responses)
-        self.raw: list[str] = []
-
-    def __call__(self, payload: dict) -> str:
-        if len(self.raw) >= len(self.responses):
-            raise vlm_compat.VLMError(
-                f"replay exhausted: the log holds {len(self.responses)} response(s) and the "
-                "client asked for another -- the prompt or parser changed since recording")
-        text = self.responses[len(self.raw)]
-        self.raw.append(text)
-        return text
 
 
 # ------------------------------------------------------------------ run inputs
