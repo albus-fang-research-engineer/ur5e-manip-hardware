@@ -59,14 +59,20 @@ def test_tsr_is_the_sims_placed_at_the_pick_in_base(mods, tmp_path):
     np.testing.assert_allclose(r["origin_base_m"], want, atol=1e-12)
     # select_scene logs the pixel rounded per axis: at most sqrt(0.5) px off
     assert r["pixel"]["distance"] <= np.sqrt(0.5) and r["pixel"]["select_scene"] == tss._px(x_c)
-    assert abs(r["elevation_deg_in_base"] - 35.0) < 1e-6
     assert "point-only default" in r["axis_source"]
+    np.testing.assert_allclose(r["bar_axis_base"], [0, 0, 1], atol=1e-12)   # fixture: level table
+    assert r["bar_tilt_deg"] < 1e-6
+    assert abs(r["approach_nominal_base"][2]) < 1e-12                       # horizontal nominal
+    np.testing.assert_allclose(np.dot(r["closing_base"], r["bar_axis_base"]), 0, atol=1e-12)
 
-    # the sim's default bounds, unchanged
+    # the sim's default bounds except the roll row (= the elevation, horizontal..down)
+    roll = r["bounds"].pop("roll")
+    assert roll in ([0.0, 90.0], [-90.0, 0.0]) and r["elevation_roll_row_deg"] == roll
     assert r["bounds"] == {"x": [-0.005, 0.005], "y": [-0.005, 0.005], "z": [-0.02, 0.02],
-                           "roll": pytest.approx([-np.rad2deg(0.09), np.rad2deg(0.09)]),
                            "pitch": pytest.approx([-np.rad2deg(0.09), np.rad2deg(0.09)]),
                            "yaw": pytest.approx([-45.0, 45.0])}
+    head = (run / "m3" / "grasp_tsr.yaml").read_text().splitlines()[:4]
+    assert any("ONE departure" in h for h in head)
 
     # what tsr_from_yaml will publish classifies exactly as the sim's TSR does
     from manip_bridge import grasping_compat as gc
@@ -87,10 +93,50 @@ def test_tsr_is_the_sims_placed_at_the_pick_in_base(mods, tmp_path):
     assert sc.provenance() and gc.provenance()
 
 
+def _grasp(r, elev_deg=35.0, azimuth_deg=0.0, closing_tilt_deg=0.0, offset=(0, 0, 0)):
+    """A pad-centre pose in base: approach pitched elev_deg below the nominal
+    horizontal (negative = from below), swung azimuth_deg about the bar,
+    the closing axis tilted toward the bar by closing_tilt_deg."""
+    from scipy.spatial.transform import Rotation as Rot
+    up, c, a0 = (np.asarray(r[k], float) for k in ("bar_axis_base", "closing_base",
+                                                    "approach_nominal_base"))
+    yaw = Rot.from_rotvec(np.deg2rad(azimuth_deg) * up)
+    c, a0 = yaw.apply(c), yaw.apply(a0)
+    e = np.deg2rad(elev_deg)
+    a = np.cos(e) * a0 - np.sin(e) * up                    # descends for elev > 0
+    c = Rot.from_rotvec(np.deg2rad(closing_tilt_deg) * a).apply(c)
+    T = np.eye(4)
+    T[:3, :3] = np.column_stack([c, np.cross(a, c), a])
+    T[:3, 3] = np.asarray(r["origin_base_m"]) + np.asarray(offset, float)
+    return T
+
+
+def test_elevation_is_free_and_position_is_the_question(mods, tmp_path):
+    """Any elevation from outside passes; what still rejects is position (the
+    grounding question) and fingers not straddling the bar. Also the numeric
+    check that the roll row's sign descends: 35 deg from BELOW is rejected."""
+    *_, gt = mods
+    run = _selected_run(mods, tmp_path)
+    _, r, _ = gt.grasp_tsr(run)
+    from manip_bridge.tsr_spec import tsr_from_spec
+    hw, _, _ = tsr_from_spec(yaml.safe_load((run / "m3" / "grasp_tsr.yaml").read_text()))
+    radial = np.asarray(r["approach_nominal_base"])        # horizontal, across the bar
+    for elev in (0.0, 35.0, 80.0, 89.9):
+        assert hw.contains(_grasp(r, elev)), elev
+    assert hw.contains(_grasp(r, 35.0, azimuth_deg=40.0))
+    assert hw.contains(_grasp(r, 35.0, offset=0.003 * radial))
+    rejected = {"from below": _grasp(r, -35.0),
+                "from the body side": _grasp(r, 35.0, azimuth_deg=180.0),
+                "closing tilted 15 deg toward the bar": _grasp(r, 35.0, closing_tilt_deg=15.0),
+                "8 mm off the bar sideways": _grasp(r, 35.0, offset=0.008 * radial)}
+    for why, T in rejected.items():
+        assert not hw.contains(T), why
+
+
 def test_refuses_a_run_without_t_base_cam(mods, tmp_path):
     *_, gt = mods
     run = _selected_run(mods, tmp_path, t_base_cam=None)
-    with pytest.raises(gt.GraspTsrRefusal, match="no T_base_cam .absent_in_source."):
+    with pytest.raises(gt.GraspTsrRefusal, match="no T_base_cam .absent_in_source.*set_hand_eye"):
         gt.grasp_tsr(run)
     assert not (run / "m3" / "grasp_tsr.yaml").exists()
 
@@ -120,3 +166,30 @@ def test_refuses_selections_from_another_select_scene_run(mods, tmp_path):
     lp.write_text(json.dumps(log))
     with pytest.raises(gt.GraspTsrRefusal, match="different select_scene runs"):
         gt.grasp_tsr(run)
+
+
+def test_set_hand_eye_then_grasp_tsr(mods, tmp_path):
+    """The real order on an old run: refused, set_hand_eye writes the
+    calibration into the run, then grasp_tsr reads it from there."""
+    *_, gt = mods
+    run = _selected_run(mods, tmp_path, t_base_cam=None)
+    s = json.loads((run / "summary.json").read_text())
+    s["frame"]["frame_id"] = "camera_color_optical_frame"
+    (run / "summary.json").write_text(json.dumps(s))
+    with pytest.raises(gt.GraspTsrRefusal):
+        gt.grasp_tsr(run)
+    calib = tmp_path / "cell.calib"
+    calib.write_text(yaml.safe_dump({
+        "parameters": {"name": "cell", "calibration_type": "eye_on_base",
+                       "robot_base_frame": "base_link", "robot_effector_frame": "tool0",
+                       "tracking_base_frame": "camera_color_optical_frame",
+                       "tracking_marker_frame": "marker"},
+        "transform": {"translation": dict(zip("xyz", map(float, T_BC[:3, 3]))),
+                      "rotation": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0}}}))
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("set_hand_eye", tss.RUNS / "set_hand_eye.py")
+    she = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(she)
+    assert she.set_hand_eye(run, calib)[0] == 0
+    code, r, _ = gt.grasp_tsr(run)
+    assert code == 0 and r["pixel"]["distance"] <= np.sqrt(0.5)

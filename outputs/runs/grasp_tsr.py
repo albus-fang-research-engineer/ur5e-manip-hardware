@@ -8,25 +8,42 @@ pick, in the robot base frame.
     <run>/summary.json                  packet.t_base_cam.T, objects[key].pose_on_final
             |
             v  resolve_selection (sim, the same call select_scene made)
-            v  handle_grasp_tsr (sim, via grasping_compat), DEFAULT BOUNDS
+            v  handle_grasp_tsr (sim, via grasping_compat), elevation free
     <out>/grasp_tsr.yaml       tsr_spec format, frame_id base_link: what
                                tsr_from_yaml publishes and grasp_filter reads
     <out>/grasp_tsr.log.json   inputs, numbers, checks, sim provenance
 
 Frames. The grasp frame is resolved in the object's CANONICAL coordinates
-(z = table up, the up the sim's 35 deg elevation is measured from). It is
-placed in the base frame by
+and placed in the base frame by
 
     T_base_canon = T_base_cam @ cam_T_obj @ [R_body_from_canon | 0]
 
-(x_body = R x_canon, as select_scene and check_symbols map points). The
-approach is the sim's: the horizontal direction from the handle point toward
-the canonical origin (plan_pour_tea's a_body = -handle.point).
+(x_body = R x_canon, as select_scene and check_symbols map points). With
+call #2's point-only scheme the frame's axis -- the TSR's "bar", w z -- is
+the canonical up (the table normal) by explicit default; resolve_selection's
+axis_source says so. Printed in base, it is the table-tilt check: within a
+few degrees of [0, 0, 1].
 
-Bounds are the sim's handle_grasp_tsr defaults, unchanged -- the hardware
-grasp region is the sim's, so the two stay comparable. With call #2's
-point-only scheme the frame's axis (the TSR's "bar", w z) is the canonical
-up by explicit default (resolve_selection's axis_source says so).
+The approach is the sim's direction: from the handle point toward the
+canonical origin (plan_pour_tea's a_body = -handle.point), horizontal.
+"Horizontal" and "down" are BASE-frame facts in the sim's construction
+(nominal_grip_in_world uses world z, and world here is base_link), so the
+canonical up enters only as the bar.
+
+The one departure from the sim: the approach ELEVATION is free. The sim
+pitched its nominal 35 deg down, a placeholder for the approach its
+stand-in proposer sampled around; on hardware AnyGrasp proposes the
+approach, so a hand-set elevation must not decide the grasp. The TSR is
+built so that w x IS the closing axis (the handle frame's secondary is set
+to it), the nominal is the horizontal approach (elevation 0), and the roll
+row -- rotation about the closing axis, i.e. the elevation -- spans
+horizontal to straight down, on whichever sign descends (checked
+numerically). Everything else is the sim's default, unchanged:
+    x, y   +-5 mm      pads centred on the bar
+    z      +-20 mm     slide along the bar
+    pitch  +-0.09 rad  closing axis within ~5 deg of perpendicular to the
+                       bar: the fingers straddle it
+    yaw    +-45 deg    about the bar: the approach comes from outside
 
 Gates, each a refusal naming its fix (exit 2):
   plan, grounding   select_scene.load_inputs, unchanged
@@ -51,6 +68,7 @@ In the ros2 container (no GL, no API key):
     python3 /data/runs/grasp_tsr.py --run /data/runs/<stamp>
 """
 import argparse
+import dataclasses
 import hashlib
 import json
 import sys
@@ -74,6 +92,7 @@ import select_scene as ss  # noqa: E402  -- load_inputs / real_frame: the same g
 ROLE = "grasp"
 PIXEL_TOL = 2.0          # px; select_scene logs the pixel rounded to an int
 ROUND_TRIP_TOL = 1e-9
+ELEVATION_SPAN = np.pi / 2  # the roll row: horizontal (0) to straight down
 
 
 class GraspTsrRefusal(Exception):
@@ -90,8 +109,9 @@ def t_base_cam(run: Path) -> np.ndarray:
     if tbc.get("T") is None:
         why = tbc.get("source") or "no packet.t_base_cam"
         raise GraspTsrRefusal(f"{run / 'summary.json'}: no T_base_cam ({why}) -- the TSR cannot "
-                              "be placed in the base frame. Re-capture with run_scene and the "
-                              "hand-eye TF up")
+                              "be placed in the base frame. Write the hand-eye calibration valid AT THE "
+                              "RUN'S TIME into it once: python3 /data/runs/set_hand_eye.py --run "
+                              f"{run} --calib <easy_handeye2 .yaml>")
     T = np.asarray(tbc["T"], float).reshape(4, 4)
     if not np.allclose(T[:3, :3] @ T[:3, :3].T, np.eye(3), atol=1e-5):
         raise GraspTsrRefusal(f"{run / 'summary.json'}: packet.t_base_cam.T is not a rigid transform")
@@ -118,7 +138,55 @@ def tsr_spec_doc(tsr, obj: str) -> dict:
             "bw": _bw_spec(np.asarray(tsr.Bw, float))}
 
 
-def grasp_tsr(run, plan=None, selections=None, out=None, elevation_deg=35.0):
+def _unit(v):
+    v = np.asarray(v, float)
+    n = np.linalg.norm(v)
+    if n < 1e-9:
+        raise GraspTsrRefusal(f"degenerate direction {v.tolist()}")
+    return v / n
+
+
+def _approach_base(T0_w, Tw_e, roll):
+    """e's approach (+z) in base after a pure roll displacement (manip_tsr's
+    displacement: T0_e = T0_w . [Rx(roll)] . Tw_e)."""
+    c, s = np.cos(roll), np.sin(roll)
+    Rx = np.array([[1.0, 0, 0], [0, c, -s], [0, s, c]])
+    return T0_w[:3, :3] @ Rx @ Tw_e[:3, 2]
+
+
+def build_grasp_tsr(T_base_canon, handle):
+    """The sim's handle_grasp_tsr with w x = the closing axis, the nominal
+    approach horizontal, and the roll row (= the elevation) spanning
+    horizontal..straight down. Returns (tsr, roll_row_rad)."""
+    R_bc = T_base_canon[:3, :3]
+    up = np.array([0.0, 0.0, 1.0])
+    bar = _unit(R_bc @ np.asarray(handle.axis, float))
+    a = R_bc @ (-np.asarray(handle.point, float))            # handle -> canonical origin
+    z = a - np.dot(a, up) * up
+    if np.linalg.norm(z) < 1e-6:
+        raise GraspTsrRefusal("the handle point lies on the vertical through the canonical "
+                              "origin: no horizontal approach toward the body")
+    z = _unit(z)
+    closing = np.cross(z, bar)                               # nominal_grip_in_world's x
+    if np.linalg.norm(closing) < 1e-6:
+        raise GraspTsrRefusal(f"bar axis {np.round(bar, 3).tolist()} is parallel to the "
+                              "horizontal approach: no closing axis across it")
+    handle = dataclasses.replace(handle, secondary=R_bc.T @ _unit(closing))
+    a_h = handle.T()[:3, :3].T @ (-np.asarray(handle.point, float))
+    tsr = gc.handle_grasp_tsr(T_base_canon, handle, a_h, elevation=0.0)
+    T0_w, Tw_e = np.asarray(tsr.T0_w), np.asarray(tsr.Tw_e)
+    if abs(np.dot(T0_w[:3, 0], (T0_w @ Tw_e)[:3, 0])) < 1 - 1e-9:
+        raise GraspTsrRefusal("internal: w x is not the closing axis -- the roll row would "
+                              "not be the elevation")
+    # which roll sign pitches the approach DOWN, measured, not assumed
+    down = _approach_base(T0_w, Tw_e, np.pi / 4)[2] < _approach_base(T0_w, Tw_e, 0.0)[2]
+    roll = (0.0, ELEVATION_SPAN) if down else (-ELEVATION_SPAN, 0.0)
+    Bw = np.array(tsr.Bw, float)
+    Bw[3] = roll
+    return type(tsr)(T0_w=T0_w, Tw_e=Tw_e, Bw=Bw, name=tsr.name), roll
+
+
+def grasp_tsr(run, plan=None, selections=None, out=None):
     """Returns (exit_code, report, tsr) -- tsr is the sim's TSR object, for tests."""
     run = Path(run)
     plan_path = Path(plan) if plan else run / "stage_plan" / "plan.json"
@@ -161,11 +229,7 @@ def grasp_tsr(run, plan=None, selections=None, out=None, elevation_deg=35.0):
     R4[:3, :3] = o["R"]
     T_base_canon = T_bc @ cam_T_obj @ R4
 
-    # the sim's approach (plan_pour_tea): handle point -> canonical origin,
-    # expressed in the handle frame; nominal_grip_in_world drops its bar part
-    a_canon = -np.asarray(handle.point, float)
-    a_h = handle.T()[:3, :3].T @ a_canon
-    tsr = gc.handle_grasp_tsr(T_base_canon, handle, a_h, elevation=np.deg2rad(elevation_deg))
+    tsr, roll = build_grasp_tsr(T_base_canon, handle)
 
     doc = tsr_spec_doc(tsr, obj)
     text = yaml.safe_dump(doc, sort_keys=False, default_flow_style=None)
@@ -189,15 +253,16 @@ def grasp_tsr(run, plan=None, selections=None, out=None, elevation_deg=35.0):
                               "T_base_cam . cam_T_obj . R_body_from_canon is composed wrong")
 
     T0_e = tsr.T0_w @ tsr.Tw_e
-    approach = T0_e[:3, 2]
     report = {
         "role": ROLE, "object": obj, "key": o["key"], "candidate_id": sel.candidate_id,
         "menu_tag": logged.get("menu_tag"), "axis_source": rf.axis_source,
-        "elevation_deg_requested": elevation_deg,
-        # measured in the base frame: base z is up, canonical z is the table normal
-        "elevation_deg_in_base": float(np.rad2deg(np.arcsin(np.clip(-approach[2], -1, 1)))),
-        "origin_base_m": origin.tolist(), "bar_axis_base": tsr.T0_w[:3, 2].tolist(),
-        "approach_base": approach.tolist(),
+        "origin_base_m": origin.tolist(),
+        # the canonical up (table normal) in base: the table-tilt check
+        "bar_axis_base": tsr.T0_w[:3, 2].tolist(),
+        "bar_tilt_deg": float(np.rad2deg(np.arccos(np.clip(tsr.T0_w[2, 2], -1, 1)))),
+        "closing_base": T0_e[:3, 0].tolist(),
+        "approach_nominal_base": T0_e[:3, 2].tolist(),      # horizontal by construction
+        "elevation_roll_row_deg": np.rad2deg(roll).tolist(),
         "bounds": doc["bw"], "pixel": {"tsr_origin": np.round(px, 2).tolist(),
                                        "select_scene": logged["pixel"], "distance": d_px},
         "round_trip_max_diff": rt,
@@ -209,7 +274,9 @@ def grasp_tsr(run, plan=None, selections=None, out=None, elevation_deg=35.0):
     out.mkdir(parents=True, exist_ok=True)
     head = ("# Stage-1 grasp TSR -- written by outputs/runs/grasp_tsr.py; do not hand-edit.\n"
             f"# {obj} mark {sel.candidate_id} [{logged.get('menu_tag')}], sim handle_grasp_tsr "
-            f"defaults, elevation {elevation_deg:g} deg.\n"
+            "defaults except ONE departure:\n"
+            "#   approach elevation free (nominal horizontal, roll = rotation about the closing\n"
+            "#   axis spans horizontal..straight down) instead of the sim's 35 deg placeholder.\n"
             f"#   ros2 run manip_bridge tsr_from_yaml -- {out / 'grasp_tsr.yaml'}\n")
     (out / "grasp_tsr.yaml").write_text(head + text)
     (out / "grasp_tsr.log.json").write_text(json.dumps(report, indent=2) + "\n")
@@ -232,11 +299,9 @@ def main(argv=None) -> int:
     ap.add_argument("--plan", default=None, help="default <run>/stage_plan/plan.json")
     ap.add_argument("--selections", default=None, help="default <run>/call2/selections.json")
     ap.add_argument("--out", default=None, help="default <run>/m3")
-    ap.add_argument("--elevation-deg", type=float, default=35.0,
-                    help="approach pitch below horizontal (sim plan_pour_tea default 35)")
     a = ap.parse_args(argv)
     try:
-        code, r, _ = grasp_tsr(a.run, a.plan, a.selections, a.out, a.elevation_deg)
+        code, r, _ = grasp_tsr(a.run, a.plan, a.selections, a.out)
     except GraspTsrRefusal as e:
         print(f"[grasp-tsr] REFUSED: {e}", file=sys.stderr)
         return 2
@@ -244,10 +309,11 @@ def main(argv=None) -> int:
     print(f"[grasp-tsr] {r['object']} mark {r['candidate_id']} [{r['menu_tag']}]")
     print(f"    axis: {r['axis_source']}")
     print(f"    origin (base, mm): [{o[0]:.1f}, {o[1]:.1f}, {o[2]:.1f}]")
-    print(f"    bar axis (base): {np.round(r['bar_axis_base'], 3).tolist()}")
-    print(f"    approach (base): {np.round(r['approach_base'], 3).tolist()}, "
-          f"{r['elevation_deg_in_base']:.1f} deg below horizontal "
-          f"(requested {r['elevation_deg_requested']:g})")
+    print(f"    bar axis (base): {np.round(r['bar_axis_base'], 3).tolist()}, "
+          f"{r['bar_tilt_deg']:.1f} deg from base z  <- table-tilt check")
+    print(f"    closing (base): {np.round(r['closing_base'], 3).tolist()}")
+    print(f"    approach (base): nominal {np.round(r['approach_nominal_base'], 3).tolist()} "
+          "(horizontal), elevation free: AnyGrasp's call")
     print("    bounds in w (z = bar):")
     for ax in AXES:
         print(f"      {ax:5s} {_fmt(r['bounds'][ax], 'mm' if ax in ('x', 'y', 'z') else 'deg')}")
