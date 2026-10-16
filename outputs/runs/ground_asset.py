@@ -291,6 +291,7 @@ def ground(run, name=None, asset=None, masks_root=None, parts=None, out=None, ba
         "canonical_json": str((asset_dir / "canonical.json").resolve()),
         "canonical_frames": str(canon_path.resolve()),
         "masks_root": str(masks_root.resolve()), "masks_manifest": str(man_path.resolve()),
+        "masks_manifest_sha256": hashlib.sha256(man_path.read_bytes()).hexdigest(),
         "parts_requested": requested, "parts_grounded": part_list, "parts_dropped": dropped,
         "primitives": primitives,
         "up_sigma": {"value_deg": sig_up, "basis": sig_basis},

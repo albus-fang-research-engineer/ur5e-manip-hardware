@@ -13,6 +13,11 @@ touching sim code. The model is MANIP_VLM_MODEL (default
 claude-sonnet-4-6), read when manip_sim.vlm is imported; the key is
 ANTHROPIC_API_KEY. vlm.py is stdlib + numpy, so this import is GL-free.
 
+Hardware-owned touchpoints (part_phrases.py) reuse the client's ask loop --
+transport, bounded parse-rejection retry, CallLog -- with their own prompt
+and parser through `ask()` below, so the one access to the client's private
+`_ask` lives here and nowhere else.
+
 The sim checkout is bind-mounted read-only at /opt/manip-sim and put on
 PYTHONPATH by docker-compose (SIM_DIR, default ../ur5e-manip-sim).
 """
@@ -22,6 +27,8 @@ try:
     from manip_sim.vlm import (MODEL, CallLog, Client, ObjectRef, ParseRejection, StagePlan,
                                StageSpec, VLMError, Vocabulary)
     from manip_sim.vlm import _urllib_transport as live_transport   # what plan_stages records
+    from manip_sim.vlm import _JSON_ONLY as JSON_ONLY, _load_json as load_json
+    from manip_sim.vlm import _text as text_block, image_block
 except ImportError as e:
     raise ImportError(
         "vlm_compat: cannot import manip_sim.vlm. The sim checkout must be bind-mounted at "
@@ -36,7 +43,16 @@ from manip_bridge.sim_provenance import provenance as _provenance
 SOURCES = (_vlm.__file__,)
 
 __all__ = ["MODEL", "CallLog", "Client", "ObjectRef", "ParseRejection", "StagePlan", "StageSpec",
-           "VLMError", "Vocabulary", "live_transport", "provenance", "SOURCES"]
+           "VLMError", "Vocabulary", "live_transport", "provenance", "SOURCES",
+           "JSON_ONLY", "load_json", "text_block", "image_block", "ask"]
+
+
+def ask(client, touchpoint: str, system: str, messages: list, parse):
+    """Run one hardware-owned touchpoint through the client's ask loop:
+    `parse(raw)` raises ParseRejection to have the reason fed back to the
+    model (bounded retry, as for calls #1-#3); budget exhausted or a
+    transport failure raises VLMError. Every attempt lands in client.logs."""
+    return client._ask(touchpoint, system, messages, parse)
 
 
 def provenance():

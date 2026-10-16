@@ -27,6 +27,15 @@ sample visible in it (part_grounding.py:129-132) -- a view where SAM3 found a
 part nowhere is a "no" vote for that part, not an abstention. Same as the
 oracle provider, which rasterizes every view.
 
+Prompts vs names. A part's NAME keys its mask file, the manifest and
+everything downstream; the PROMPT sent to SAM3 may differ. `--phrases
+<phrases.json>` (from part_phrases.py) or an inline `--parts barrel=white
+tube,...` sets it; without either the prompt is the name, exactly as before.
+When a phrase finds nothing in a view, that view retries the bare name, so a
+weak phrase degrades to today's behaviour rather than below it. The manifest
+records, per part, the prompt and its source, the phrases file (path +
+sha256), and per view the prompt that produced (or last tried for) the mask.
+
 The manifest records the asset geometry it rendered (render_asset.json's
 obj_sha256 + whether it was a rotated canonical copy): views are rendered
 from the asset's vertices, so a masks tree is only valid for the exact
@@ -49,6 +58,7 @@ grounding seam every point carries its own depth_check (ground_asset.py),
 so check_symbols needs no --depth-check flags on it.
 """
 import argparse
+import hashlib
 import json
 import os
 import sys
@@ -75,7 +85,10 @@ def main(argv=None) -> int:
     ap.add_argument("asset_dir", help="render_asset output dir (<name>.xml + meshes/)")
     ap.add_argument("--name", required=True, help="object/asset name (mug)")
     ap.add_argument("--parts", required=True,
-                    help="comma-separated part names, segmented as SAM3 text prompts")
+                    help="comma-separated part names (or name=phrase: the phrase is the SAM3 "
+                         "prompt, the name keys the mask)")
+    ap.add_argument("--phrases", default=None, metavar="JSON",
+                    help="part_phrases.py output: SAM3 prompt per part (inline name=phrase wins)")
     ap.add_argument("--masks-root", required=True,
                     help="root of the masks tree ground_object reads")
     ap.add_argument("--views-out", default=None,
@@ -86,7 +99,33 @@ def main(argv=None) -> int:
     a = ap.parse_args(argv)
 
     asset_dir = Path(a.asset_dir)
-    parts = [p.strip() for p in a.parts.split(",") if p.strip()]
+    items = [p.strip() for p in a.parts.split(",") if p.strip()]
+    parts, prompts = [], {}
+    for it in items:
+        name, eq, phrase = it.partition("=")
+        name, phrase = name.strip(), " ".join(phrase.split())
+        if eq and not phrase:
+            ap.error(f"--parts item {it!r}: empty phrase after '='")
+        parts.append(name)
+        if eq:
+            prompts[name] = {"prompt": phrase, "source": "inline"}
+    phrases_rec = None
+    if a.phrases:
+        pf = Path(a.phrases)
+        try:
+            pdoc = json.loads(pf.read_text())
+        except (OSError, ValueError) as e:
+            ap.error(f"--phrases {pf}: unreadable ({e})")
+        if pdoc.get("name") != a.name:
+            ap.error(f"--phrases {pf} is for {pdoc.get('name')!r}, not {a.name!r}")
+        for name in parts:
+            r = (pdoc.get("phrases") or {}).get(name)
+            if name not in prompts and r and r.get("prompt"):
+                prompts[name] = {"prompt": r["prompt"], "source": f"phrases:{r.get('source')}"}
+        phrases_rec = {"path": str(pf.resolve()), "status": pdoc.get("status"),
+                       "sha256": hashlib.sha256(pf.read_bytes()).hexdigest()}
+    for name in parts:
+        prompts.setdefault(name, {"prompt": name, "source": "name"})
     if not parts:
         ap.error("--parts is empty: nothing to segment, and an empty masks tree would ground "
                  "nothing while every later gate passes")
@@ -114,7 +153,8 @@ def main(argv=None) -> int:
                      "rotated": ra.get("rotation_body_from_canon") is not None}
     manifest = {"name": a.name, "asset_dir": str(asset_dir.resolve()), "asset": asset_rec,
                 "px": a.px,
-                "parts": parts, "sam3": a.sam3, "masks_root": str(root.resolve()),
+                "parts": parts, "prompts": prompts, "phrases_file": phrases_rec,
+                "sam3": a.sam3, "masks_root": str(root.resolve()),
                 "views": {}, "sim_provenance": provenance()}
     hits = {p: 0 for p in parts}
 
@@ -124,19 +164,24 @@ def main(argv=None) -> int:
         vdir.mkdir(parents=True, exist_ok=True)
         vrec = {"file": Path(vpath).stem, "parts": {}}
         for part in parts:
-            try:
-                rep = sam.call({"cmd": "segment", "rgb": rgb, "prompt": part})
-            except (TimeoutError, SidecarError) as e:
-                sys.exit(f"sam3 {type(e).__name__} on {vname}/{part}: {e}")
-            masks = np.asarray(rep.get("masks", []))
+            tries = [prompts[part]["prompt"]] + ([part] if prompts[part]["prompt"] != part else [])
+            for prompt in tries:                    # phrase first, bare name as the floor
+                try:
+                    rep = sam.call({"cmd": "segment", "rgb": rgb, "prompt": prompt})
+                except (TimeoutError, SidecarError) as e:
+                    sys.exit(f"sam3 {type(e).__name__} on {vname}/{part} ({prompt!r}): {e}")
+                masks = np.asarray(rep.get("masks", []))
+                if masks.size and masks.shape[0]:
+                    break
             if masks.size == 0 or not masks.shape[0]:
-                vrec["parts"][part] = {"written": False, "instances": 0, "px": 0}
+                vrec["parts"][part] = {"written": False, "instances": 0, "px": 0,
+                                       "prompt": prompt}
                 print(f"    {vname:12s} {part:10s} EMPTY (recorded, no file)")
                 continue
             m = masks[0].astype(bool)
             Image.fromarray((m * 255).astype(np.uint8)).save(vdir / f"{part}.png")
             vrec["parts"][part] = {"written": True, "instances": int(masks.shape[0]),
-                                   "px": int(m.sum())}
+                                   "px": int(m.sum()), "prompt": prompt}
             hits[part] += 1
             print(f"    {vname:12s} {part:10s} {int(m.sum()):6d} px"
                   + (f" ({masks.shape[0]} instances, took [0])" if masks.shape[0] > 1 else ""))

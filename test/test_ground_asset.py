@@ -184,6 +184,11 @@ def test_happy_path_wiring(tmp_path):
     assert c["front"]["front_source"].startswith("oriany_real_crop")
     assert c["sim"] == {"commit": "stub"} and c["primitives"] == {"handle": "line", "rim": "ring"}
     assert c["depth_marginal"] == {}                              # saturated windings
+    # the masks used are pinned by content, not only by path: with the
+    # manifest's own record of each part's prompt and its phrases file, the
+    # chain from frames.json back to every SAM3 prompt is auditable
+    man = Path(c["masks_manifest"])
+    assert c["masks_manifest_sha256"] == hashlib.sha256(man.read_bytes()).hexdigest()
 
 
 def test_marginal_winding_is_flagged_not_refused(tmp_path, capsys, monkeypatch):

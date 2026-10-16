@@ -106,6 +106,13 @@ def test_grasp_plan_feeds_grounding(drv, tmp_path):
     assert f"masks_vlm_{art['hardware']['plan_sha']}" in nxt and "grounding_vlm" in nxt
     assert "canonicalize_asset" not in nxt
     assert art["sim"]["files"]                                   # vlm.py provenance
+    # phrases come before masks, and the masks command consumes them
+    cmds = rep["next"]
+    i_ph = next(i for i, l in enumerate(cmds) if "part_phrases.py" in l)
+    i_mk = next(i for i, l in enumerate(cmds) if "make_part_masks.py" in l)
+    phrases = f"masks_vlm_{art['hardware']['plan_sha']}/mug/phrases.json"
+    assert i_ph < i_mk and phrases in cmds[i_ph] and f"--phrases" in cmds[i_mk]
+    assert phrases in cmds[i_mk] and "--parts handle" in cmds[i_ph]
 
 
 def test_replay_is_offline_and_identical(drv, tmp_path, monkeypatch):

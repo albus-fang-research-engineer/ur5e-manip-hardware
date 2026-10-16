@@ -150,7 +150,7 @@ def test_empty_view_recorded_not_written(tmp_path):
     assert rc == 0
     man = json.loads((obj / "manifest.json").read_text())
     first = man["views"]["x+"]["parts"]["handle"]
-    assert first == {"written": False, "instances": 0, "px": 0}
+    assert first == {"written": False, "instances": 0, "px": 0, "prompt": "handle"}
     assert not (obj / "xp" / "handle.png").exists()          # absent file...
     assert (obj / "xn" / "handle.png").exists()              # ...but found elsewhere
     assert man["views"]["x-"]["parts"]["handle"]["written"] is True
@@ -200,3 +200,81 @@ def test_empty_parts_is_refused(tmp_path):
     with pytest.raises(SystemExit) as e:
         _run(tmp_path, lambda p: {"masks": np.stack([_full_mask()])}, parts=" , ")
     assert e.value.code == 2
+
+
+# ------------------------------------------------------------- phrase prompts
+
+def _run_with(tmp_path, sam_behavior, parts, *extra):
+    _stub_modules(sam_behavior)
+    drv = _load_driver()
+    asset = tmp_path / "assets"
+    (asset / "meshes").mkdir(parents=True, exist_ok=True)
+    (asset / "meshes" / "mug_visual.obj").write_text("v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n")
+    root = tmp_path / "sam"
+    rc = drv.main([str(asset), "--name", "mug", "--parts", parts,
+                   "--masks-root", str(root), *extra])
+    return rc, root / "mug"
+
+
+def _phrases_file(tmp_path, name="mug", **phrases):
+    f = tmp_path / "phrases.json"
+    f.write_text(json.dumps({"name": name, "status": "ok", "phrases": {
+        p: {"prompt": v, "source": "vlm"} for p, v in phrases.items()}}))
+    return f
+
+
+def test_phrase_is_the_prompt_and_the_name_keys_the_mask(tmp_path):
+    seen = []
+
+    def sam(prompt):
+        seen.append(prompt)
+        return {"masks": np.stack([_full_mask()])}
+
+    f = _phrases_file(tmp_path, handle="red loop")
+    rc, obj = _run_with(tmp_path, sam, "handle,rim", "--phrases", str(f))
+    assert rc == 0
+    assert set(seen) == {"red loop", "rim"}                   # phrase for handle, name for rim
+    assert (obj / "xp" / "handle.png").exists() and not (obj / "xp" / "red loop.png").exists()
+    man = json.loads((obj / "manifest.json").read_text())
+    assert man["parts"] == ["handle", "rim"]                  # names stay the keys downstream
+    assert man["prompts"] == {"handle": {"prompt": "red loop", "source": "phrases:vlm"},
+                              "rim": {"prompt": "rim", "source": "name"}}
+    assert man["phrases_file"]["sha256"] and man["phrases_file"]["status"] == "ok"
+    assert man["views"]["x+"]["parts"]["handle"]["prompt"] == "red loop"
+
+
+def test_phrase_empty_in_a_view_falls_back_to_the_name_there(tmp_path):
+    seen = []
+
+    def sam(prompt):
+        seen.append(prompt)
+        if prompt == "red loop" and seen.count("red loop") == 1:       # first view only
+            return {"masks": np.zeros((0, PX, PX))}
+        return {"masks": np.stack([_full_mask()])}
+
+    f = _phrases_file(tmp_path, handle="red loop")
+    rc, obj = _run_with(tmp_path, sam, "handle", "--phrases", str(f))
+    man = json.loads((obj / "manifest.json").read_text())
+    assert rc == 0 and seen[:2] == ["red loop", "handle"]     # retried bare in that view
+    assert man["views"]["x+"]["parts"]["handle"] == {
+        "written": True, "instances": 1, "px": int(_full_mask().sum()), "prompt": "handle"}
+    assert man["views"]["x-"]["parts"]["handle"]["prompt"] == "red loop"
+
+
+def test_inline_phrase_wins_over_the_file(tmp_path):
+    seen = []
+    f = _phrases_file(tmp_path, handle="red loop")
+    rc, obj = _run_with(tmp_path, lambda p: seen.append(p) or {"masks": np.stack([_full_mask()])},
+                        "handle=ceramic handle", "--phrases", str(f))
+    man = json.loads((obj / "manifest.json").read_text())
+    assert set(seen) == {"ceramic handle"}
+    assert man["prompts"]["handle"] == {"prompt": "ceramic handle", "source": "inline"}
+
+
+def test_phrases_for_another_object_or_empty_phrase_refused(tmp_path):
+    full = lambda p: {"masks": np.stack([_full_mask()])}
+    with pytest.raises(SystemExit):
+        _run_with(tmp_path / "a", full, "handle", "--phrases",
+                  str(_phrases_file(tmp_path, name="teapot", handle="x")))
+    with pytest.raises(SystemExit):
+        _run_with(tmp_path / "b", full, "handle=")

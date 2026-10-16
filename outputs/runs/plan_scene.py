@@ -9,8 +9,9 @@ stage plan whose part names feed the grounding pipeline (M2's first step).
     <run>/stage_plan/plan.log.json        raw model responses (replayable)
 
 then prints, per object the plan uses, the commands that ground the parts
-the MODEL named (canonicalize if needed -> make_part_masks -> ground_asset
--> check_symbols): the hand-typed `--parts handle,rim` of milestone 1 is
+the MODEL named (canonicalize if needed -> part_phrases -> make_part_masks
+-> ground_asset -> check_symbols; part_phrases turns each part name into
+the phrase SAM3 is prompted with, from the object's own canonical views): the hand-typed `--parts handle,rim` of milestone 1 is
 replaced by call #1's output.
 
 Checks (recorded in the artifact; the parser has already enforced the
@@ -201,9 +202,12 @@ def next_commands(run: Path, plan_sha: str, parts: dict, mark_key: dict, info: d
                          "   # add --canonical <glb> on a --final-mesh run")
             asset = run / "assets_canon" / name
         name = asset.name
+        phrases = root / name / "phrases.json"
         lines += [
+            f"python3 /data/runs/part_phrases.py {asset} --name {name} --parts {ps} "
+            f"--out {phrases}",
             f"python3 /data/runs/make_part_masks.py {asset} --name {name} --parts {ps} "
-            f"--masks-root {root} --timeout-ms 180000",
+            f"--phrases {phrases} --masks-root {root} --timeout-ms 180000",
             f"python3 /data/runs/ground_asset.py --run {run} --name {name} --masks-root {root} "
             f"--parts {ps} --out {out}",
             f"python3 /data/runs/check_symbols.py {run} --key {key} "
