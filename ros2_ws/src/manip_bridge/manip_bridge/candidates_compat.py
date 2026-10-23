@@ -1,6 +1,7 @@
 """The ONE place hardware imports the sim's call-#2 renderer
 (scripts/render_candidates.py: run_vlm -- the marked canonical views and
-their manifest).
+their manifest -- and, for inspection, render_views + montage over the
+WHOLE written pool: render_pool).
 
 Rule: every sim module hardware uses gets its own *_compat.py, and nothing
 else in this repo imports manip_sim (test/test_sim_imports.py enforces it).
@@ -53,7 +54,7 @@ from manip_bridge.sim_provenance import provenance as _provenance  # noqa: E402
 
 SOURCES = (_spec.origin,)
 
-__all__ = ["CandidatesCompatError", "render_menu", "provenance", "SOURCES"]
+__all__ = ["CandidatesCompatError", "render_menu", "render_pool", "provenance", "SOURCES"]
 
 
 class CandidatesCompatError(RuntimeError):
@@ -93,6 +94,37 @@ def render_menu(name: str, obj_dir, parts, out_dir) -> tuple[dict, Path]:
         raise CandidatesCompatError(f"{mpath} records source {man.get('source')!r}, not "
                                     f"{obj_dir / 'candidates.json'} -- not this call's render")
     return man, mpath
+
+
+POOL_NEEDS = ("load_pool", "load_visual_mesh", "render_views", "montage", "VIEW_PX")
+
+
+def render_pool(name: str, obj_dir, out_png) -> tuple[list[dict], dict]:
+    """Every candidate in <obj_dir>/candidates.json -- the WRITTEN pool the
+    call-#2 menu is cut from, not the sim's in-memory regen (run() would
+    re-propose from frames.json, which on hardware is not what ground_asset
+    wrote) -- drawn on the eight canonical views with the frames.json axes
+    triad, as one montage at out_png. The sim's own inspection layout:
+    colour = class (constructed / part / curvature / fps), filled = visible
+    in that view, hollow = occluded.
+
+    Returns (candidates in id order, {view: visible bool array})."""
+    obj_dir, out_png = Path(obj_dir), Path(out_png)
+    rc = _load()
+    missing = [a for a in POOL_NEEDS if not hasattr(rc, a)]
+    if missing:
+        raise CandidatesCompatError(f"{rc.__file__} has no {missing} -- update "
+                                    "candidates_compat.render_pool for the sim's interface")
+    pool = rc.load_pool(obj_dir)
+    cands = [pool[i] for i in sorted(pool)]
+    V, _ = rc.load_visual_mesh(name, obj_dir)
+    fj = obj_dir / "frames.json"
+    axes = ({k: e["xyz"] for k, e in (json.loads(fj.read_text()).get("axes") or {}).items()}
+            if fj.is_file() else None)
+    views, vis, _ = rc.render_views(name, obj_dir, V, cands, rc.VIEW_PX, 13, 6, axes=axes)
+    out_png.parent.mkdir(parents=True, exist_ok=True)
+    rc.montage(views, name).save(out_png)
+    return cands, vis
 
 
 def provenance():

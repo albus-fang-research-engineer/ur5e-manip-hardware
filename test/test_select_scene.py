@@ -330,8 +330,8 @@ def test_real_run_vlm_reads_vlm_dir_at_call_time():
 def test_compat_contracts_and_import_weight():
     code = ("import sys\n"
             "import manip_bridge.candidates_compat as c\n"
-            "assert set(c.__all__) == {'CandidatesCompatError', 'render_menu', 'provenance', "
-            "'SOURCES'}\n"
+            "assert set(c.__all__) == {'CandidatesCompatError', 'render_menu', 'render_pool', "
+            "'provenance', 'SOURCES'}\n"
             "assert c.SOURCES[0].endswith('scripts/render_candidates.py')\n"
             "import manip_bridge.selection_compat as s\n"
             "assert set(s.__all__) >= {'load_pool', 'vlm_subset', 'menu_from_pool', "
