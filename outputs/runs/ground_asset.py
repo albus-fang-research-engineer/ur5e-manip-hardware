@@ -28,10 +28,16 @@ its fix (exit 2):
             rejected refinement; and compile_tsr reads a missing sigma as 0.0,
             "perfectly known"), so it is refused until a specimen defines the
             policy.
-  mesh      after grounding, provenance.depth_semantics.inconsistent_edges
-            must be 0 (vertices merged by position, so UV seams do not hide a
+  mesh      after grounding, provenance.depth_semantics.flipped_edges must
+            be 0 (vertices merged by position, so UV seams do not hide a
             flipped chart): depth_check labels come from the winding number,
-            which needs consistent orientation.
+            which needs consistent orientation. pinch_edges -- consistently
+            wound sheets touching along an edge, which TRELLIS makes where
+            thin parts meet -- leave the winding number exact, so they are
+            recorded, not refused (the 20261023_032004 mug: 544 inconsistent
+            directed edges, all from 272 balanced four-face pinches, 0
+            flipped). A sim that predates flipped_edges cannot tell the two
+            apart, and any inconsistent edge is refused as before.
 
 Marginal winding (recorded and printed, never refused): a closed mesh's
 winding number saturates to ~0 / ~1 within a few mm of the surface, so a
@@ -274,12 +280,19 @@ def ground(run, name=None, asset=None, masks_root=None, parts=None, out=None, ba
     if ds is None:
         raise SeamRefusal(f"{canon_path} has no provenance.depth_semantics -- the sim "
                           "checkout predates the grounding seam")
-    if ds.get("inconsistent_edges", 0) > 0:
+    if "flipped_edges" in ds:
+        if ds["flipped_edges"] > 0:
+            raise SeamRefusal(
+                f"mesh orientation: {ds['flipped_edges']} flipped edges (two faces traversing "
+                f"an edge the same way) after merging vertices by position ({canon_path}) -- "
+                "the winding-number depth_check labels are unreliable near the flipped "
+                "region. Bring the count and the per-point winding values back before "
+                "setting a policy.")
+    elif ds.get("inconsistent_edges", 0) > 0:
         raise SeamRefusal(
             f"mesh orientation: {ds['inconsistent_edges']} inconsistent edges after merging "
-            f"vertices by position ({canon_path}) -- the winding-number depth_check labels are "
-            "unreliable near the flipped region. Bring the count and the per-point winding "
-            "values back before setting a policy.")
+            f"vertices by position ({canon_path}), and the sim checkout predates flipped_edges, "
+            "so a flip cannot be told from a pinch -- update the sim mount")
 
     marginal = {n: p["winding"] for n, p in canon_frames.get("points", {}).items()
                 if p.get("winding") is not None
@@ -327,7 +340,8 @@ def main(argv=None) -> int:
         print(f"    {n:18s} {p.get('depth_check', '?'):9s} winding {p.get('winding', float('nan')):+.3f}  "
               f"{p.get('comment', '')}")
     ds = rep["depth_semantics"]
-    print(f"[ground-asset] mesh: {ds.get('inconsistent_edges')} inconsistent / "
+    print(f"[ground-asset] mesh: {ds.get('flipped_edges', '?')} flipped / "
+          f"{ds.get('pinch_edges', '?')} pinch / {ds.get('inconsistent_edges')} inconsistent / "
           f"{ds.get('boundary_edges')} boundary / {ds.get('non_manifold_edges')} non-manifold "
           f"edges ({ds.get('merged_vertices')} of {ds.get('vertices')} vertices after merging)")
     for n, w in sorted(rep["depth_marginal"].items()):

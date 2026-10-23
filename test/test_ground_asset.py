@@ -140,8 +140,10 @@ class StubBackend:
     """Stands in for (ground_object, GroundingError, provenance); writes a
     canonical frames.json shaped like the sim's and records the call."""
 
-    def __init__(self, inconsistent=0, primitives=None, raise_msg=None):
+    def __init__(self, inconsistent=0, primitives=None, raise_msg=None, flipped=0, pinch=0,
+                 legacy=False):
         self.inconsistent, self.raise_msg = inconsistent, raise_msg
+        self.flipped, self.pinch, self.legacy = flipped, pinch, legacy
         self.primitives = primitives or {"handle": "line", "rim": "ring"}
         self.calls = []
 
@@ -150,9 +152,11 @@ class StubBackend:
         if self.raise_msg:
             raise FakeGroundingError(self.raise_msg)
         doc = copy.deepcopy(CANON)
-        doc["provenance"]["depth_semantics"] = {"inconsistent_edges": self.inconsistent,
-                                                "boundary_edges": 3, "non_manifold_edges": 0,
-                                                "merged_vertices": 94198, "vertices": 106500}
+        ds = {"inconsistent_edges": self.inconsistent, "boundary_edges": 3,
+              "non_manifold_edges": self.pinch, "merged_vertices": 94198, "vertices": 106500}
+        if not self.legacy:                          # the sim's counts since pinch/flip split
+            ds.update(flipped_edges=self.flipped, pinch_edges=self.pinch)
+        doc["provenance"]["depth_semantics"] = ds
         (out_dir / name).mkdir(parents=True, exist_ok=True)
         (out_dir / name / "frames.json").write_text(json.dumps(doc))
         return dict(self.primitives)
@@ -328,9 +332,22 @@ def test_flipped_mesh_refused_and_no_stale_success(tmp_path):
     code, _, _ = drv.ground(run, backend=StubBackend().backend())
     body = run / "grounding" / "m2" / "frames.json"
     assert code == 0 and body.is_file()
-    with pytest.raises(drv.SeamRefusal, match="3 inconsistent edges"):
-        drv.ground(run, backend=StubBackend(inconsistent=3).backend())
+    with pytest.raises(drv.SeamRefusal, match="3 flipped edges"):
+        drv.ground(run, backend=StubBackend(inconsistent=3, flipped=3).backend())
     assert not body.exists(), "a refusal must not leave the previous success for check_symbols"
+
+
+def test_pinch_edges_pass_and_an_old_sim_still_refuses(tmp_path):
+    """The 20261023_032004 mug: 544 inconsistent directed edges, all from 272
+    balanced four-face pinches, 0 flipped -- grounded, counts recorded. A sim
+    without flipped_edges cannot tell the two apart: refused as before."""
+    run = _fake_run(tmp_path)
+    code, body, rep = drv.ground(run, backend=StubBackend(inconsistent=544, pinch=272).backend())
+    assert code == 0
+    ds = body["provenance"]["depth_semantics"]
+    assert (ds["flipped_edges"], ds["pinch_edges"], ds["inconsistent_edges"]) == (0, 272, 544)
+    with pytest.raises(drv.SeamRefusal, match="predates flipped_edges"):
+        drv.ground(run, backend=StubBackend(inconsistent=3, legacy=True).backend())
 
 
 def test_grounding_error_becomes_refusal(tmp_path):

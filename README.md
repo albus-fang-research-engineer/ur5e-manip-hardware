@@ -718,9 +718,12 @@ SAM3 was never asked for is a command mismatch), with at least one of them
 masked in some view; up must be `refined` (a `table_normal` up has no
 trusted sigma, and compile_tsr reads a missing sigma as 0.0 -- policy parked
 until a specimen exists). After grounding, the mesh must have 0
-inconsistent edges once vertices are merged by position (UV seams cut a
+flipped edges once vertices are merged by position (UV seams cut a
 TRELLIS mesh into ~236 charts by index; merged, the mug's final_mesh is 0
-inconsistent / 3 boundary / 0 non-manifold). A refusal removes any previous
+inconsistent / 3 boundary / 0 non-manifold). Pinch edges -- consistently
+wound sheets touching along an edge, which leave the winding number exact
+-- are recorded, not refused (the 20261023_032004 mug: 272 four-face
+pinches = all 544 inconsistent directed edges, 0 flipped). A refusal removes any previous
 `<run>/grounding/<key>/frames.json` first, so check_symbols never reads a
 stale success.
 
