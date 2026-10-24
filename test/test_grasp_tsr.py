@@ -68,11 +68,11 @@ def test_tsr_is_the_sims_placed_at_the_pick_in_base(mods, tmp_path):
     # the sim's default bounds except the roll row (= the elevation, horizontal..down)
     roll = r["bounds"].pop("roll")
     assert roll in ([0.0, 90.0], [-90.0, 0.0]) and r["elevation_roll_row_deg"] == roll
-    assert r["bounds"] == {"x": [-0.005, 0.005], "y": [-0.005, 0.005], "z": [-0.02, 0.02],
+    assert r["bounds"] == {"x": [-0.015, 0.015], "y": [-0.015, 0.015], "z": [-0.02, 0.02],
                            "pitch": pytest.approx([-np.rad2deg(0.09), np.rad2deg(0.09)]),
                            "yaw": pytest.approx([-45.0, 45.0])}
     head = (run / "m3" / "grasp_tsr.yaml").read_text().splitlines()[:4]
-    assert any("ONE departure" in h for h in head)
+    assert any("TWO departures" in h for h in head)
 
     # what tsr_from_yaml will publish classifies exactly as the sim's TSR does
     from manip_bridge import grasping_compat as gc
@@ -83,7 +83,7 @@ def test_tsr_is_the_sims_placed_at_the_pick_in_base(mods, tmp_path):
     assert (frame_id, topic, hw.name) == ("base_link", "/tsr/mug/grasp", "grasp/handle")
     rng = np.random.default_rng(0)
     poses = [sim.sample(rng) for _ in range(50)]
-    for k, dx in enumerate((0.008, -0.008, 0.03)):                  # outside: lateral, slide
+    for k, dx in enumerate((0.04, -0.04, 0.05)):                    # outside: lateral, slide
         T = poses[k].copy()
         T[:3, 3] += sim.T0_w[:3, k % 3] * dx
         poses.append(T)
@@ -124,11 +124,11 @@ def test_elevation_is_free_and_position_is_the_question(mods, tmp_path):
     for elev in (0.0, 35.0, 80.0, 89.9):
         assert hw.contains(_grasp(r, elev)), elev
     assert hw.contains(_grasp(r, 35.0, azimuth_deg=40.0))
-    assert hw.contains(_grasp(r, 35.0, offset=0.003 * radial))
+    assert hw.contains(_grasp(r, 35.0, offset=0.012 * radial))         # inside +-15 mm
     rejected = {"from below": _grasp(r, -35.0),
                 "from the body side": _grasp(r, 35.0, azimuth_deg=180.0),
                 "closing tilted 15 deg toward the bar": _grasp(r, 35.0, closing_tilt_deg=15.0),
-                "8 mm off the bar sideways": _grasp(r, 35.0, offset=0.008 * radial)}
+                "20 mm off the anchor sideways": _grasp(r, 35.0, offset=0.020 * radial)}
     for why, T in rejected.items():
         assert not hw.contains(T), why
 

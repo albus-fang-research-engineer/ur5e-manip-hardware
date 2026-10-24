@@ -30,7 +30,7 @@ canonical origin (plan_pour_tea's a_body = -handle.point), horizontal.
 (nominal_grip_in_world uses world z, and world here is base_link), so the
 canonical up enters only as the bar.
 
-The one departure from the sim: the approach ELEVATION is free. The sim
+Two departures from the sim. (1) The approach ELEVATION is free. The sim
 pitched its nominal 35 deg down, a placeholder for the approach its
 stand-in proposer sampled around; on hardware AnyGrasp proposes the
 approach, so a hand-set elevation must not decide the grasp. The TSR is
@@ -38,8 +38,14 @@ built so that w x IS the closing axis (the handle frame's secondary is set
 to it), the nominal is the horizontal approach (elevation 0), and the roll
 row -- rotation about the closing axis, i.e. the elevation -- spans
 horizontal to straight down, on whichever sign descends (checked
-numerically). Everything else is the sim's default, unchanged:
-    x, y   +-5 mm      pads centred on the bar
+numerically). (2) The sideways bound is +-LATERAL_TOL_M (15 mm), not the
+sim's +-5 mm. The TSR is a binary region test and AnyGrasp's score ranks
+the grasps inside it (grasp_filter keeps survivors in score order), so the
+call-#2 point marks WHERE to grasp, not the grasp itself: the region only
+has to contain the handle. On the 20261023_032004 teapot call #2 picked
+handle_center, a loop handle's blob centroid in the middle of the loop,
+off the bar; +-5 mm around it would contain no grasp on the bar.
+Everything else is the sim's default, unchanged:
     z      +-20 mm     slide along the bar
     pitch  +-0.09 rad  closing axis within ~5 deg of perpendicular to the
                        bar: the fingers straddle it
@@ -92,6 +98,7 @@ import select_scene as ss  # noqa: E402  -- load_inputs / real_frame: the same g
 ROLE = "grasp"
 PIXEL_TOL = 2.0          # px; select_scene logs the pixel rounded to an int
 ROUND_TRIP_TOL = 1e-9
+LATERAL_TOL_M = 0.015       # sideways box half-width (sim default 0.005); see the docstring
 ELEVATION_SPAN = np.pi / 2  # the roll row: horizontal (0) to straight down
 
 
@@ -173,7 +180,8 @@ def build_grasp_tsr(T_base_canon, handle):
                               "horizontal approach: no closing axis across it")
     handle = dataclasses.replace(handle, secondary=R_bc.T @ _unit(closing))
     a_h = handle.T()[:3, :3].T @ (-np.asarray(handle.point, float))
-    tsr = gc.handle_grasp_tsr(T_base_canon, handle, a_h, elevation=0.0)
+    tsr = gc.handle_grasp_tsr(T_base_canon, handle, a_h, elevation=0.0,
+                              lateral_tol=LATERAL_TOL_M)
     T0_w, Tw_e = np.asarray(tsr.T0_w), np.asarray(tsr.Tw_e)
     if abs(np.dot(T0_w[:3, 0], (T0_w @ Tw_e)[:3, 0])) < 1 - 1e-9:
         raise GraspTsrRefusal("internal: w x is not the closing axis -- the roll row would "
@@ -274,9 +282,11 @@ def grasp_tsr(run, plan=None, selections=None, out=None):
     out.mkdir(parents=True, exist_ok=True)
     head = ("# Stage-1 grasp TSR -- written by outputs/runs/grasp_tsr.py; do not hand-edit.\n"
             f"# {obj} mark {sel.candidate_id} [{logged.get('menu_tag')}], sim handle_grasp_tsr "
-            "defaults except ONE departure:\n"
+            "defaults except TWO departures:\n"
             "#   approach elevation free (nominal horizontal, roll = rotation about the closing\n"
-            "#   axis spans horizontal..straight down) instead of the sim's 35 deg placeholder.\n"
+            "#   axis spans horizontal..straight down) instead of the sim's 35 deg placeholder;\n"
+            f"#   sideways bound +-{LATERAL_TOL_M * 1000:g} mm instead of +-5 mm (AnyGrasp's score\n"
+            "#   ranks the grasps inside the region).\n"
             f"#   ros2 run manip_bridge tsr_from_yaml -- {out / 'grasp_tsr.yaml'}\n")
     (out / "grasp_tsr.yaml").write_text(head + text)
     (out / "grasp_tsr.log.json").write_text(json.dumps(report, indent=2) + "\n")
