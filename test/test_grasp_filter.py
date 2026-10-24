@@ -220,6 +220,31 @@ def test_report_is_json_safe_and_complete():
     assert "3 contained -> 3 kept [tsr_contained]" in res.summary()
 
 
+def test_report_names_the_bound_that_rejected():
+    """Per proposal, the signed excess on each violated axis (mm / deg), and
+    over the batch which bound did the rejecting -- what a rejected-only
+    hardware batch needs to read to know whether position or orientation
+    is the cause."""
+    import json
+    tsr = grasp_tsr()
+    slid = outside_near(tsr, RNG, 2, 0.004)                     # 4 mm past the slide bound
+    yawed = []
+    for _ in range(3):                                          # 10 deg past the yaw bound
+        d = tsr.sample_displacement(RNG)
+        d[5] = tsr.Bw[5, 1] + np.deg2rad(10)
+        yawed.append(tsr.T0_w @ displacement_to_pose(d) @ tsr.Tw_e)
+    res = filter_grasps(tsr, as_grasps(inside(tsr, RNG, 1) + slid + yawed,
+                                       np.linspace(1, 0.4, 6)), max_distance=0.0)
+    assert res.violations() == {"yaw": 3, "z": 2}
+    d = json.loads(json.dumps(res.to_dict()))
+    assert d["violations"] == {"yaw": 3, "z": 2}
+    ex = {p["index"]: p["excess"] for p in d["proposals"]}
+    assert ex[0] == {}                                          # contained: nothing outside
+    assert ex[1] == pytest.approx({"z": 4.0}, abs=0.01)
+    assert ex[3] == pytest.approx({"yaw": 10.0}, abs=0.01)
+    assert "rejected for: yaw 3, z 2" in res.summary()
+
+
 # --------------------------------------------------------------------- wire
 
 

@@ -59,9 +59,23 @@ from manip_tsr import TSR
 AG_TO_E: tuple[int, int, int] = (1, 2, 0)
 E_TO_AG: tuple[int, int, int] = (2, 0, 1)      # inverse permutation
 
+AXES = ("x", "y", "z", "roll", "pitch", "yaw")   # Bw row order (manip_tsr)
+
 ROUTE_CONTAINED = "tsr_contained"
 ROUTE_DISTANCE = "tsr_distance"
 ROUTE_EMPTY = "empty"
+
+
+def _excess_readable(e) -> dict | None:
+    """Per-axis excess for the report: mm for x/y/z, deg for the rotations;
+    only the axes actually outside Bw."""
+    if e is None:
+        return None
+    out = {}
+    for a, v in zip(AXES, e):
+        if abs(v) > 0:
+            out[a] = round(float(v) * (1000.0 if a in ("x", "y", "z") else 180.0 / np.pi), 2)
+    return out
 
 
 # ------------------------------------------------------------------- frames
@@ -99,6 +113,7 @@ class Grasp:
     depth: float                # m
     index: int                  # position in the AnyGrasp reply (score-desc order)
     tsr_distance: float = float("nan")
+    excess: np.ndarray | None = None   # per-axis amount outside Bw (x,y,z m; roll,pitch,yaw rad)
 
 
 def grasps_from_anygrasp(rotations, translations, scores, widths, depths,
@@ -169,9 +184,24 @@ class FilterResult:
             if self.survivors else "no survivors"
         near = f", nearest rejected d={self.rejected[0].tsr_distance:.4f}" \
             if self.rejected else ""
+        viol = self.violations()
+        why = (" | rejected for: " + ", ".join(f"{a} {n}" for a, n in viol.items())) \
+            if viol else ""
         return (f"{self.tsr_name or 'tsr'}: {self.n_in} proposed -> "
                 f"{self.n_contained} contained -> {len(self.survivors)} kept "
-                f"[{self.route}] {best}{near}")
+                f"[{self.route}] {best}{near}{why}")
+
+    def violations(self) -> dict:
+        """{axis: number of non-contained proposals outside Bw on that axis},
+        most frequent first -- which bound is doing the rejecting."""
+        n = {}
+        for g in self.survivors + self.rejected:
+            if g.excess is None or g.tsr_distance <= self.tol:
+                continue
+            for a, e in zip(AXES, g.excess):
+                if abs(e) > self.tol:
+                    n[a] = n.get(a, 0) + 1
+        return dict(sorted(n.items(), key=lambda kv: -kv[1]))
 
     def to_dict(self) -> dict:
         """JSON-safe report: per-proposal distance and verdict, in original
@@ -187,8 +217,10 @@ class FilterResult:
             "tol": self.tol,
             "max_distance": self.max_distance,
             "survivor_indices": [g.index for g in self.survivors],
+            "violations": self.violations(),
             "proposals": [{"index": g.index, "score": g.score,
-                           "tsr_distance": g.tsr_distance, "kept": g.index in kept}
+                           "tsr_distance": g.tsr_distance, "kept": g.index in kept,
+                           "excess": _excess_readable(g.excess)}
                           for g in allg],
         }
 
@@ -198,7 +230,8 @@ def filter_grasps(tsr: TSR, grasps: list[Grasp], tol: float = 1e-6,
     """Classify `grasps` against `tsr` (both in the same reference frame).
     Mutates each Grasp's tsr_distance. See module docstring for routes."""
     for g in grasps:
-        g.tsr_distance = float(tsr.distance(g.T0_e))
+        g.excess = np.asarray(tsr.excess(g.T0_e), dtype=float).reshape(6)
+        g.tsr_distance = float(np.linalg.norm(g.excess))
     by_dist = sorted(grasps, key=lambda g: g.tsr_distance)
     contained = [g for g in grasps if g.tsr_distance <= tol]
 

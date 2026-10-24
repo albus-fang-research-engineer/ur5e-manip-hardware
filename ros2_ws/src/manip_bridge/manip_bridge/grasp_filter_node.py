@@ -127,7 +127,7 @@ def _lines_marker(hdr, ns, mid, pts, rgba, width=0.002) -> Marker:
     m.header, m.ns, m.id = hdr, ns, mid
     m.type, m.action = Marker.LINE_LIST, Marker.ADD
     m.scale.x = width
-    m.color = ColorRGBA(r=rgba[0], g=rgba[1], b=rgba[2], a=rgba[3])
+    m.color = ColorRGBA(r=float(rgba[0]), g=float(rgba[1]), b=float(rgba[2]), a=float(rgba[3]))
     m.points = [Point(x=float(p[0]), y=float(p[1]), z=float(p[2])) for p in pts]
     return m
 
