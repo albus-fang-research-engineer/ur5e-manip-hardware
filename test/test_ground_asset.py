@@ -318,13 +318,68 @@ def test_no_requested_part_has_a_mask_is_refused(tmp_path):
     assert st.calls == [] and not body.exists()
 
 
-def test_table_normal_up_is_refused_naming_its_numbers(tmp_path):
+# run 20261023_032004, verbatim: the table normal (camera frame) and each object's
+# two registrations of the same mesh, rotation part (Any6D, FoundationPose)
+PLANE_N = [0.04103538267756178, -0.920205405989437, -0.38927895930337847]
+REGS = {
+    "mug": ([[-0.936359473802134, 0.05170173595197277, -0.3472144385254499],
+             [0.10785534586549908, -0.8988822844870094, -0.42470915107123497],
+             [-0.33406310809370215, -0.43512937057267, 0.8361006342993693]],
+            [[-0.9263980250422371, 0.07068483626953172, -0.3698517988592083],
+             [0.10754147573374444, -0.891645503914635, -0.4397762230337439],
+             [-0.3608622038879263, -0.447182232731094, 0.8184170822598845]]),
+    "teapot": ([[-0.5816583806894112, -0.22012436926116924, -0.7830828757105753],
+                [0.48794751286645005, -0.8646709733611359, -0.11937894502026486],
+                [-0.650830817387451, -0.45154110542018017, 0.6103522566966588]],
+               [[-0.5897995934684152, -0.23911065175578045, -0.7713381461858463],
+                [0.5173440820729975, -0.8452928389938449, -0.13354818265245327],
+                [-0.6200738184188553, -0.47781388904326694, 0.6222558534468028]]),
+}
+
+
+def _with_registrations(run, which):
+    """Put one object's real registrations + the real table plane into the
+    fake run's summary under key m2 (the fixture's key)."""
+    sp = run / "summary.json"
+    s = json.loads(sp.read_text())
+    T = [np.eye(4), np.eye(4)]
+    for t, R in zip(T, REGS[which]):
+        t[:3, :3] = R
+    s["objects"]["m2"].update(any6d={"cam_T_obj": T[0].tolist()},
+                              pose_on_final={"cam_T_obj": T[1].tolist()})
+    s["packet"] = {"plane": {"n": PLANE_N}}
+    sp.write_text(json.dumps(s))
+
+
+def test_table_normal_up_sigma_is_the_registrations_disagreement(tmp_path):
+    """The 20261023_032004 teapot: refinement rejected, sigma measured from
+    Any6D vs FoundationPose = 2.36 deg, passed to ground_object and recorded."""
     run = _fake_run(tmp_path, up_source="table_normal")
-    with pytest.raises(drv.SeamRefusal) as e:
+    _with_registrations(run, "teapot")
+    st = StubBackend()
+    code, body, rep = drv.ground(run, backend=st.backend())
+    assert code == 0
+    assert st.calls[0]["up_sigma_deg"] == pytest.approx(2.36, abs=0.01)
+    rec = body["provenance"]["canonical"]["up_sigma"]
+    assert rec["value_deg"] == pytest.approx(2.36, abs=0.01)
+    assert "table_normal" in rec["basis"] and "lower bound" in rec["basis"]
+    # the mug's registrations, through the same rule: 1.30 deg (its refined fit gave 1.67)
+    assert drv.up_disagreement(run / "summary.json", "m2")[0] == pytest.approx(2.36, abs=0.01)
+    _with_registrations(run, "mug")
+    assert drv.up_disagreement(run / "summary.json", "m2")[0] == pytest.approx(1.30, abs=0.01)
+
+
+def test_table_normal_up_refused_without_two_registrations(tmp_path):
+    run = _fake_run(tmp_path, up_source="table_normal")       # summary has no registrations
+    with pytest.raises(drv.SeamRefusal, match="needs both registrations"):
         drv.ground(run, backend=StubBackend().backend())
-    msg = str(e.value)
-    assert "fit_sigma_deg 0.128" in msg and "angle_to_table_deg 2.07" in msg
-    assert "snap 6.2 deg" in msg and "parked" in msg
+    _with_registrations(run, "teapot")
+    sp = run / "summary.json"
+    s = json.loads(sp.read_text())
+    s["objects"]["m2"]["pose_on_final"] = s["objects"]["m2"]["any6d"]   # identical: nothing measured
+    sp.write_text(json.dumps(s))
+    with pytest.raises(drv.SeamRefusal, match="not independent enough"):
+        drv.ground(run, backend=StubBackend().backend())
 
 
 def test_flipped_mesh_refused_and_no_stale_success(tmp_path):

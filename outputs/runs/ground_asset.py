@@ -23,11 +23,20 @@ its fix (exit 2):
             part requested must be in the manifest (a part SAM3 was never asked
             for is a command mismatch, not a perception result), and at least
             one of them must have a mask in >= 1 view.
-  up sigma  only from a REFINED up: sigma = max(fit_sigma_deg,
-            angle_to_table_deg). A table_normal up has no trusted sigma (a
-            rejected refinement; and compile_tsr reads a missing sigma as 0.0,
-            "perfectly known"), so it is refused until a specimen defines the
-            policy.
+  up sigma  REFINED up: sigma = max(fit_sigma_deg, angle_to_table_deg).
+            TABLE_NORMAL up (the revolution fit was rejected -- the teapot of
+            20261023_032004: spout and handle put it at the 12% rms gate):
+            up_body is the table normal taken through the registered pose, so
+            its error is the pose's tilt error. sigma = the angle between the
+            up_body implied by the run's two independent registrations of the
+            same mesh, Any6D's and FoundationPose's (summary objects[key]
+            .any6d / .pose_on_final, packet.plane.n). Measured there: teapot
+            2.36 deg; the mug, where both rules apply, 1.30 deg vs its refined
+            1.67 deg. If both estimators err alike it understates -- a lower
+            bound, recorded as such, and still not the 0.0 compile_tsr reads a
+            missing sigma as. Refused when either registration or the plane is
+            missing, or the two agree to < MIN_UP_DISAGREEMENT_DEG (nothing
+            measured).
   mesh      after grounding, provenance.depth_semantics.flipped_edges must
             be 0 (vertices merged by position, so UV seams do not hide a
             flipped chart): depth_check labels come from the winding number,
@@ -202,16 +211,44 @@ def check_masks(masks_root: Path, name: str, sha: str, parts_arg: str | None) ->
     return parts, kept, dropped, man_path
 
 
+MIN_UP_DISAGREEMENT_DEG = 0.1    # below this the two registrations measured nothing
+
+
+def up_disagreement(summary_path, key: str) -> tuple[float, str]:
+    """Angle (deg) between R_any6d^T n and R_fp^T n: the up direction in the
+    body frame implied by each registration of the same mesh. Raises
+    SeamRefusal naming what is missing."""
+    try:
+        s = json.loads(Path(summary_path).read_text())
+        n = np.asarray(s["packet"]["plane"]["n"], float)
+        o = s["objects"][key]
+        Ra = np.asarray(o["any6d"]["cam_T_obj"], float).reshape(4, 4)[:3, :3]
+        Rf = np.asarray(o["pose_on_final"]["cam_T_obj"], float).reshape(4, 4)[:3, :3]
+    except (OSError, ValueError, KeyError, TypeError) as e:
+        raise SeamRefusal(
+            f"canonical up came from the table normal, and its sigma needs both registrations "
+            f"and the table plane from {summary_path} (objects[{key!r}].any6d.cam_T_obj, "
+            f".pose_on_final.cam_T_obj, packet.plane.n): missing {e!r} -- a --final-mesh run "
+            "has no Any6D registration to compare") from None
+    n = n / np.linalg.norm(n)
+    ua, uf = Ra.T @ n, Rf.T @ n
+    return float(np.degrees(np.arccos(np.clip(ua @ uf, -1.0, 1.0)))), str(summary_path)
+
+
 def up_sigma(canonical: dict) -> tuple[float, str]:
     u = canonical["up"]
     if u.get("source") != "refined":
-        raise SeamRefusal(
-            f"canonical up came from the table normal (refinement rejected: "
-            f"{u.get('fit_note') or 'no note'}; fit_sigma_deg {u.get('fit_sigma_deg')}, "
-            f"angle_to_table_deg {u.get('angle_to_table_deg')}). A rejected refinement has no "
-            "trusted sigma and the angle to the table is 0 by construction, so there is no "
-            "honest up_axis sigma -- and compile_tsr would read a missing one as 0.0. The "
-            "policy for this case is parked until a specimen exists; bring the numbers back.")
+        inp = canonical.get("inputs") or {}
+        d, src = up_disagreement(inp.get("summary"), inp.get("key"))
+        if d < MIN_UP_DISAGREEMENT_DEG:
+            raise SeamRefusal(
+                f"canonical up came from the table normal and the two registrations agree on it "
+                f"to {d:.3f} deg (< {MIN_UP_DISAGREEMENT_DEG}): not independent enough to measure "
+                "an up_axis sigma; bring the numbers back")
+        return d, (f"up.source table_normal (refinement rejected: {u.get('fit_note') or 'no note'}"
+                   f"); sigma = {d:.3f} deg, the angle between the up_body implied by the Any6D "
+                   f"and the FoundationPose registrations of the same mesh ({src}) -- a lower "
+                   "bound if both err alike")
     fit, tab = float(u["fit_sigma_deg"]), float(u["angle_to_table_deg"])
     return max(fit, tab), (f"max(fit_sigma_deg {fit:.3f}, angle_to_table_deg {tab:.3f}) -- the "
                            "refined axis's own 1-sigma vs its disagreement with the measured "

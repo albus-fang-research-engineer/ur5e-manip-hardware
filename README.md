@@ -715,9 +715,13 @@ record and whose `canonical.json` carries the same R and hash; the masks
 manifest must exist, be for this asset's name and exact geometry
 (`obj_sha256`, `rotated: true`), and list every requested part (a part
 SAM3 was never asked for is a command mismatch), with at least one of them
-masked in some view; up must be `refined` (a `table_normal` up has no
-trusted sigma, and compile_tsr reads a missing sigma as 0.0 -- policy parked
-until a specimen exists). After grounding, the mesh must have 0
+masked in some view. Up sigma: a `refined` up uses max(fit sigma, angle
+to the table normal); a `table_normal` up (refinement rejected -- the
+20261023_032004 teapot, whose spout and handle put it at the 12% rms gate)
+uses the angle between the up directions implied by the run's Any6D and
+FoundationPose registrations of the same mesh (teapot 2.36 deg; the mug,
+where both rules apply, 1.30 vs 1.67 deg) -- a lower bound if both err
+alike, and refused without both registrations. After grounding, the mesh must have 0
 flipped edges once vertices are merged by position (UV seams cut a
 TRELLIS mesh into ~236 charts by index; merged, the mug's final_mesh is 0
 inconsistent / 3 boundary / 0 non-manifold). Pinch edges -- consistently
