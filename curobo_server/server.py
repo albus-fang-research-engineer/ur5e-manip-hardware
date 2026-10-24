@@ -112,6 +112,21 @@ Wire protocol (msgpack + msgpack_numpy, REQ/REP):
 
   {"cmd": "reset"}                              -> {"ok": True}
   {"cmd": "clear_region", "min": [..], "max": [..]} -> {"ok": True, "n_cleared": int}
+  {"cmd": "freeze", "on": true|false}           -> {"ok": True, "frozen": bool}
+      while frozen, "integrate" changes nothing and answers {"ok": True,
+      "frozen": True}: curobo_bridge re-integrates live depth at 2 Hz, so a
+      clear_region would be undone within half a second, and an object in the
+      gripper would be integrated as an obstacle at the gripper. ORDER:
+      freeze, THEN clear. While frozen the map is blind to anything new in
+      the scene; the executor's reduced speed and stop-at-gate (not written
+      yet) cover that.
+  {"cmd": "fit_spheres", "vertices": (V,3), "faces": (F,3),
+   "num_spheres": 16}                           -> {"ok": True, "spheres": (N,4)}
+      curobo.sphere_fit.fit_spheres_to_mesh (VOXEL, the fit
+      test_curobo_robot_model.py validates on a teapot), in the mesh's own
+      frame: (x, y, z, r). For a carried object: fit once on its tracked
+      mesh, move into tool0 with the grasp transform, send as
+      plan_constrained's attached_spheres (16 attached_object slots).
   {"cmd": "save",  "name": "scene.pt"}          -> {"ok": True, "path": str}
   {"cmd": "load",  "name": "scene.pt",
    "import_weight": null,             # optional; null preserves saved weights
@@ -426,6 +441,26 @@ def _plan(state, msg):
     }
 
 
+def _fit_spheres(msg):
+    import trimesh
+    from curobo._src.geom.sphere_fit.types import SphereFitType
+    from curobo.sphere_fit import fit_spheres_to_mesh
+
+    V = np.asarray(msg["vertices"], np.float64).reshape(-1, 3)
+    F = np.asarray(msg["faces"], np.int64).reshape(-1, 3)
+    n = int(msg.get("num_spheres", 16))
+    mesh = trimesh.Trimesh(vertices=V, faces=F, process=False)
+    res = fit_spheres_to_mesh(mesh, num_spheres=n, fit_type=SphereFitType.VOXEL,
+                              iterations=60)
+    c = res.centers.detach().cpu().numpy().reshape(-1, 3)
+    r = res.radii.detach().cpu().numpy().reshape(-1)
+    keep = r > 0
+    sph = np.concatenate([c[keep], r[keep, None]], axis=1).astype(np.float32)
+    log.info("fit_spheres: %d verts / %d faces -> %d spheres (asked %d)",
+             len(V), len(F), len(sph), n)
+    return {"ok": True, "spheres": sph, "fit_type": "voxel", "num_spheres": n}
+
+
 def handle(msg, state):
     cmd = msg.get("cmd")
     mapper, cfg = state["mapper"], state["cfg"]
@@ -444,7 +479,17 @@ def handle(msg, state):
         state["cbirrt"] = None
         return {"ok": True, "memory_mb": state["mapper"].memory_usage_mb()}
 
+    if cmd == "freeze":
+        state["frozen"] = bool(msg.get("on", True))
+        log.info("map %s", "FROZEN (integrate ignored)" if state["frozen"] else "live")
+        return {"ok": True, "frozen": state["frozen"]}
+
+    if cmd == "fit_spheres":
+        return _fit_spheres(msg)
+
     if cmd == "integrate":
+        if state.get("frozen"):
+            return {"ok": True, "frozen": True}
         n_masked = None
         if msg.get("q") is not None:
             if state.get("segmenter") is None:
@@ -595,7 +640,7 @@ def main():
     log.info("building mapper (first CUDA kernel compile happens on first integrate)...")
     kw = default_cfg_kwargs()
     mapper, cfg = build_mapper(**kw)
-    state = {"mapper": mapper, "cfg": cfg, "cfg_kwargs": kw}
+    state = {"mapper": mapper, "cfg": cfg, "cfg_kwargs": kw, "frozen": False}
 
     if os.environ.get("CUROBO_VISUALIZE"):
         from curobo.viewer import ViserVisualizer  # noqa: F401 -- lazy opt-in

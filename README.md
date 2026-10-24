@@ -936,6 +936,47 @@ in `axis_source`. Direction semantics are call #3's, which waits for the
 two-object recording; milestone 3's grasp takes the point from here and its
 approach from its own corridor TSR.
 
+## The grasped object out of the map (`manip_bridge/scene_ops.py`, milestone 3)
+
+Before the fingers enter the handle, the grasped object's own voxels have to
+leave the cuRobo map (or the approach and the lift start in collision), and
+after closure it travels as spheres on tool0. Three sidecar commands:
+
+    {"cmd": "freeze", "on": true|false}            integrate becomes a no-op
+    {"cmd": "clear_region", "min": [3], "max": [3]} unobserve an AABB (base)
+    {"cmd": "fit_spheres", "vertices", "faces", "num_spheres": 16}
+
+**Order: freeze, THEN clear.** `curobo_bridge` re-integrates live depth at
+2 Hz with no pause; unfrozen, a clear is undone within half a second, and an
+object in the gripper is integrated as an obstacle at the gripper. **While
+frozen the map is blind** to anything that moves or appears in the scene;
+the executor's reduced speed and stop-at-gate (not written yet) cover that. Unfreeze
+after the object is released.
+
+`scene_ops` (pure numpy; `object_spheres` is one cached sidecar call):
+
+- `clear_box(V_body, T_base_obj, table_plane_base(summary), margin)`: the
+  tracked mesh's AABB in base, padded by `margin` (default 2 cm), the bottom
+  clipped at the table's highest point under the box + half a voxel so the
+  table stays in the map. Clipped only at the table -- `conflicts(box,
+  others)` checks it against every other object's mesh AABB, and a conflict
+  is a refusal (move the objects apart), never a clip. On 10/23 the teapot's
+  box, with the meshes' bounding boxes standing in, reaches 34 mm into the
+  mug's along base y (`test_scene_ops`); the real meshes decide it:
+  `SCENE_OPS_RUN=<run> python3 -m pytest test/test_scene_ops.py -s`.
+- `margin` is the lever for an undersized tracked mesh (TRELLIS thin parts):
+  after clearing, look at the ESDF around the handle in rviz; if voxels of
+  the real handle remain, raise the margin for that run and record it.
+- `T_ee_body(T_base_tool0, T_base_obj)` is the planned grasp transform; the
+  executor replaces it with the one measured after closure.
+  `spheres_tool0(object_spheres(...), T_ee_body)` is `plan_constrained`'s
+  `attached_spheres` (16 slots). The fit is cached per mesh sha256 at
+  `<run>/objects/<key>/spheres_body.json`.
+
+Sidecar checks: `python -m pytest test/test_curobo_scene_ops.py -v -s`
+(freeze leaves the ESDF bit-identical under integrate; fit_spheres wraps
+object-sized boxes in <= 16 spheres).
+
 ## Orient Anything V2 sidecar (port 5673)
 
 Category-free canonical **up / front** from one RGB crop. It is the
