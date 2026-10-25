@@ -72,19 +72,20 @@ class Sidecar:
                 else {"ok": True, "success": False, "error": "planning failed"})
 
 
-def test_order_every_grasp_at_10cm_before_any_at_5cm(gr):
+def test_order_every_grasp_at_5cm_before_any_at_10cm(gr):
+    assert gr.STANDOFFS_M == (0.05, 0.10)                      # the blind approach: short first
     g = [(_grasp([-0.88, 0.1 + 0.01 * k, 0.05], [0, 0, 0]), 0.03 - 0.005 * k) for k in range(3)]
     q, names = [0.0] * 6, [f"j{k}" for k in range(6)]
-    # nothing reaches at 10 cm; grasp 2 reaches at 5 cm
-    side = Sidecar([gr.tool0_goal(g[2][0], 0.05)])
+    # nothing reaches at 5 cm; grasp 2 reaches at 10 cm
+    side = Sidecar([gr.tool0_goal(g[2][0], 0.10)])
     rows, best = gr.attempts(g, q, names, side)
     assert [(r["grasp"], r["standoff_m"]) for r in rows] == \
-        [(0, 0.10), (1, 0.10), (2, 0.10), (0, 0.05), (1, 0.05), (2, 0.05)]
-    assert best["grasp"] == 2 and best["standoff_m"] == 0.05 and best["success"]
+        [(0, 0.05), (1, 0.05), (2, 0.05), (0, 0.10), (1, 0.10), (2, 0.10)]
+    assert best["grasp"] == 2 and best["standoff_m"] == 0.10 and best["success"]
     assert best["dt"] == 0.02 and np.asarray(best["positions"]).shape == (3, 6)
     assert all(c["joint_names"] == names and c["q"] == q for c in side.calls)
     # the first success stops the search
-    side = Sidecar([gr.tool0_goal(g[0][0], 0.10)])
+    side = Sidecar([gr.tool0_goal(g[0][0], 0.05)])
     rows, best = gr.attempts(g, q, names, side)
     assert len(rows) == 1 and best["grasp"] == 0
     rows, best = gr.attempts(g, q, names, Sidecar([]))

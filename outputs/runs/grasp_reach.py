@@ -17,13 +17,13 @@ the grasp along its approach. No motion; output is a plan to look at.
     /grasp/<obj>/reach_markers     rviz: the planned tool path (green), each
                                    tried tool0 goal as a triad, latched
 
-Standoffs: 10 cm first; only if no grasp reaches at 10 cm, 5 cm (backing off
-along an elevated approach moves the goal up and out, so a 10 cm failure is
-not yet a reach verdict).
+Standoffs: 5 cm first, 10 cm only if no grasp reaches at 5 cm. The approach
+from the standoff to the grasp is a BLIND straight line (grasp_exec), so the
+shorter the better; 10 cm stays as the fallback for a standoff that 5 cm puts
+in collision with the object itself.
 
 The teapot stays in the ESDF: the standoff is outside it, and the arm must
-avoid it on the way. Carving the target out is step 5's business (the
-fingers entering the handle).
+avoid it on the way. The blind approach is what then enters the handle.
 
 T_TOOL0_PAD (PROVISIONAL -- replaced by the ruler measurement, flange face to
 pad centre with the gripper closed on the handle, before any motion):
@@ -54,7 +54,7 @@ import numpy as np
 from scipy.spatial.transform import Rotation
 
 TOOL0_PAD_Z_M = 0.150          # PROVISIONAL, see the docstring
-STANDOFFS_M = (0.10, 0.05)
+STANDOFFS_M = (0.05, 0.10)
 CUROBO_ADDR = os.environ.get("CUROBO_ADDR", "tcp://127.0.0.1:5671")
 PLAN_TIMEOUT_MS = 600_000      # the first plan builds the MotionPlanner (warmup + graph capture)
 
