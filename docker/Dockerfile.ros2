@@ -95,6 +95,23 @@ RUN echo 'source /opt/ros/humble/setup.bash' >> /root/.bashrc && \
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ros-humble-robotiq-description && \
     rm -rf /var/lib/apt/lists/*
+
+# ---------------------------------------------------------------------------
+# Talking to the robot laptop (ros2-essentials): its stack runs CycloneDDS on
+# domain 66 (cells/<laptop>.env), and DDS vendors must match for reliable
+# discovery -- Humble's default here is Fast DDS. control_msgs carries the two
+# action types the executor uses (FollowJointTrajectory to the UR driver,
+# GripperCommand to the gripper node). ur-robot-driver + ur-description are
+# for the OFFLINE dry run only: the driver's mock hardware runs in this
+# container (outputs/runs/grasp_exec.py docstring); on the live robot the
+# driver runs on the laptop. A separate layer so the cached layers above
+# stay cached.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ros-humble-rmw-cyclonedds-cpp \
+    ros-humble-control-msgs \
+    ros-humble-ur-robot-driver \
+    ros-humble-ur-description && \
+    rm -rf /var/lib/apt/lists/*
 # Workspace is a bind mount -- created here only so WORKDIR exists image-side
 WORKDIR /root/ros2_ws
 
