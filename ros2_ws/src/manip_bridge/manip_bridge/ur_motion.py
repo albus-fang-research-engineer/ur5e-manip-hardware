@@ -11,9 +11,12 @@ is sent. Pure numpy (+ manip_cbirrt's DH chain); no ROS.
                                 `step` metres from the previous solution; refuses
                                 a non-converged step, a joint jump (branch flip,
                                 singularity) or a joint-limit violation
-    retime(Q, ...)              trapezoidal speed profile along the path,
-                                every joint under v_max and a_max, at least
-                                min_duration long; returns times and velocities
+    retime(Q, ...)              for UNTIMED paths (the lines): trapezoidal
+                                speed profile along the path, every joint under
+                                v_max and a_max, at least min_duration long
+    scale_timed(Q, V, dt)       for TIMED paths (cuRobo's plan): keep the
+                                planner's profile, stretch time uniformly until
+                                every joint is under v_max and a_max
     check_start(q_now, q0)      refuses a trajectory whose first point is not
                                 where the robot is (a stale plan)
 
@@ -150,6 +153,24 @@ def retime(Q, v_max=UR5E_VMAX, a_max=UR5E_AMAX, min_duration=0.0):
     V = np.gradient(Q, t, axis=0)
     V[0] = V[-1] = 0.0
     return t, V
+
+
+def scale_timed(Q, V, dt, v_max=UR5E_VMAX, a_max=UR5E_AMAX):
+    """A trajectory that is ALREADY timed (cuRobo's: positions, velocities,
+    uniform dt) slowed by ONE uniform time factor k >= 1 until every joint is
+    under v_max and a_max: t = k * i * dt, V / k (accelerations / k^2). The
+    planner's profile is kept; it is only stretched, never reshaped. -> (t, V, k)."""
+    Q, V = np.asarray(Q, float), np.asarray(V, float)
+    v_max, a_max = np.broadcast_to(v_max, (6,)), np.broadcast_to(a_max, (6,))
+    if len(Q) < 2 or V.shape != Q.shape or not dt > 0:
+        raise MotionRefusal(f"timed trajectory needs matching positions/velocities and dt > 0 "
+                            f"(got {Q.shape}, {V.shape}, dt {dt})")
+    t0 = np.arange(len(Q)) * float(dt)
+    A = np.gradient(V, t0, axis=0)
+    k = max(1.0, float(np.max(np.abs(V) / v_max)), float(np.sqrt(np.max(np.abs(A) / a_max))))
+    V = V / k
+    V[0] = V[-1] = 0.0
+    return t0 * k, V, k
 
 
 def check_start(q_now_dh, q0_dh, tol=0.01):

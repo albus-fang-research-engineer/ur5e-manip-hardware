@@ -35,8 +35,11 @@ Checks the executor enforces:
     with the operator).
 
 Speeds: --speed is the fraction of the UR5e's joint limits (pi rad/s and,
-here, pi rad/s^2) for every trajectory; the straight lines additionally take
-at least length / --line-speed. Defaults: 10 %, 2 cm/s.
+here, pi rad/s^2) for every trajectory. The reach keeps cuRobo's own timing
+(positions, velocities, dt), stretched by one uniform factor until it is
+under those caps; the straight lines (untimed, from the line IK) get a
+trapezoidal profile and take at least length / --line-speed. Defaults:
+10 %, 2 cm/s.
 
 The arm goes through the UR driver's trajectory action
 (/<controller>/follow_joint_trajectory, joint names attached); the gripper
@@ -128,15 +131,25 @@ def _fields(seg):
     return {k: getattr(seg, k) for k in ("Q", "t", "V", "path", "note", "info")}
 
 
+def _timed(name, ch, Q, V, dt, speed, note=""):
+    """cuRobo's own timing, uniformly slowed to the --speed caps."""
+    from manip_bridge import ur_motion as um
+    t, V, k = um.scale_timed(Q, V, dt, um.UR5E_VMAX * speed, um.UR5E_AMAX * speed)
+    return Segment(name, "traj", Q=np.asarray(Q), t=t, V=V, path=um.tool_path(ch, Q),
+                   note=note, info={"time_scale": k, "planner_dt": float(dt)})
+
+
 def build(plan: dict, ch, speed=SPEED_FRAC, line_speed=LINE_SPEED_M_S) -> list[Segment]:
     """Every segment of the grasp-only run, from reach.json's plan. Raises
     ExecRefusal / MotionRefusal before anything moves."""
     from manip_bridge import ur_motion as um
     gr = _grasp_reach()
-    for k in ("positions", "joint_names", "T_base_e", "T_base_tool0_goal", "standoff_m"):
+    for k in ("positions", "velocities", "dt", "joint_names", "T_base_e", "T_base_tool0_goal",
+              "standoff_m"):
         if plan.get(k) is None:
             raise ExecRefusal(f"reach plan lacks {k!r} -- re-run grasp_reach")
     P = um.to_dh_path(plan["positions"], plan["joint_names"])
+    Vp = um.to_dh_path(plan["velocities"], plan["joint_names"])
     T_goal = np.asarray(plan["T_base_tool0_goal"], float)
     err = float(np.linalg.norm(ch.fk(P[-1])[:3, 3] - T_goal[:3, 3]))
     if err > GOAL_CHECK_M:
@@ -149,7 +162,8 @@ def build(plan: dict, ch, speed=SPEED_FRAC, line_speed=LINE_SPEED_M_S) -> list[S
     so = float(plan["standoff_m"])
     return [
         Segment("open", "gripper", gate=False, gap_m=OPEN_GAP_M, effort_n=CLOSE_EFFORT_N),
-        _traj("reach", ch, P, speed, note="(cuRobo plan, collision-checked)"),
+        _timed("reach", ch, P, Vp, float(plan["dt"]), speed,
+               note="(cuRobo plan + its own timing, collision-checked)"),
         _traj("approach", ch, Q_app, speed, min_duration=i_app["length_m"] / line_speed,
               note=f"(BLIND, {so*100:.0f} cm along the approach)", info=i_app),
         Segment("close", "gripper", gap_m=0.0, effort_n=CLOSE_EFFORT_N, note="(must detect an object)"),

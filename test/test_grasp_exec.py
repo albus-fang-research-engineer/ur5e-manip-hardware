@@ -36,13 +36,19 @@ def plan_for(ge, ch, standoff=0.05):
     q_end is exactly its standoff."""
     gr = ge._grasp_reach()
     q_end = Q0 + np.array([0.15, -0.1, 0.12, 0.05, -0.1, 0.2])
-    P = np.linspace(Q0, q_end, 40)
     T_goal = ch.fk(q_end)
     fwd = np.eye(4)
     fwd[2, 3] = standoff
     T_e = T_goal @ gr.T_tool0_pad() @ fwd
     idx = [um.DH_ORDER.index(n) for n in CUROBO_ORDER]
-    return {"positions": P[:, idx].tolist(), "joint_names": CUROBO_ORDER, "T_base_e": T_e.tolist(),
+    # cuRobo-style timing: smooth (zero end velocity) at dt, fast enough that
+    # the 10 % caps must stretch it
+    s = 0.5 - 0.5 * np.cos(np.linspace(0, np.pi, 40))
+    P = Q0 + np.outer(s, q_end - Q0)
+    dt = 0.02
+    V = np.gradient(P, dt, axis=0)
+    return {"positions": P[:, idx].tolist(), "velocities": V[:, idx].tolist(), "dt": dt,
+            "joint_names": CUROBO_ORDER, "T_base_e": T_e.tolist(),
             "T_base_tool0_goal": T_goal.tolist(), "standoff_m": standoff, "grasp": 0}
 
 
@@ -159,3 +165,22 @@ def test_jog_line_goes_straight_up_and_back(ge, ch):
     for s in (up, down):
         ge._do_traj(s, arm, [])
     np.testing.assert_allclose(arm.q(), Q0)
+
+
+def test_reach_keeps_curobos_timing_stretched_uniformly(ge, ch):
+    plan = plan_for(ge, ch)
+    reach = {s.name: s for s in ge.build(plan, ch)}["reach"]
+    k = reach.info["time_scale"]
+    assert k > 1                                                     # the caps did bind
+    np.testing.assert_allclose(reach.t, np.arange(40) * plan["dt"] * k)   # same profile, stretched
+    V_dh = um.to_dh_path(plan["velocities"], plan["joint_names"])
+    np.testing.assert_allclose(reach.V[1:-1], V_dh[1:-1] / k)
+    v_cap = np.pi * ge.SPEED_FRAC
+    assert np.abs(reach.V).max() <= v_cap * (1 + 1e-9)
+    A = np.gradient(reach.V, reach.t, axis=0)
+    assert np.abs(A).max() <= np.pi * ge.SPEED_FRAC * 1.05
+    # a slow plan is not slowed further
+    slow = dict(plan, velocities=(np.asarray(plan["velocities"]) * 0).tolist())
+    assert {s.name: s for s in ge.build(slow, ch)}["reach"].info["time_scale"] == 1.0
+    with pytest.raises(ge.ExecRefusal, match="velocities"):
+        ge.build({k2: v for k2, v in plan.items() if k2 != "velocities"}, ch)
