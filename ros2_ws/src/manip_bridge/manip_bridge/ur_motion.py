@@ -11,9 +11,10 @@ is sent. Pure numpy (+ manip_cbirrt's DH chain); no ROS.
                                 `step` metres from the previous solution; refuses
                                 a non-converged step, a joint jump (branch flip,
                                 singularity) or a joint-limit violation
-    retime(Q, ...)              for UNTIMED paths (the lines): trapezoidal
-                                speed profile along the path, every joint under
-                                v_max and a_max, at least min_duration long
+    time_optimal(Q, ...)        for UNTIMED paths (the lines; CBiRRT's at M4):
+                                TOPP-RA under per-joint v_max and a_max, at
+                                least min_duration long, its spline checked
+                                against the path it times
     scale_timed(Q, V, dt)       for TIMED paths (cuRobo's plan): keep the
                                 planner's profile, stretch time uniformly until
                                 every joint is under v_max and a_max
@@ -114,45 +115,51 @@ def line(ch, q0, p_goal, step=0.005, max_joint_step=0.15, tol_p=1e-4, tol_r=1e-3
     return np.array(Q), {"length_m": L, "n_steps": n, **worst}
 
 
-def retime(Q, v_max=UR5E_VMAX, a_max=UR5E_AMAX, min_duration=0.0):
-    """Times t (K,) from 0 and velocities V (K, 6) for the joint path Q (K, 6):
-    a trapezoidal profile in the path parameter s (cumulative max_i |dq_i| /
-    v_max_i), so no joint exceeds v_max; acceleration bounded by a_max along
-    the path (curvature terms ignored -- dense paths, slow runs). Stretched
-    uniformly to min_duration if shorter. V is the finite-difference
-    derivative, zero at both ends."""
-    Q = np.asarray(Q, float)
-    v_max, a_max = np.broadcast_to(v_max, (6,)), np.broadcast_to(a_max, (6,))
-    if len(Q) < 2:
-        raise MotionRefusal("a trajectory needs at least two points")
-    ds = np.max(np.abs(np.diff(Q, axis=0)) / v_max, axis=1)
-    s = np.r_[0.0, np.cumsum(ds)]
-    L = float(s[-1])
-    if L <= 0:
-        raise MotionRefusal("zero-length trajectory")
-    a = float(np.min(a_max / v_max))                 # path acceleration bound (1/s^2)
-    v = min(1.0, np.sqrt(a * L))                      # peak path speed (<= 1: joints at v_max)
-    t_a = v / a
-    s_a = 0.5 * a * t_a ** 2
-    T = 2 * t_a + (L - 2 * s_a) / v
+SAMPLE_DT = 0.02                 # s between the points sent to the controller
+SPLINE_TOL = 1e-3                # rad, spline vs the straight joint segments between waypoints
 
-    def t_of(x):
-        if x <= s_a:
-            return np.sqrt(2 * x / a)
-        if x <= L - s_a:
-            return t_a + (x - s_a) / v
-        return T - np.sqrt(max(2 * (L - x) / a, 0.0))
-    t = np.array([t_of(x) for x in s])
-    if min_duration > T:
-        t *= min_duration / T
-    t = np.maximum.accumulate(t)
-    # strictly increasing for the controller
-    for i in range(1, len(t)):
-        if t[i] <= t[i - 1]:
-            t[i] = t[i - 1] + 1e-4
-    V = np.gradient(Q, t, axis=0)
-    V[0] = V[-1] = 0.0
-    return t, V
+
+def time_optimal(Q, v_max=UR5E_VMAX, a_max=UR5E_AMAX, min_duration=0.0, dt=SAMPLE_DT):
+    """TOPP-RA: the time-optimal timing of the UNTIMED joint path Q (K, 6)
+    under per-joint velocity and acceleration limits, exact along the path
+    (the path-curvature terms included), from rest to rest. Stretched
+    uniformly to min_duration if faster. TOPP-RA times a cubic spline through
+    the waypoints, so the spline is first checked against the straight joint
+    segments it replaces (SPLINE_TOL at every segment midpoint): a spline that
+    swings away from the checked path is refused, not executed. Returns
+    (t, Q_s, V_s) sampled every dt, first and last points exactly Q's."""
+    import toppra as ta
+    import toppra.algorithm as algo
+    import toppra.constraint as constraint
+
+    Q = np.asarray(Q, float)
+    keep = np.r_[True, np.linalg.norm(np.diff(Q, axis=0), axis=1) > 1e-9]
+    Q = Q[keep]
+    if len(Q) < 2:
+        raise MotionRefusal("zero-length trajectory")
+    v_max, a_max = np.broadcast_to(v_max, (6,)), np.broadcast_to(a_max, (6,))
+    d = np.r_[0.0, np.cumsum(np.linalg.norm(np.diff(Q, axis=0), axis=1))]
+    ss = d / d[-1]
+    path = ta.SplineInterpolator(ss, Q)
+    mid = 0.5 * (ss[1:] + ss[:-1])
+    dev = float(np.max(np.abs(path(mid) - 0.5 * (Q[1:] + Q[:-1]))))
+    if dev > SPLINE_TOL:
+        raise MotionRefusal(f"the timing spline leaves the joint path by {dev:.4f} rad "
+                            f"(> {SPLINE_TOL}): waypoints too sparse for their turns -- densify")
+    inst = algo.TOPPRA([constraint.JointVelocityConstraint(np.stack([-v_max, v_max], 1)),
+                        constraint.JointAccelerationConstraint(np.stack([-a_max, a_max], 1))],
+                       path, parametrizer="ParametrizeConstAccel")
+    traj = inst.compute_trajectory(0.0, 0.0)
+    if traj is None:
+        raise MotionRefusal("TOPP-RA found no feasible timing for this path")
+    T = float(traj.duration)
+    k = max(1.0, float(min_duration) / T) if T > 0 else 1.0     # the stretch
+    n = max(2, int(np.ceil(T * k / dt)) + 1)                     # dt apart AFTER it
+    ts = np.linspace(0.0, T, n)
+    Qs, Vs = traj(ts), traj(ts, 1)
+    Qs[0], Qs[-1] = Q[0], Q[-1]
+    Vs[0] = Vs[-1] = 0.0
+    return ts * k, Qs, Vs / k
 
 
 def scale_timed(Q, V, dt, v_max=UR5E_VMAX, a_max=UR5E_AMAX):

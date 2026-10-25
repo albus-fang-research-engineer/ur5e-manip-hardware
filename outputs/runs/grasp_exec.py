@@ -37,9 +37,9 @@ Checks the executor enforces:
 Speeds: --speed is the fraction of the UR5e's joint limits (pi rad/s and,
 here, pi rad/s^2) for every trajectory. The reach keeps cuRobo's own timing
 (positions, velocities, dt), stretched by one uniform factor until it is
-under those caps; the straight lines (untimed, from the line IK) get a
-trapezoidal profile and take at least length / --line-speed. Defaults:
-10 %, 2 cm/s.
+under those caps; the straight lines (untimed, from the line IK) are timed
+by TOPP-RA under the same caps and take at least length / --line-speed.
+Defaults: 10 %, 2 cm/s.
 
 The arm goes through the UR driver's trajectory action
 (/<controller>/follow_joint_trajectory, joint names attached); the gripper
@@ -122,8 +122,9 @@ class Segment:
 
 def _traj(name, ch, Q, speed, min_duration=0.0, note="", info=None):
     from manip_bridge import ur_motion as um
-    t, V = um.retime(Q, um.UR5E_VMAX * speed, um.UR5E_AMAX * speed, min_duration=min_duration)
-    return Segment(name, "traj", Q=np.asarray(Q), t=t, V=V, path=um.tool_path(ch, Q),
+    t, Qs, V = um.time_optimal(Q, um.UR5E_VMAX * speed, um.UR5E_AMAX * speed,
+                               min_duration=min_duration)
+    return Segment(name, "traj", Q=Qs, t=t, V=V, path=um.tool_path(ch, Qs),
                    note=note, info=info or {})
 
 

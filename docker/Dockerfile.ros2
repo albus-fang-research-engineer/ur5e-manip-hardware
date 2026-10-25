@@ -112,6 +112,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ros-humble-ur-robot-driver \
     ros-humble-ur-description && \
     rm -rf /var/lib/apt/lists/*
+
+# TOPP-RA: time-optimal timing of the untimed joint paths the executor sends
+# (the straight lines now, CBiRRT's plan_constrained paths at M4). A cp310
+# manylinux wheel -- no compile. Last layer, so nothing above rebuilds.
+RUN pip3 install --no-cache-dir toppra==0.6.10
 # Workspace is a bind mount -- created here only so WORKDIR exists image-side
 WORKDIR /root/ros2_ws
 

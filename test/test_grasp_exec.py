@@ -12,6 +12,7 @@ import pytest
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "ros2_ws" / "src" / "manip_bridge"))
 pytest.importorskip("manip_cbirrt", reason="PYTHONPATH=../manip-cbirrt")
+pytest.importorskip("toppra", reason="pip install toppra")
 from manip_bridge import ur_motion as um  # noqa: E402
 
 Q0 = np.array([2.8166, -1.2194, 1.0823, -0.1403, 2.4661, 1.0577])
@@ -68,9 +69,13 @@ def test_build_segments(ge, ch):
     # lift: 5 cm straight up in base z
     dz = ch.fk(by["lift"].Q[-1])[:3, 3] - T_app_end[:3, 3]
     np.testing.assert_allclose(dz, [0, 0, ge.LIFT_M], atol=2e-4)
-    # put back = the same joint paths reversed
-    np.testing.assert_array_equal(by["lower"].Q, by["lift"].Q[::-1])
-    np.testing.assert_array_equal(by["retreat"].Q, by["approach"].Q[::-1])
+    # put back = the same paths reversed: same ends, swapped, and the same line
+    for back, fwd_ in (("lower", "lift"), ("retreat", "approach")):
+        np.testing.assert_array_equal(by[back].Q[0], by[fwd_].Q[-1])
+        np.testing.assert_array_equal(by[back].Q[-1], by[fwd_].Q[0])
+        P, a0, a1 = by[back].path, by[fwd_].path[0], by[fwd_].path[-1]
+        u = (a1 - a0) / np.linalg.norm(a1 - a0)
+        assert np.linalg.norm((P - a0) - np.outer((P - a0) @ u, u), axis=1).max() < 3e-4
     # blind lines go at the line speed at most
     for n in ("approach", "lift", "lower", "retreat"):
         s = by[n]
@@ -159,7 +164,10 @@ def test_jog_line_goes_straight_up_and_back(ge, ch):
     spec.loader.exec_module(jl)
     up, down = jl.build(ge, ch, Q0, 0.03, 0.1, 0.01)
     np.testing.assert_allclose(up.path[-1] - up.path[0], [0, 0, 0.03], atol=2e-4)
-    np.testing.assert_array_equal(down.Q, up.Q[::-1])
+    np.testing.assert_array_equal(down.Q[0], up.Q[-1])
+    np.testing.assert_array_equal(down.Q[-1], up.Q[0])
+    d = up.path - up.path[0]
+    assert np.abs(d[:, :2]).max() < 3e-4                           # straight up in base z
     assert up.t[-1] >= 3.0 - 1e-6 and down.t[-1] >= 3.0 - 1e-6       # 3 cm at 1 cm/s
     arm = FakeArm(Q0)
     for s in (up, down):

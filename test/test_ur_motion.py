@@ -44,20 +44,40 @@ def test_line_refuses_an_unreachable_goal(ch):
         um.line(ch, Q0, [2.0, 0.0, 0.5])
 
 
-def test_retime_respects_speed_and_acceleration_and_min_duration():
-    Q = np.linspace(Q0, Q0 + [0.5, -0.3, 0.2, 0.0, 0.0, 0.4], 200)
+def test_time_optimal_respects_limits_ends_exactly_and_stretches():
+    pytest.importorskip("toppra")
+    # a bent joint path (two legs, densely sampled), the kind a planner returns
+    knee = Q0 + [0.4, -0.2, 0.1, 0.0, 0.0, 0.3]
+    s = np.linspace(0, 1, 60)[:, None]
+    leg1 = Q0 + s * (knee - Q0)
+    leg2 = knee + s[1:] * ([0.1, 0.3, -0.2, 0.2, 0.0, 0.0])
+    Q = np.vstack([leg1, leg2])
     v, a = um.UR5E_VMAX * 0.1, um.UR5E_AMAX * 0.1
-    t, V = um.retime(Q, v, a)
-    assert t[0] == 0 and np.all(np.diff(t) > 0)
-    assert np.all(np.abs(V) <= v * 1.02)
-    A = np.gradient(V, t, axis=0)
-    assert np.abs(A).max() <= a.max() * 1.1
+    t, Qs, V = um.time_optimal(Q, v, a)
+    assert t[0] == 0 and np.all(np.diff(t) > 0) and np.diff(t).max() <= um.SAMPLE_DT + 1e-9
+    np.testing.assert_array_equal(Qs[0], Q[0])
+    np.testing.assert_array_equal(Qs[-1], Q[-1])
     np.testing.assert_array_equal(V[0], 0.0)
     np.testing.assert_array_equal(V[-1], 0.0)
-    t2, _ = um.retime(Q, v, a, min_duration=30.0)
-    assert t2[-1] == pytest.approx(30.0)
-    with pytest.raises(um.MotionRefusal):
-        um.retime(np.stack([Q0, Q0]))
+    assert np.all(np.abs(V) <= v * 1.02)
+    A = np.gradient(V, t, axis=0)
+    assert np.abs(A).max() <= a.max() * 1.15                 # finite-difference slack
+    # time-optimal: no slower than a velocity-limited lower bound allows, and
+    # faster than one uniform profile at the worst segment's pace would be
+    T_v = np.sum(np.max(np.abs(np.diff(Q, axis=0)) / v, axis=1))
+    assert T_v <= t[-1] < T_v + 2 * v.max() / a.min() + 0.1
+    t2, _, V2 = um.time_optimal(Q, v, a, min_duration=30.0)
+    assert t2[-1] == pytest.approx(30.0) and np.abs(V2).max() < np.abs(V).max()
+    assert np.diff(t2).max() <= um.SAMPLE_DT + 1e-9               # still dt apart after the stretch
+    with pytest.raises(um.MotionRefusal, match="zero-length"):
+        um.time_optimal(np.stack([Q0, Q0]))
+
+
+def test_time_optimal_refuses_a_spline_that_leaves_sparse_waypoints():
+    pytest.importorskip("toppra")
+    corner = np.stack([Q0, Q0 + [0.6, 0, 0, 0, 0, 0], Q0 + [0.6, 0.6, 0, 0, 0, 0], Q0 + [0, 0.6, 0, 0, 0, 0]])
+    with pytest.raises(um.MotionRefusal, match="leaves the joint path"):
+        um.time_optimal(corner)
 
 
 def test_names_and_start_check():
