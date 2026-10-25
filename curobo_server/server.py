@@ -64,9 +64,12 @@ Wire protocol (msgpack + msgpack_numpy, REQ/REP):
   {"cmd": "integrate", ...as above...,
    "q": [6] float,                    # joint positions
    "joint_names": [...],              # names for q; reordered to kinematics
-   "T_base_cam": 4x4 float32}         # camera in ROBOT BASE frame; omit to
+   "T_base_cam": 4x4 float32,         # camera in ROBOT BASE frame; omit to
                                       #   reuse "pose" (map frame == base)
+   "return_held_mask": false}         # optional; reply carries the held mask
       -> {"ok": True, "n_masked": int}
+         + while an object is held: "n_masked_held": int, "T_base_tool0": 4x4
+           (the FK the held mask used), "held_mask": HxW uint8 if asked
 
   {"cmd": "robot_mask",               # debug: mask only, no integration
    "depth": HxW float32 (m), "intrinsics": 3x3,
@@ -112,21 +115,30 @@ Wire protocol (msgpack + msgpack_numpy, REQ/REP):
 
   {"cmd": "reset"}                              -> {"ok": True}
   {"cmd": "clear_region", "min": [..], "max": [..]} -> {"ok": True, "n_cleared": int}
-  {"cmd": "freeze", "on": true|false}           -> {"ok": True, "frozen": bool}
-      while frozen, "integrate" changes nothing and answers {"ok": True,
-      "frozen": True}: curobo_bridge re-integrates live depth at 2 Hz, so a
-      clear_region would be undone within half a second, and an object in the
-      gripper would be integrated as an obstacle at the gripper. ORDER:
-      freeze, THEN clear. While frozen the map is blind to anything new in
-      the scene; the executor's reduced speed and stop-at-gate (not written
-      yet) cover that.
+  {"cmd": "hold", "spheres": (N,4) in tool0,
+   "threshold": float optional}                 -> {"ok": True, "n_spheres": int,
+                                                    "threshold": float}
+  {"cmd": "release"}                            -> {"ok": True, "was_held": bool}
+      Held-object mask (held_mask.py). While held, every integrate also
+      drops the depth pixels within `threshold` (default: the robot mask's
+      distance_threshold) of the held spheres' surfaces, posed by FK of tool0
+      at the frame's q -- the map stays live and never sees the object in
+      the gripper (ReKep's approach, geometric instead of a 2D tracker). The
+      spheres are the same tool0-frame spheres plan_constrained gets as
+      attached_spheres. An integrate WITHOUT q while held is refused (the
+      object would enter the map). reset / clear_region / load leave the
+      hold as it is; only release ends it. ORDER: close -> hold -> lift ->
+      clear the pre-grasp footprint once -> carry -> place -> open ->
+      release.
   {"cmd": "fit_spheres", "vertices": (V,3), "faces": (F,3),
-   "num_spheres": 16}                           -> {"ok": True, "spheres": (N,4)}
-      curobo.sphere_fit.fit_spheres_to_mesh (VOXEL, the fit
-      test_curobo_robot_model.py validates on a teapot), in the mesh's own
-      frame: (x, y, z, r). For a carried object: fit once on its tracked
-      mesh, move into tool0 with the grasp transform, send as
-      plan_constrained's attached_spheres (16 attached_object slots).
+   "num_spheres": 16}                           -> {"ok": True, "spheres": (N,4),
+                                                    "metrics": {...}}
+      curobo.sphere_fit.fit_spheres_to_mesh, MORPHIT (cuRobo's default:
+      VOXEL seeding + optimisation against coverage gaps and protrusion), in
+      the mesh's own frame: (x, y, z, r). "metrics" is cuRobo's
+      SphereFitMetrics (coverage, protrusion, surface_gap_p95,
+      max_uncovered_gap, ...); max_uncovered_gap below the hold threshold
+      means the held mask cannot leak the object's surface into the map.
   {"cmd": "save",  "name": "scene.pt"}          -> {"ok": True, "path": str}
   {"cmd": "load",  "name": "scene.pt",
    "import_weight": null,             # optional; null preserves saved weights
@@ -158,6 +170,8 @@ msgpack_numpy.patch()
 
 from curobo.perception import Mapper, MapperCfg
 from curobo.types import CameraObservation, Pose
+
+import held_mask  # noqa: E402  -- sibling module, pure numpy
 
 PORT = int(os.environ.get("CUROBO_PORT", "5671"))
 BLOCKS_DIR = os.environ.get("CUROBO_BLOCKS_DIR", "/data/tsdf_blocks")
@@ -442,23 +456,62 @@ def _plan(state, msg):
 
 
 def _fit_spheres(msg):
+    import dataclasses
+
     import trimesh
-    from curobo._src.geom.sphere_fit.types import SphereFitType
-    from curobo.sphere_fit import fit_spheres_to_mesh
+    from curobo.sphere_fit import SphereFitType, fit_spheres_to_mesh
 
     V = np.asarray(msg["vertices"], np.float64).reshape(-1, 3)
     F = np.asarray(msg["faces"], np.int64).reshape(-1, 3)
     n = int(msg.get("num_spheres", 16))
     mesh = trimesh.Trimesh(vertices=V, faces=F, process=False)
-    res = fit_spheres_to_mesh(mesh, num_spheres=n, fit_type=SphereFitType.VOXEL,
-                              iterations=60)
+    res = fit_spheres_to_mesh(mesh, num_spheres=n, fit_type=SphereFitType.MORPHIT,
+                              compute_metrics=True)
     c = res.centers.detach().cpu().numpy().reshape(-1, 3)
     r = res.radii.detach().cpu().numpy().reshape(-1)
     keep = r > 0
     sph = np.concatenate([c[keep], r[keep, None]], axis=1).astype(np.float32)
-    log.info("fit_spheres: %d verts / %d faces -> %d spheres (asked %d)",
-             len(V), len(F), len(sph), n)
-    return {"ok": True, "spheres": sph, "fit_type": "voxel", "num_spheres": n}
+    metrics = ({k: float(v) for k, v in dataclasses.asdict(res.metrics).items()}
+               if res.metrics is not None else {})
+    log.info("fit_spheres: %d verts / %d faces -> %d spheres (asked %d), max gap %.4f m",
+             len(V), len(F), len(sph), n, metrics.get("max_uncovered_gap", float("nan")))
+    return {"ok": True, "spheres": sph, "fit_type": "morphit", "num_spheres": n,
+            "metrics": metrics}
+
+
+def _quat_wxyz_to_R(q):
+    w, x, y, z = (float(a) for a in q)
+    return np.array([[1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y)],
+                     [2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x)],
+                     [2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y)]])
+
+
+def _T_base_tool0(state, q, joint_names):
+    """tool0 in base at q, by the segmenter's own kinematics (public
+    RobotSegmenter.kinematics -> compute_kinematics -> tool_poses), so the
+    held mask and the robot mask see the arm in the same place."""
+    kin = state["segmenter"].kinematics
+    js = _joint_state(q, joint_names, kin.joint_names)
+    p = kin.compute_kinematics(js).tool_poses.get_link_pose("tool0")
+    T = np.eye(4)
+    T[:3, :3] = _quat_wxyz_to_R(p.quaternion.detach().cpu().numpy().reshape(4))
+    T[:3, 3] = p.position.detach().cpu().numpy().reshape(3)
+    return T
+
+
+def _hold(state, msg):
+    S = np.asarray(msg["spheres"], np.float64).reshape(-1, 4)
+    if len(S) == 0 or not np.all(S[:, 3] > 0) or not np.all(np.isfinite(S)):
+        raise ValueError(f"hold: spheres must be (N>0, 4) with r > 0, got {S.shape}")
+    if msg.get("threshold") is not None:
+        thr = float(msg["threshold"])
+    elif state.get("segmenter") is not None:
+        thr = float(state["segmenter"].distance_threshold)
+    else:
+        thr = SEG_THRESHOLD
+    state["held"] = {"spheres": S, "threshold": thr}
+    log.info("hold: %d spheres in tool0, mask threshold %.3f m", len(S), thr)
+    return {"ok": True, "n_spheres": len(S), "threshold": thr}
 
 
 def handle(msg, state):
@@ -479,18 +532,25 @@ def handle(msg, state):
         state["cbirrt"] = None
         return {"ok": True, "memory_mb": state["mapper"].memory_usage_mb()}
 
-    if cmd == "freeze":
-        state["frozen"] = bool(msg.get("on", True))
-        log.info("map %s", "FROZEN (integrate ignored)" if state["frozen"] else "live")
-        return {"ok": True, "frozen": state["frozen"]}
+    if cmd == "hold":
+        return _hold(state, msg)
+
+    if cmd == "release":
+        was = state.get("held") is not None
+        state["held"] = None
+        log.info("release (was %s)", "held" if was else "not held")
+        return {"ok": True, "was_held": was}
 
     if cmd == "fit_spheres":
         return _fit_spheres(msg)
 
     if cmd == "integrate":
-        if state.get("frozen"):
-            return {"ok": True, "frozen": True}
+        held = state.get("held")
+        if held is not None and msg.get("q") is None:
+            raise ValueError("an object is held: integrate needs q + joint_names for the "
+                             "held-object mask (without them the object would enter the map)")
         n_masked = None
+        rep = {"ok": True}
         if msg.get("q") is not None:
             if state.get("segmenter") is None:
                 _load_robot(state)
@@ -501,8 +561,18 @@ def handle(msg, state):
             n_masked = int(mask.sum().item())
             msg = dict(msg)
             msg["depth"] = filtered.squeeze(0).detach().cpu().numpy()
+            if held is not None:
+                T_bt = _T_base_tool0(state, msg["q"], msg["joint_names"])
+                hm = held_mask.held_mask(msg["depth"], msg["intrinsics"], T_bc,
+                                         held_mask.spheres_to_base(held["spheres"], T_bt),
+                                         held["threshold"])
+                depth = np.array(msg["depth"], np.float32, copy=True)
+                depth.reshape(hm.shape)[hm] = 0.0
+                msg["depth"] = depth
+                rep.update({"n_masked_held": int(hm.sum()), "T_base_tool0": T_bt.tolist()})
+                if msg.get("return_held_mask"):
+                    rep["held_mask"] = hm.astype(np.uint8)
         mapper.integrate(camera_observation=make_observation(msg, cfg))
-        rep = {"ok": True}
         if n_masked is not None:
             rep["n_masked"] = n_masked
         return rep
@@ -640,7 +710,7 @@ def main():
     log.info("building mapper (first CUDA kernel compile happens on first integrate)...")
     kw = default_cfg_kwargs()
     mapper, cfg = build_mapper(**kw)
-    state = {"mapper": mapper, "cfg": cfg, "cfg_kwargs": kw, "frozen": False}
+    state = {"mapper": mapper, "cfg": cfg, "cfg_kwargs": kw, "held": None}
 
     if os.environ.get("CUROBO_VISUALIZE"):
         from curobo.viewer import ViserVisualizer  # noqa: F401 -- lazy opt-in

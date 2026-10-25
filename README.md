@@ -936,22 +936,32 @@ in `axis_source`. Direction semantics are call #3's, which waits for the
 two-object recording; milestone 3's grasp takes the point from here and its
 approach from its own corridor TSR.
 
-## The grasped object out of the map (`manip_bridge/scene_ops.py`, milestone 3)
+## The held object out of the map (`manip_bridge/scene_ops.py`, `curobo_server/held_mask.py`)
 
-Before the fingers enter the handle, the grasped object's own voxels have to
-leave the cuRobo map (or the approach and the lift start in collision), and
-after closure it travels as spheres on tool0. Three sidecar commands:
+The grasp itself is blind from the standoff (straight approach, close,
+straight lift), so nothing here is on its path. From the first carry plan
+on, the object in the gripper must be part of the robot for the planner and
+absent from the map. Sidecar commands:
 
-    {"cmd": "freeze", "on": true|false}            integrate becomes a no-op
-    {"cmd": "clear_region", "min": [3], "max": [3]} unobserve an AABB (base)
+    {"cmd": "hold", "spheres": (N,4) tool0, "threshold": opt}   start the held mask
+    {"cmd": "release"}                                          end it
+    {"cmd": "clear_region", "min": [3], "max": [3]}             unobserve an AABB (base)
     {"cmd": "fit_spheres", "vertices", "faces", "num_spheres": 16}
 
-**Order: freeze, THEN clear.** `curobo_bridge` re-integrates live depth at
-2 Hz with no pause; unfrozen, a clear is undone within half a second, and an
-object in the gripper is integrated as an obstacle at the gripper. **While
-frozen the map is blind** to anything that moves or appears in the scene;
-the executor's reduced speed and stop-at-gate (not written yet) cover that. Unfreeze
-after the object is released.
+**Held mask.** While held, every integrate drops the depth pixels within
+`threshold` (default: the robot mask's 6 cm) of the held spheres' surfaces,
+posed by FK of tool0 at the frame's `q` -- the same rule the robot mask
+applies to the arm, and ReKep's approach (it masks the grasped object out of
+a live nvblox map; we mask by geometry instead of a 2D tracker). The map
+stays live. An integrate without `q` while held is refused, not
+integrated. `curobo_bridge` sends `q` on every frame when `self_mask` is on
+(the default).
+
+**Order:** standoff -> blind approach -> close -> **hold** -> blind lift ->
+clear the pre-grasp footprint once -> carry (`plan_constrained` with the
+same spheres as `attached_spheres`) -> place -> open -> **release** ->
+retreat. The footprint clear is needed even with the map live: the lifted
+object hides where it stood from the camera.
 
 `scene_ops` (pure numpy; `object_spheres` is one cached sidecar call):
 
@@ -969,13 +979,22 @@ after the object is released.
   the real handle remain, raise the margin for that run and record it.
 - `T_ee_body(T_base_tool0, T_base_obj)` is the planned grasp transform; the
   executor replaces it with the one measured after closure.
-  `spheres_tool0(object_spheres(...), T_ee_body)` is `plan_constrained`'s
-  `attached_spheres` (16 slots). The fit is cached per mesh sha256 at
-  `<run>/objects/<key>/spheres_body.json`.
+  `spheres_tool0(object_spheres(...), T_ee_body)` is both `hold`'s spheres
+  and `plan_constrained`'s `attached_spheres` (16 slots). The fit (MORPHIT)
+  is cached per mesh sha256 at `<run>/objects/<key>/spheres_body.json`; its
+  `max_uncovered_gap` must stay below the hold threshold or the object's
+  surface leaks into the map.
 
-Sidecar checks: `python -m pytest test/test_curobo_scene_ops.py -v -s`
-(freeze leaves the ESDF bit-identical under integrate; fit_spheres wraps
-object-sized boxes in <= 16 spheres).
+Checks:
+
+    python -m pytest test/test_held_mask.py -v                  # offline geometry
+    PYTHONPATH=../manip-cbirrt python -m pytest test/test_curobo_scene_ops.py -v -s   # sidecar up
+
+The sidecar test holds one huge sphere (wiring: nothing integrates; refused
+without `q`; release restores) and one small sphere placed through an
+independent FK (manip_cbirrt's DH chain) on a known table point: that
+probe goes unobserved while one 20 cm away is untouched -- the check on
+FK, joint order and frames.
 
 ## Orient Anything V2 sidecar (port 5673)
 

@@ -7,9 +7,13 @@ not in the repo, so the objects stand in as their bounding boxes -- exact
 for the clear box's extent along the body axes (final_mesh is bbox-centred),
 a superset of the real shape everywhere else.
 
-The real-mesh version of the teapot-vs-mug check runs where the run is:
+Two real-mesh checks run where the run is (the ROS2 container mounts
+/data/runs and /data/any6d; the second also needs the cuRobo sidecar):
 
     SCENE_OPS_RUN=/data/runs/20261023_032004 python3 -m pytest test/test_scene_ops.py -v -s
+        -k real_meshes        the teapot's clear box vs the mug
+        -k real_mesh_spheres  MORPHIT spheres cover the surface at the 6 cm mask
+                              threshold (SCENE_OPS_KEY=m2 by default)
 """
 import json
 import os
@@ -236,3 +240,34 @@ def test_object_spheres_cached_per_mesh_sha(tmp_path):
     assert fit.calls == 2 and S2[0, 3] == pytest.approx(0.02)
     so.object_spheres(mesh, cache, fit, num_spheres=8)      # a different count -> refit
     assert fit.calls == 3
+
+
+@pytest.mark.skipif(not os.environ.get("SCENE_OPS_RUN"), reason="set SCENE_OPS_RUN=<run dir>")
+def test_real_mesh_spheres_cover_the_surface_at_the_mask_threshold():
+    """The sidecar's held mask drops pixels within 6 cm of a held sphere's
+    surface, so a mesh surface point farther than that from every sphere
+    would leak into the map while the object is held. MORPHIT, 16 spheres,
+    on the tracked mesh; reports the worst point (the spout tip is the
+    suspect). Needs the cuRobo sidecar ($CUROBO_ADDR, default localhost)."""
+    from manip_bridge.zmq_client import SidecarClient
+    thr = 0.06
+    run = Path(os.environ["SCENE_OPS_RUN"])
+    key = os.environ.get("SCENE_OPS_KEY", "m2")
+    s = json.loads((run / "summary.json").read_text())
+    mesh = trimesh.load(so.mesh_path(s, key), force="mesh", process=False)
+    cli = SidecarClient(os.environ.get("CUROBO_ADDR", "tcp://127.0.0.1:5671"), timeout_ms=600_000)
+    rep = cli.call({"cmd": "fit_spheres", "vertices": np.asarray(mesh.vertices, np.float32),
+                    "faces": np.asarray(mesh.faces, np.int32), "num_spheres": 16})
+    assert rep.get("ok"), rep.get("error")
+    S = np.asarray(rep["spheres"], float)
+    pts = mesh.sample(20000)
+    gap = (np.linalg.norm(pts[:, None] - S[None, :, :3], axis=-1) - S[None, :, 3]).min(axis=1)
+    k = int(np.argmax(gap))
+    frac = float((gap < thr).mean())
+    print(f"\n[spheres] {key} ({rep.get('fit_type')}): {len(S)} spheres, cuRobo metrics "
+          f"{ {m: round(v, 4) for m, v in (rep.get('metrics') or {}).items()} }")
+    print(f"[spheres] {key}: surface within {thr*100:.0f} cm of a sphere: {frac:.4f}; worst gap "
+          f"{gap[k]*100:.1f} cm at body {np.round(pts[k], 3).tolist()} "
+          f"(mesh extents {np.round(mesh.extents, 3).tolist()})")
+    assert len(S) <= 16
+    assert frac >= 0.99, "the held mask would leak this object's surface into the map"

@@ -24,7 +24,9 @@ Pure numpy except object_spheres (one sidecar call, cached). No sim code.
                                  the executor replaces it with the measured
                                  one after the gripper closes
     spheres_tool0(S_body, T)     sphere centres moved into tool0, radii kept:
-                                 plan_constrained's attached_spheres
+                                 plan_constrained's attached_spheres AND the
+                                 sidecar's hold (held-object depth mask) --
+                                 one source for both
     object_spheres(...)          the sidecar's fit_spheres on the tracked mesh,
                                  cached per mesh sha256
 
@@ -34,9 +36,10 @@ lever: after clearing, look at the ESDF around the handle in rviz, and if
 voxels of the real handle remain, raise the margin for that run and record
 it.
 
-Map ORDER (the sidecar's freeze): freeze, then clear -- curobo_bridge
-re-integrates live depth at 2 Hz and would undo a clear within half a
-second.
+Map ORDER: close -> hold (the sidecar masks the held object out of every
+integrated frame; the map stays live) -> blind lift -> clear the pre-grasp
+footprint once (the lifted object hides it from the camera, so live depth
+cannot) -> carry -> place -> open -> release.
 """
 from __future__ import annotations
 
