@@ -132,13 +132,15 @@ Wire protocol (msgpack + msgpack_numpy, REQ/REP):
       release.
   {"cmd": "fit_spheres", "vertices": (V,3), "faces": (F,3),
    "num_spheres": 16}                           -> {"ok": True, "spheres": (N,4),
-                                                    "metrics": {...}}
+                                                    "fitted_to": str, "metrics": {...}}
       curobo.sphere_fit.fit_spheres_to_mesh, MORPHIT (cuRobo's default:
       VOXEL seeding + optimisation against coverage gaps and protrusion), in
       the mesh's own frame: (x, y, z, r). "metrics" is cuRobo's
       SphereFitMetrics (coverage, protrusion, surface_gap_p95,
       max_uncovered_gap, ...); max_uncovered_gap below the hold threshold
       means the held mask cannot leak the object's surface into the map.
+      A NON-WATERTIGHT mesh is fitted as its convex hull ("fitted_to" says
+      which): inside/outside is undefined otherwise and the fit degenerates.
   {"cmd": "save",  "name": "scene.pt"}          -> {"ok": True, "path": str}
   {"cmd": "load",  "name": "scene.pt",
    "import_weight": null,             # optional; null preserves saved weights
@@ -465,6 +467,18 @@ def _fit_spheres(msg):
     F = np.asarray(msg["faces"], np.int64).reshape(-1, 3)
     n = int(msg.get("num_spheres", 16))
     mesh = trimesh.Trimesh(vertices=V, faces=F, process=False)
+    # MORPHIT / VOXEL need inside vs outside. A non-watertight mesh (Any6D's
+    # final_mesh is: the 10/23 teapot read 24 cm3 against a 702 cm3 hull)
+    # gives degenerate fits (interior coverage ~0.01, a few tiny spheres), so
+    # fit its convex hull -- the fallback cuRobo itself applies to hollow
+    # watertight meshes. Conservative: fills the handle loop (nothing enters
+    # it but the fingers) and the spout-body wedge (could make a pour over a
+    # rim infeasible; a voxel-filled watertight copy keeps that gap, add it
+    # only if a pour plan fails on the wedge).
+    if mesh.is_watertight:
+        fitted_to = "mesh"
+    else:
+        mesh, fitted_to = mesh.convex_hull, "convex_hull (mesh not watertight)"
     res = fit_spheres_to_mesh(mesh, num_spheres=n, fit_type=SphereFitType.MORPHIT,
                               compute_metrics=True)
     c = res.centers.detach().cpu().numpy().reshape(-1, 3)
@@ -473,10 +487,11 @@ def _fit_spheres(msg):
     sph = np.concatenate([c[keep], r[keep, None]], axis=1).astype(np.float32)
     metrics = ({k: float(v) for k, v in dataclasses.asdict(res.metrics).items()}
                if res.metrics is not None else {})
-    log.info("fit_spheres: %d verts / %d faces -> %d spheres (asked %d), max gap %.4f m",
-             len(V), len(F), len(sph), n, metrics.get("max_uncovered_gap", float("nan")))
+    log.info("fit_spheres: %d verts / %d faces, fitted to %s -> %d spheres (asked %d), "
+             "coverage %.3f, max gap %.4f m", len(V), len(F), fitted_to, len(sph), n,
+             metrics.get("coverage", float("nan")), metrics.get("max_uncovered_gap", float("nan")))
     return {"ok": True, "spheres": sph, "fit_type": "morphit", "num_spheres": n,
-            "metrics": metrics}
+            "fitted_to": fitted_to, "metrics": metrics}
 
 
 def _quat_wxyz_to_R(q):

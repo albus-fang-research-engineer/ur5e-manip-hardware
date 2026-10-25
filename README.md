@@ -984,6 +984,14 @@ object hides where it stood from the camera.
   is cached per mesh sha256 at `<run>/objects/<key>/spheres_body.json`; its
   `max_uncovered_gap` must stay below the hold threshold or the object's
   surface leaks into the map.
+- A non-watertight mesh (Any6D's `final_mesh` is one) is fitted as its
+  **convex hull** (`fitted_to` in the reply): fitted raw, inside/outside is
+  undefined and the fit degenerates (10/23 teapot: interior coverage 0.00,
+  4-7 tiny spheres; hull: 7 spheres, coverage 0.97, worst surface gap
+  0.7 cm). The hull fills the handle loop (harmless: only the fingers go
+  there) and the spout-body wedge, which could make a pour over a rim
+  infeasible; a voxel-filled watertight copy keeps that gap, to add only if
+  a pour plan fails on the wedge.
 
 Checks:
 

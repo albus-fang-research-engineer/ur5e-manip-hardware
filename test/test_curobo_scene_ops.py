@@ -186,6 +186,7 @@ def test_fit_spheres_box_sanity(curobo, extents):
                     timeout_ms=FIRST_CALL_TIMEOUT)
     S = np.asarray(rep["spheres"], float)
     assert rep["fit_type"] == "morphit" and S.ndim == 2 and S.shape[1] == 4
+    assert rep["fitted_to"] == "mesh"                  # a box is watertight: no hull fallback
     assert 1 <= len(S) <= 16                           # fits the 16 attached_object slots
     assert np.all(S[:, 3] > 0)
     lo, hi = mesh.bounds

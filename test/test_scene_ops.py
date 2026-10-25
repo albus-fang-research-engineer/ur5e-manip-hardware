@@ -247,8 +247,9 @@ def test_real_mesh_spheres_cover_the_surface_at_the_mask_threshold():
     """The sidecar's held mask drops pixels within 6 cm of a held sphere's
     surface, so a mesh surface point farther than that from every sphere
     would leak into the map while the object is held. MORPHIT, 16 spheres,
-    on the tracked mesh; reports the worst point (the spout tip is the
-    suspect). Needs the cuRobo sidecar ($CUROBO_ADDR, default localhost)."""
+    on the tracked mesh (its convex hull when not watertight); the fit must
+    also model the object (cuRobo interior coverage >= 0.9). Reports the
+    worst point (the spout tip is the suspect). Needs the cuRobo sidecar ($CUROBO_ADDR, default localhost)."""
     from manip_bridge.zmq_client import SidecarClient
     thr = 0.06
     run = Path(os.environ["SCENE_OPS_RUN"])
@@ -269,5 +270,10 @@ def test_real_mesh_spheres_cover_the_surface_at_the_mask_threshold():
     print(f"[spheres] {key}: surface within {thr*100:.0f} cm of a sphere: {frac:.4f}; worst gap "
           f"{gap[k]*100:.1f} cm at body {np.round(pts[k], 3).tolist()} "
           f"(mesh extents {np.round(mesh.extents, 3).tolist()})")
+    print(f"[spheres] {key}: fitted to {rep.get('fitted_to')}")
     assert len(S) <= 16
+    # a degenerate fit (a non-watertight mesh fitted raw) can pass the 6 cm
+    # check by luck while modelling almost none of the object
+    assert (rep.get("metrics") or {}).get("coverage", 0.0) >= 0.9, \
+        "cuRobo's interior coverage < 0.9: the spheres do not model this object"
     assert frac >= 0.99, "the held mask would leak this object's surface into the map"
