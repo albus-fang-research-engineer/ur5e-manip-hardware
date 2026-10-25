@@ -145,3 +145,17 @@ def test_run_stops_when_the_arm_does_not_arrive(ge, ch):
             return True, "ok"
     with pytest.raises(ge.ExecRefusal, match="ended"):
         ge.run(segs, Short(Q0), Gripper(ge), lambda s: True, [])
+
+
+def test_jog_line_goes_straight_up_and_back(ge, ch):
+    spec = importlib.util.spec_from_file_location("jog_line", REPO / "outputs" / "runs" / "jog_line.py")
+    jl = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(jl)
+    up, down = jl.build(ge, ch, Q0, 0.03, 0.1, 0.01)
+    np.testing.assert_allclose(up.path[-1] - up.path[0], [0, 0, 0.03], atol=2e-4)
+    np.testing.assert_array_equal(down.Q, up.Q[::-1])
+    assert up.t[-1] >= 3.0 - 1e-6 and down.t[-1] >= 3.0 - 1e-6       # 3 cm at 1 cm/s
+    arm = FakeArm(Q0)
+    for s in (up, down):
+        ge._do_traj(s, arm, [])
+    np.testing.assert_allclose(arm.q(), Q0)

@@ -245,18 +245,111 @@ class MockGripper:
 
 # ------------------------------------------------------------------ ROS shell
 
-def _ros_main(a) -> int:
+def start_node(name):
+    """rclpy init + a node spun by a background executor (the action waits
+    below poll their futures from the main thread)."""
     import rclpy
-    from builtin_interfaces.msg import Duration
-    from control_msgs.action import FollowJointTrajectory, GripperCommand
-    from geometry_msgs.msg import Point
-    from rclpy.action import ActionClient
     from rclpy.executors import MultiThreadedExecutor
     from rclpy.node import Node
+    rclpy.init()
+    node = Node(name)
+    exe = MultiThreadedExecutor()
+    exe.add_node(node)
+    threading.Thread(target=exe.spin, daemon=True).start()
+    return node
+
+
+def _wait(fut, on_interrupt=None):
+    try:
+        while not fut.done():
+            time.sleep(0.01)
+    except KeyboardInterrupt:
+        if on_interrupt:
+            on_interrupt()
+        raise
+    return fut.result()
+
+
+class RosArm:
+    """The UR driver: /joint_states in, FollowJointTrajectory out (DH-order
+    names attached; the controller matches by name)."""
+
+    def __init__(self, node, controller):
+        from control_msgs.action import FollowJointTrajectory
+        from rclpy.action import ActionClient
+        from sensor_msgs.msg import JointState
+
+        from manip_bridge import ur_motion as um
+        self._um, self._js = um, {}
+        self._FJT = FollowJointTrajectory
+
+        def on_js(msg):
+            if all(n in msg.name for n in um.DH_ORDER):
+                self._js["q"] = um.to_dh(msg.position, msg.name)
+        node.create_subscription(JointState, "/joint_states", on_js, 10)
+        self.ac = ActionClient(node, FollowJointTrajectory, f"/{controller}/follow_joint_trajectory")
+        if not self.ac.wait_for_server(timeout_sec=10.0):
+            raise ExecRefusal(f"no /{controller}/follow_joint_trajectory action server -- "
+                              "is the UR driver up (and is that the active controller)?")
+
+    def q(self):
+        t_end = time.time() + 5.0
+        while "q" not in self._js and time.time() < t_end:
+            time.sleep(0.05)
+        if "q" not in self._js:
+            raise ExecRefusal("no /joint_states with all six UR arm joints")
+        time.sleep(0.2)                           # a fresh sample after motion
+        return self._js["q"].copy()
+
+    def execute(self, seg):
+        from builtin_interfaces.msg import Duration
+        from trajectory_msgs.msg import JointTrajectoryPoint
+        g = self._FJT.Goal()
+        g.trajectory.joint_names = list(self._um.DH_ORDER)
+        for k in range(1, len(seg.Q)):            # point 0 is where the robot is
+            p = JointTrajectoryPoint(positions=seg.Q[k].tolist(), velocities=seg.V[k].tolist())
+            sec = float(seg.t[k])
+            p.time_from_start = Duration(sec=int(sec), nanosec=int((sec % 1) * 1e9))
+            g.trajectory.points.append(p)
+        gh = _wait(self.ac.send_goal_async(g))
+        if not gh.accepted:
+            return False, "goal rejected"
+
+        def cancel():
+            gh.cancel_goal_async()
+            print("\n[exec] Ctrl-C: trajectory goal cancelled")
+        r = _wait(gh.get_result_async(), cancel).result
+        return r.error_code == 0, f"error_code {r.error_code} {r.error_string}".strip()
+
+
+class RosGripper:
+    """control_msgs/GripperCommand: position = jaw gap (m), stalled = gripped."""
+
+    def __init__(self, node, action):
+        from control_msgs.action import GripperCommand
+        from rclpy.action import ActionClient
+        self._GC = GripperCommand
+        self.ac = ActionClient(node, GripperCommand, action)
+        if not self.ac.wait_for_server(timeout_sec=10.0):
+            raise ExecRefusal(f"no {action} action server -- is the gripper node up on the robot "
+                              "laptop? (--mock for an in-process stand-in)")
+
+    def command(self, gap_m, effort_n):
+        g = self._GC.Goal()
+        g.command.position, g.command.max_effort = float(gap_m), float(effort_n)
+        gh = _wait(self.ac.send_goal_async(g))
+        if not gh.accepted:
+            raise ExecRefusal("gripper goal rejected")
+        r = _wait(gh.get_result_async()).result
+        return {"position": r.position, "effort": r.effort, "stalled": bool(r.stalled),
+                "reached_goal": bool(r.reached_goal)}
+
+
+def _ros_main(a) -> int:
+    import rclpy
+    from geometry_msgs.msg import Point
     from rclpy.qos import DurabilityPolicy, QoSProfile
-    from sensor_msgs.msg import JointState
     from std_msgs.msg import ColorRGBA, Header
-    from trajectory_msgs.msg import JointTrajectoryPoint
     from visualization_msgs.msg import Marker, MarkerArray
 
     from manip_bridge import ur_motion as um
@@ -271,11 +364,7 @@ def _ros_main(a) -> int:
     for s in segs:
         print("   ", s.summary())
 
-    rclpy.init()
-    node = Node("grasp_exec")
-    exe = MultiThreadedExecutor()
-    exe.add_node(node)
-    threading.Thread(target=exe.spin, daemon=True).start()
+    node = start_node("grasp_exec")
 
     latched = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
     pub = node.create_publisher(MarkerArray, "/grasp/exec_markers", latched)
@@ -295,81 +384,11 @@ def _ros_main(a) -> int:
         rclpy.shutdown()
         return 0
 
-    js = {}
-
-    def on_js(msg):
-        if all(n in msg.name for n in um.DH_ORDER):
-            js["q"] = um.to_dh(msg.position, msg.name)
-    node.create_subscription(JointState, "/joint_states", on_js, 10)
-
-    class Arm:
-        def __init__(self):
-            self.ac = ActionClient(node, FollowJointTrajectory, f"/{a.controller}/follow_joint_trajectory")
-            if not self.ac.wait_for_server(timeout_sec=10.0):
-                raise ExecRefusal(f"no /{a.controller}/follow_joint_trajectory action server -- "
-                                  "is the UR driver up (and is that the active controller)?")
-
-        def q(self):
-            t_end = time.time() + 5.0
-            while "q" not in js and time.time() < t_end:
-                time.sleep(0.05)
-            if "q" not in js:
-                raise ExecRefusal("no /joint_states with all six UR arm joints")
-            time.sleep(0.2)                       # a fresh sample after motion
-            return js["q"].copy()
-
-        def execute(self, seg):
-            g = FollowJointTrajectory.Goal()
-            g.trajectory.joint_names = list(um.DH_ORDER)
-            for k in range(1, len(seg.Q)):        # point 0 is where the robot is
-                p = JointTrajectoryPoint(positions=seg.Q[k].tolist(), velocities=seg.V[k].tolist())
-                sec = float(seg.t[k])
-                p.time_from_start = Duration(sec=int(sec), nanosec=int((sec % 1) * 1e9))
-                g.trajectory.points.append(p)
-            fut = self.ac.send_goal_async(g)
-            while not fut.done():
-                time.sleep(0.01)
-            gh = fut.result()
-            if not gh.accepted:
-                return False, "goal rejected"
-            res = gh.get_result_async()
-            try:
-                while not res.done():
-                    time.sleep(0.01)
-            except KeyboardInterrupt:
-                gh.cancel_goal_async()
-                print("\n[exec] Ctrl-C: trajectory goal cancelled")
-                raise
-            r = res.result().result
-            return r.error_code == 0, f"error_code {r.error_code} {r.error_string}".strip()
-
-    class Gripper:
-        def __init__(self):
-            self.ac = ActionClient(node, GripperCommand, a.gripper_action)
-            if not self.ac.wait_for_server(timeout_sec=10.0):
-                raise ExecRefusal(f"no {a.gripper_action} action server -- is the gripper node up "
-                                  "on the robot laptop? (--mock for an in-process stand-in)")
-
-        def command(self, gap_m, effort_n):
-            g = GripperCommand.Goal()
-            g.command.position, g.command.max_effort = float(gap_m), float(effort_n)
-            fut = self.ac.send_goal_async(g)
-            while not fut.done():
-                time.sleep(0.01)
-            gh = fut.result()
-            if not gh.accepted:
-                raise ExecRefusal("gripper goal rejected")
-            res = gh.get_result_async()
-            while not res.done():
-                time.sleep(0.01)
-            r = res.result().result
-            return {"position": r.position, "effort": r.effort, "stalled": bool(r.stalled),
-                    "reached_goal": bool(r.reached_goal)}
-
     log = []
     status = "error"
     try:
-        status = run(segs, Arm(), MockGripper() if a.mock else Gripper(), ask, log,
+        status = run(segs, RosArm(node, a.controller),
+                     MockGripper() if a.mock else RosGripper(node, a.gripper_action), ask, log,
                      mock=a.mock, speed=a.speed, ch=ch)
     finally:
         out = run_dir / "m3" / "exec.json"
