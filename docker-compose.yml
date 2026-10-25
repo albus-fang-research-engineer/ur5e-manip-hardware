@@ -113,7 +113,7 @@ services:
       - DISPLAY=${DISPLAY}
       # GPUs 1-2 run the FSDP VLA training on this workstation; soft-pin
       # to GPU 0. Delete to let it roam over all three.
-      - CUDA_VISIBLE_DEVICES=2
+      - CUDA_VISIBLE_DEVICES=0
     stdin_open: true
     tty: true
 
@@ -274,7 +274,7 @@ services:
       - HF_TOKEN=${HF_TOKEN:-}
       # - ATTN_BACKEND=xformers    # only for GPUs without flash-attn support; 3090 is fine
       # Same soft-pin convention as pose/pointso; delete to roam.
-      # - CUDA_VISIBLE_DEVICES=0
+      - CUDA_VISIBLE_DEVICES=1
     stdin_open: true
     tty: true
   # ======================================================================
@@ -346,10 +346,11 @@ services:
       # rebuild the Mapper with different params at runtime.
       - CUROBO_VOXEL_SIZE=0.01
       - CUROBO_EXTENT=2.0,2.0,1.5          # meters, xyz, centered on map origin
-      # - CUROBO_IMAGE_HEIGHT=480            # RealSense D4xx depth at 480p
+      - CUROBO_IMAGE_HEIGHT=480            # RealSense D4xx depth at 480p
+      - CUROBO_IMAGE_WIDTH=640
       # - CUROBO_IMAGE_WIDTH=848
-      - CUROBO_IMAGE_HEIGHT=720
-      - CUROBO_IMAGE_WIDTH=1280
+      # - CUROBO_IMAGE_HEIGHT=720
+      # - CUROBO_IMAGE_WIDTH=1280
       - CUROBO_NUM_CAMERAS=1
       # Robot self-masking + planning: prebuilt yml wins; else the builder
       # module mounted at /opt/robot_builder fits spheres once and caches
@@ -423,7 +424,7 @@ services:
       - NVIDIA_DRIVER_CAPABILITIES=all     # nvdiffrast wants graphics caps
       - TORCH_CUDA_ARCH_LIST=8.6
       # Same soft-pin as pose/pointso; delete to roam.
-      - CUDA_VISIBLE_DEVICES=2
+      - CUDA_VISIBLE_DEVICES=1
     stdin_open: true
     tty: true
   
