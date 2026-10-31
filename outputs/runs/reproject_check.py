@@ -208,7 +208,9 @@ uv = Pc @ K.T
 uv = uv[:, :2] / uv[:, 2:3]
 H, W = mask.shape
 inside = (uv[:, 0] >= 0) & (uv[:, 0] < W) & (uv[:, 1] >= 0) & (uv[:, 1] < H)
-ui = np.round(uv[inside]).astype(int)
+# round to the nearest pixel centre, clipped: a vertex in [H-0.5, H) is inside
+# but rounds to row H (an object touching the bottom edge crashed here)
+ui = np.clip(np.round(uv[inside]).astype(int), 0, [W - 1, H - 1])
 zi = Pc[inside, 2]
 
 # ---- (a) silhouette -------------------------------------------------------
