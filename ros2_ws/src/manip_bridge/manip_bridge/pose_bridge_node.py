@@ -78,7 +78,14 @@ class PoseBridge(TrackerBridge):
             m.data = np.ascontiguousarray(sheet, np.uint8).tobytes()
             res.decision_sheet = m
         line = f"{req.obj}: " + pose_decide.summary_line(rec)
-        (self.get_logger().error if rec["hard_stop"] else self.get_logger().info)(line)
+        # two call sites, not one call site switching severity: rclpy pins each
+        # logging call site to the severity of its first call, so after an INFO
+        # (m1) the same site raising ERROR (m2's hard stop) threw ValueError and
+        # killed the bridge before it answered
+        if rec["hard_stop"]:
+            self.get_logger().error(line)
+        else:
+            self.get_logger().info(line)
         if rec["hard_stop"]:
             res.message = f"HARD STOP ({rec['reason']}): registration unreliable, not tracking"
         return (T_sel if T_sel is not None else T), not rec["hard_stop"]
