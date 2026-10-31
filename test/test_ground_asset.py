@@ -382,6 +382,53 @@ def test_table_normal_up_refused_without_two_registrations(tmp_path):
         drv.ground(run, backend=StubBackend().backend())
 
 
+def _library_run(tmp_path, mesh_bytes=b"v 0 0 0\n"):
+    """A --final-mesh run of m2 on lib.obj, plus a reference run holding the
+    teapot's two real registrations and its own copy of the mesh."""
+    run = _fake_run(tmp_path, up_source="table_normal")
+    ref = tmp_path / "ref"
+    (ref / "objects" / "m2").mkdir(parents=True)
+    (ref / "objects" / "m2" / "final_mesh_m2.obj").write_bytes(b"v 0 0 0\n")
+    lib = tmp_path / "lib.obj"
+    lib.write_bytes(mesh_bytes)
+    (ref / "summary.json").write_text((run / "summary.json").read_text())
+    _with_registrations(ref, "teapot")
+    sp = run / "summary.json"
+    s = json.loads(sp.read_text())
+    s["objects"]["m2"]["final_mesh_override"] = str(lib)
+    s["objects"]["m2"]["pose_on_final"] = {"cam_T_obj": np.eye(4).tolist()}
+    sp.write_text(json.dumps(s))
+    return run, ref
+
+
+def test_library_mesh_up_sigma_from_the_reference_run(tmp_path):
+    """A --final-mesh run has no Any6D registration: without --up-sigma-from it
+    refuses as before; with it, the reference run's 2.36 deg is used and the
+    basis says it was measured on another frame."""
+    run, ref = _library_run(tmp_path)
+    with pytest.raises(drv.SeamRefusal, match="needs both registrations"):
+        drv.ground(run, backend=StubBackend().backend())
+    st = StubBackend()
+    code, body, _ = drv.ground(run, backend=st.backend(), up_ref=f"{ref}:m2")
+    assert code == 0 and st.calls[0]["up_sigma_deg"] == pytest.approx(2.36, abs=0.01)
+    basis = body["provenance"]["canonical"]["up_sigma"]["basis"]
+    assert "ANOTHER FRAME" in basis and str(ref) in basis
+
+
+def test_library_mesh_up_sigma_refusals(tmp_path):
+    run, ref = _library_run(tmp_path, mesh_bytes=b"v 1 0 0\n")          # a different mesh
+    with pytest.raises(drv.SeamRefusal, match="not byte-identical"):
+        drv.ground(run, backend=StubBackend().backend(), up_ref=f"{ref}:m2")
+    with pytest.raises(drv.SeamRefusal, match="REF_RUN:REF_KEY"):
+        drv.ground(run, backend=StubBackend().backend(), up_ref=str(ref))
+    sp = run / "summary.json"                                           # not a --final-mesh run
+    s = json.loads(sp.read_text())
+    del s["objects"]["m2"]["final_mesh_override"]
+    sp.write_text(json.dumps(s))
+    with pytest.raises(drv.SeamRefusal, match="not registered with --final-mesh"):
+        drv.ground(run, backend=StubBackend().backend(), up_ref=f"{ref}:m2")
+
+
 def test_flipped_mesh_refused_and_no_stale_success(tmp_path):
     run = _fake_run(tmp_path)
     code, _, _ = drv.ground(run, backend=StubBackend().backend())

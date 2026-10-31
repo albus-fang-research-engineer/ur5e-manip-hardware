@@ -37,6 +37,13 @@ its fix (exit 2):
             missing sigma as. Refused when either registration or the plane is
             missing, or the two agree to < MIN_UP_DISAGREEMENT_DEG (nothing
             measured).
+            LIBRARY MESH (--up-sigma-from REF_RUN:REF_KEY): a run registered
+            with --final-mesh on a verified mesh has no Any6D registration of
+            its own. The sigma is then the same angle measured on the run the
+            mesh came from, and only if the mesh is provably that run's: the
+            file this run registered on (objects[key].final_mesh_override)
+            must hash to <REF_RUN>/objects/<REF_KEY>/final_mesh_<REF_KEY>.obj.
+            Recorded as measured on another frame, not on this scene.
   mesh      after grounding, provenance.depth_semantics.flipped_edges must
             be 0 (vertices merged by position, so UV seams do not hide a
             flipped chart): depth_check labels come from the winding number,
@@ -87,7 +94,8 @@ grounding-seam branch):
 
     export PYTHONPATH=/root/ros2_ws/src/manip_bridge:$PYTHONPATH
     python3 /data/runs/ground_asset.py --run /data/runs/<stamp> \\
-        [--name mug] [--masks-root <run>/masks_canon] [--parts handle,rim]
+        [--name mug] [--masks-root <run>/masks_canon] [--parts handle,rim] \\
+        [--up-sigma-from /data/runs/reference/20261023_032004:m2]   # library-mesh runs
     python3 /data/runs/check_symbols.py /data/runs/<stamp> --key m2 \\
         --frames /data/runs/<stamp>/grounding/m2/frames.json
 """
@@ -235,10 +243,54 @@ def up_disagreement(summary_path, key: str) -> tuple[float, str]:
     return float(np.degrees(np.arccos(np.clip(ua @ uf, -1.0, 1.0)))), str(summary_path)
 
 
-def up_sigma(canonical: dict) -> tuple[float, str]:
+def _sha256(path) -> str:
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def reference_up_disagreement(summary_path, key: str, up_ref: str) -> tuple[float, str]:
+    """up_disagreement on the run a library mesh came from. up_ref is
+    'REF_RUN:REF_KEY'. Refuses unless this run registered `key` with
+    --final-mesh on a file byte-identical to the reference run's copy."""
+    ref_run, sep, ref_key = str(up_ref).rpartition(":")
+    if not sep or not ref_run or not ref_key:
+        raise SeamRefusal(f"--up-sigma-from {up_ref!r}: expected REF_RUN:REF_KEY")
+    ref_run = Path(ref_run)
+    try:
+        o = json.loads(Path(summary_path).read_text())["objects"][key]
+    except (OSError, ValueError, KeyError, TypeError) as e:
+        raise SeamRefusal(f"--up-sigma-from: cannot read objects[{key!r}] from {summary_path} "
+                          f"({e!r})") from None
+    mesh = o.get("final_mesh_override")
+    if not mesh:
+        raise SeamRefusal(f"--up-sigma-from is for library-mesh runs, but {summary_path} "
+                          f"objects[{key!r}] was not registered with --final-mesh")
+    ref_mesh = ref_run / "objects" / ref_key / f"final_mesh_{ref_key}.obj"
+    try:
+        same = _sha256(mesh) == _sha256(ref_mesh)
+    except OSError as e:
+        raise SeamRefusal(f"--up-sigma-from: cannot hash {e.filename} ({e.strerror})") from None
+    if not same:
+        raise SeamRefusal(f"--up-sigma-from: this run registered {key} on {mesh}, which is not "
+                          f"byte-identical to {ref_mesh} -- the reference run's registrations "
+                          "are of a different mesh")
+    d, _ = up_disagreement(ref_run / "summary.json", ref_key)
+    return d, f"{ref_run / 'summary.json'} objects[{ref_key!r}], mesh {mesh} == {ref_mesh}"
+
+
+def up_sigma(canonical: dict, up_ref: str | None = None) -> tuple[float, str]:
     u = canonical["up"]
     if u.get("source") != "refined":
         inp = canonical.get("inputs") or {}
+        if up_ref:
+            d, src = reference_up_disagreement(inp.get("summary"), inp.get("key"), up_ref)
+            if d < MIN_UP_DISAGREEMENT_DEG:
+                raise SeamRefusal(f"the reference run's two registrations agree on up to "
+                                  f"{d:.3f} deg (< {MIN_UP_DISAGREEMENT_DEG}): nothing measured")
+            return d, (f"up.source table_normal (refinement rejected: "
+                       f"{u.get('fit_note') or 'no note'}); library mesh: sigma = {d:.3f} deg, "
+                       f"the Any6D vs FoundationPose up disagreement measured on the mesh's "
+                       f"reference run ({src}) -- ANOTHER FRAME, not this scene; a lower bound "
+                       "if both err alike")
         d, src = up_disagreement(inp.get("summary"), inp.get("key"))
         if d < MIN_UP_DISAGREEMENT_DEG:
             raise SeamRefusal(
@@ -287,7 +339,8 @@ def _backend():
     return gc.ground_object, gc.GroundingError, gc.provenance
 
 
-def ground(run, name=None, asset=None, masks_root=None, parts=None, out=None, backend=None):
+def ground(run, name=None, asset=None, masks_root=None, parts=None, out=None, backend=None,
+           up_ref=None):
     """The whole seam; returns (exit_code, body_frames_doc_or_None, report)."""
     run = Path(run)
     asset_dir = resolve_asset(run, name, asset)
@@ -300,7 +353,7 @@ def ground(run, name=None, asset=None, masks_root=None, parts=None, out=None, ba
         body_path.unlink()                    # a refusal must not leave a stale success
     masks_root = Path(masks_root) if masks_root else run / "masks_canon"
     requested, part_list, dropped, man_path = check_masks(masks_root, a["name"], a["sha"], parts)
-    sig_up, sig_basis = up_sigma(can)
+    sig_up, sig_basis = up_sigma(can, up_ref)
     front, sig_front, front_rec = front_block(can)
 
     ground_object, GroundingError, prov = backend or _backend()
@@ -366,9 +419,14 @@ def main(argv=None) -> int:
     ap.add_argument("--masks-root", default=None, help="default <run>/masks_canon")
     ap.add_argument("--parts", default=None, help="comma list; default the manifest's parts")
     ap.add_argument("--out", default=None, help="default <run>/grounding")
+    ap.add_argument("--up-sigma-from", default=None, metavar="REF_RUN:REF_KEY",
+                    help="library-mesh runs: take a table-normal up's sigma from the run the "
+                         "--final-mesh came from (the mesh must be byte-identical to "
+                         "REF_RUN/objects/REF_KEY/final_mesh_REF_KEY.obj)")
     a = ap.parse_args(argv)
     try:
-        code, body, rep = ground(a.run, a.name, a.asset, a.masks_root, a.parts, a.out)
+        code, body, rep = ground(a.run, a.name, a.asset, a.masks_root, a.parts, a.out,
+                                 up_ref=a.up_sigma_from)
     except SeamRefusal as e:
         print(f"[ground-asset] REFUSED: {e}", file=sys.stderr)
         return 2
