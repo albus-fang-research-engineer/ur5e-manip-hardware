@@ -1,0 +1,137 @@
+{
+ "mesh": "lib_teapot.obj = outputs/runs/reference/20261031_045305/objects/m2/final_mesh_m2.obj (any6d_runtime/outputs/lib_teapot.obj)",
+ "mesh_sha256": "3ca2c9c5c597e6ad4bf22fc23b2969691712f67ebdef798fdda6564b3ff0070b",
+ "frame": "body frame of that mesh (what pose_on_final.cam_T_obj maps); e frame: +z approach, +x closing, origin = pad centre",
+ "width_m": 0.011,
+ "taught": {
+  "how": "measured on the mesh in the canonical frame of run 20261104_051339 (R_body_from_canon from its canonical.json: x = front/spout, z = table up), then mapped to the body frame by x_body = R x_c",
+  "R_body_from_canon": [
+   [
+    0.3559826770255006,
+    0.909291617633122,
+    -0.21555762050991978
+   ],
+   [
+    0.1960450586528957,
+    0.15286819381302044,
+    0.9686060346178562
+   ],
+   [
+    0.913697252176858,
+    -0.3870659755422651,
+    -0.1238436996458597
+   ]
+  ],
+  "strap": "outer vertical strap of the loop handle: canonical x -0.0925..-0.080 (radial thickness ~11 mm), y -0.001..+0.010 (width ~11 mm), z +0.005..+0.033 (about 28 mm tall; teapot bottom at z -0.038); hole between strap and body x -0.080..-0.050 (~30 mm)",
+  "grasp": "pad centre on the strap's centroid; approach from OUTSIDE the loop toward the body (canonical +x), level and pitched 15/30 deg down; fingers close across the strap's width (canonical y), fingertips ~19 mm past the pad centre end inside the 30 mm hole",
+  "caveat": "the library mesh is ~1.4 cm longer than the 16.5 cm spec, so its handle sits up to ~7 mm further out than the real one; the pad (~20 mm along the approach) still covers it",
+  "order": "level first (as asked: approach parallel to the table); the tilted ones only if the level one does not plan -- level puts tool0 about 5 cm above the table"
+ },
+ "grasps": [
+  {
+   "name": "handle_outer_strap_tilt00",
+   "point_body": [
+    -0.030796,
+    0.002134,
+    -0.08313
+   ],
+   "approach_body": [
+    0.355983,
+    0.196045,
+    0.913697
+   ],
+   "closing_body": [
+    0.909292,
+    0.152868,
+    -0.387066
+   ],
+   "canonical": {
+    "point": [
+     -0.0865,
+     0.0045,
+     0.019
+    ],
+    "approach": [
+     1.0,
+     0.0,
+     -0.0
+    ],
+    "closing": [
+     0.0,
+     1.0,
+     0.0
+    ]
+   }
+  },
+  {
+   "name": "handle_outer_strap_tilt15",
+   "point_body": [
+    -0.030796,
+    0.002134,
+    -0.08313
+   ],
+   "approach_body": [
+    0.399643,
+    -0.061329,
+    0.914617
+   ],
+   "closing_body": [
+    0.909292,
+    0.152868,
+    -0.387066
+   ],
+   "canonical": {
+    "point": [
+     -0.0865,
+     0.0045,
+     0.019
+    ],
+    "approach": [
+     0.965926,
+     0.0,
+     -0.258819
+    ],
+    "closing": [
+     0.0,
+     1.0,
+     0.0
+    ]
+   }
+  },
+  {
+   "name": "handle_outer_strap_tilt30",
+   "point_body": [
+    -0.030796,
+    0.002134,
+    -0.08313
+   ],
+   "approach_body": [
+    0.416069,
+    -0.314523,
+    0.853207
+   ],
+   "closing_body": [
+    0.909292,
+    0.152868,
+    -0.387066
+   ],
+   "canonical": {
+    "point": [
+     -0.0865,
+     0.0045,
+     0.019
+    ],
+    "approach": [
+     0.866025,
+     0.0,
+     -0.5
+    ],
+    "closing": [
+     0.0,
+     1.0,
+     0.0
+    ]
+   }
+  }
+ ]
+}
