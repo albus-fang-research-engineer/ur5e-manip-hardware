@@ -45,7 +45,9 @@ The arm goes through the UR driver's trajectory action
 (/<controller>/follow_joint_trajectory, joint names attached); the gripper
 through a control_msgs/GripperCommand action (position = jaw gap in metres,
 0 closes; result.stalled = an object was gripped), served by the gripper
-node on the robot laptop (ros2-essentials robotiq_gripper).
+node on the robot laptop (ros2-essentials robotiq_gripper). That node
+answers with its state from BEFORE the fingers move, so each command is
+re-sent until the jaws settle and only the settled answer is used.
 
 Live (ROS2 container, laptop stack up):
 
@@ -373,8 +375,55 @@ class RosArm:
         return r.error_code == 0, f"error_code {r.error_code} {r.error_string}".strip()
 
 
+SETTLE_POLL_S = 0.25              # re-send period while waiting for the jaws
+SETTLE_STABLE_S = 1.0             # unchanged this long = settled, wherever it is
+SETTLE_TIMEOUT_S = 5.0            # 2F-85 full stroke is ~1 s
+SETTLE_POS_TOL_M = 0.0005         # two answers this close = not moving
+SETTLE_GOAL_TOL_M = 0.003         # this close to the commanded gap = arrived
+
+
+def settle(send, goal_m, sleep=time.sleep, clock=time.monotonic) -> dict:
+    """Wait until the jaws stop, then return the gripper's answer for that rest.
+
+    The laptop's gripper node (ros2-essentials robotiq_gripper) answers a
+    goal at once with the state it had when the goal ARRIVED -- position,
+    stalled, reached_goal of the previous motion -- while the fingers are
+    still moving. Bench, 11/03: close from open -> 0.0839 m, not stalled;
+    the same close again -> 0.0100 m, stalled (the strap). So the same goal
+    is re-sent every SETTLE_POLL_S, and an answer counts once it agrees with
+    the previous one AND either
+      - the jaws moved since the first (stale) answer, and it is stalled or
+        at the commanded gap; or the first answer was already at the gap;
+      - or it has not changed for SETTLE_STABLE_S (holding, or stopped short).
+    send() -> {"position", "stalled", "reached_goal", ...} for the SAME goal."""
+    t0 = clock()
+    first = prev = send()
+    prev_t, same_since, sends = 0.0, None, 1
+    moved = False
+    already_there = abs(first["position"] - goal_m) <= SETTLE_GOAL_TOL_M
+    while True:
+        sleep(SETTLE_POLL_S)
+        r = send()
+        sends += 1
+        now = clock() - t0
+        moved = moved or abs(r["position"] - first["position"]) > SETTLE_POS_TOL_M
+        if abs(r["position"] - prev["position"]) <= SETTLE_POS_TOL_M and r["stalled"] == prev["stalled"]:
+            same_since = prev_t if same_since is None else same_since
+            at_end = bool(r["stalled"]) or abs(r["position"] - goal_m) <= SETTLE_GOAL_TOL_M
+            if (at_end and (moved or already_there)) or now - same_since >= SETTLE_STABLE_S:
+                return dict(r, sends=sends, settle_s=round(now, 2))
+        else:
+            same_since = None
+        if now >= SETTLE_TIMEOUT_S:
+            raise ExecRefusal(f"gripper still moving after {SETTLE_TIMEOUT_S:.0f} s (last gap "
+                              f"{r['position'] * 1000:.1f} mm, goal {goal_m * 1000:.0f} mm): stopping here")
+        prev, prev_t = r, now
+
+
 class RosGripper:
-    """control_msgs/GripperCommand: position = jaw gap (m), stalled = gripped."""
+    """control_msgs/GripperCommand: position = jaw gap (m), stalled = gripped.
+    The node answers before the fingers move, so command() re-sends the goal
+    until the jaws settle (see settle) and returns that answer."""
 
     def __init__(self, node, action):
         from control_msgs.action import GripperCommand
@@ -386,6 +435,9 @@ class RosGripper:
                               "laptop? (--mock for an in-process stand-in)")
 
     def command(self, gap_m, effort_n):
+        return settle(lambda: self._send(gap_m, effort_n), float(gap_m))
+
+    def _send(self, gap_m, effort_n):
         g = self._GC.Goal()
         g.command.position, g.command.max_effort = float(gap_m), float(effort_n)
         gh = _wait(self.ac.send_goal_async(g))
