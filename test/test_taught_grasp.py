@@ -87,3 +87,14 @@ def test_deeper_moves_each_pad_centre_along_its_own_approach(tg, lib):
     for bad in (-0.001, 0.03):
         with pytest.raises(tg.TaughtRefusal, match="must be within"):
             tg.resolve(summary(), "m2", lib, mesh_sha=lib["mesh_sha256"], deeper=bad)
+
+
+def test_up_moves_each_pad_centre_along_base_z_only(tg, lib):
+    base = tg.resolve(summary(), "m2", lib, mesh_sha=lib["mesh_sha256"])
+    up = tg.resolve(summary(), "m2", lib, mesh_sha=lib["mesh_sha256"], up=0.01, deeper=0.007)
+    for b, u in zip(base, up):
+        np.testing.assert_allclose(u["T_base_e"][:3, 3] - b["T_base_e"][:3, 3],
+                                   0.007 * b["approach_base"] + [0, 0, 0.01], atol=1e-12)
+        np.testing.assert_allclose(u["T_base_e"][:3, :3], b["T_base_e"][:3, :3], atol=1e-12)
+    with pytest.raises(tg.TaughtRefusal, match="must be within"):
+        tg.resolve(summary(), "m2", lib, mesh_sha=lib["mesh_sha256"], up=0.05)
