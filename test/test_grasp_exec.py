@@ -192,3 +192,18 @@ def test_reach_keeps_curobos_timing_stretched_uniformly(ge, ch):
     assert {s.name: s for s in ge.build(slow, ch)}["reach"].info["time_scale"] == 1.0
     with pytest.raises(ge.ExecRefusal, match="velocities"):
         ge.build({k2: v for k2, v in plan.items() if k2 != "velocities"}, ch)
+
+
+def test_deeper_extends_only_the_blind_approach_along_its_line(ge, ch):
+    plan = plan_for(ge, ch)
+    base = {s.name: s for s in ge.build(plan, ch)}
+    deep = {s.name: s for s in ge.build(plan, ch, deeper=0.007)}
+    np.testing.assert_allclose(deep["reach"].Q, base["reach"].Q)          # the planned reach is untouched
+    p0, p1 = ch.fk(base["approach"].Q[-1])[:3, 3], ch.fk(deep["approach"].Q[-1])[:3, 3]
+    approach = np.asarray(plan["T_base_e"])[:3, 2]
+    np.testing.assert_allclose(p1 - p0, 0.007 * approach, atol=2e-4)       # 7 mm further along the approach
+    np.testing.assert_allclose(ch.fk(deep["retreat"].Q[-1])[:3, 3],      # the retreat still ends at the standoff
+                               ch.fk(base["reach"].Q[-1])[:3, 3], atol=2e-4)
+    for bad in (-0.001, 0.03):
+        with pytest.raises(ge.ExecRefusal, match="must be within"):
+            ge.build(plan, ch, deeper=bad)

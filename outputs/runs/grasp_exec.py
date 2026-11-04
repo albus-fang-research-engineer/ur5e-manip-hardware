@@ -140,10 +140,20 @@ def _timed(name, ch, Q, V, dt, speed, note=""):
                    note=note, info={"time_scale": k, "planner_dt": float(dt)})
 
 
-def build(plan: dict, ch, speed=SPEED_FRAC, line_speed=LINE_SPEED_M_S) -> list[Segment]:
+MAX_DEEPER_M = 0.02
+
+
+def build(plan: dict, ch, speed=SPEED_FRAC, line_speed=LINE_SPEED_M_S, deeper=0.0) -> list[Segment]:
     """Every segment of the grasp-only run, from reach.json's plan. Raises
-    ExecRefusal / MotionRefusal before anything moves."""
+    ExecRefusal / MotionRefusal before anything moves.
+
+    deeper: metres the BLIND approach continues past the planned grasp, along
+    the same line (a bench correction when the jaws close short of the part).
+    The reach and its collision-checked standoff are unchanged; only the
+    approach -- and the retreat that reverses it -- get longer."""
     from manip_bridge import ur_motion as um
+    if not 0.0 <= float(deeper) <= MAX_DEEPER_M:
+        raise ExecRefusal(f"--deeper {deeper} m: must be within 0..{MAX_DEEPER_M} m")
     gr = _grasp_reach()
     for k in ("positions", "velocities", "dt", "joint_names", "T_base_e", "T_base_tool0_goal",
               "standoff_m"):
@@ -156,7 +166,7 @@ def build(plan: dict, ch, speed=SPEED_FRAC, line_speed=LINE_SPEED_M_S) -> list[S
     if err > GOAL_CHECK_M:
         raise ExecRefusal(f"the reach plan ends {err*1000:.1f} mm from its own standoff goal on the "
                           f"DH chain (> {GOAL_CHECK_M*1000:.0f} mm): joint order or frame mix-up")
-    T_grasp = gr.tool0_goal(np.asarray(plan["T_base_e"], float), 0.0)
+    T_grasp = gr.tool0_goal(np.asarray(plan["T_base_e"], float), -float(deeper))
     Q_app, i_app = um.line(ch, P[-1], T_grasp[:3, 3])
     p_lift = ch.fk(Q_app[-1])[:3, 3] + np.array([0.0, 0.0, LIFT_M])
     Q_lift, i_lift = um.line(ch, Q_app[-1], p_lift)
@@ -166,7 +176,8 @@ def build(plan: dict, ch, speed=SPEED_FRAC, line_speed=LINE_SPEED_M_S) -> list[S
         _timed("reach", ch, P, Vp, float(plan["dt"]), speed,
                note="(cuRobo plan + its own timing, collision-checked)"),
         _traj("approach", ch, Q_app, speed, min_duration=i_app["length_m"] / line_speed,
-              note=f"(BLIND, {so*100:.0f} cm along the approach)", info=i_app),
+              note=f"(BLIND, {so*100:.0f} cm along the approach"
+                   + (f" + {deeper*1000:.0f} mm deeper)" if deeper else ")"), info=i_app),
         Segment("close", "gripper", gap_m=0.0, effort_n=CLOSE_EFFORT_N, note="(must detect an object)"),
         _traj("lift", ch, Q_lift, speed, min_duration=i_lift["length_m"] / line_speed,
               note=f"(BLIND, {LIFT_M*100:.0f} cm up)", info=i_lift),
@@ -399,7 +410,7 @@ def _ros_main(a) -> int:
     if not rec.get("plan"):
         raise ExecRefusal(f"{run_dir / 'm3/reach.json'} has no successful plan -- nothing to execute")
     ch = um.chain()
-    segs = build(rec["plan"], ch, a.speed, a.line_speed)
+    segs = build(rec["plan"], ch, a.speed, a.line_speed, deeper=a.deeper)
     print(f"[exec] {len(segs)} segments built (speed {a.speed:.0%}, lines {a.line_speed*100:.0f} cm/s):")
     for s in segs:
         print("   ", s.summary())
@@ -433,6 +444,7 @@ def _ros_main(a) -> int:
     finally:
         out = run_dir / "m3" / "exec.json"
         out.write_text(json.dumps({"status": status, "speed": a.speed, "line_speed": a.line_speed,
+                                   "deeper_m": a.deeper,
                                    "controller": a.controller, "mock": a.mock, "lift_m": LIFT_M,
                                    "segments": log}, indent=1, default=float) + "\n")
         print(f"[exec] {status} -> {out}")
@@ -450,6 +462,9 @@ def main(argv=None) -> int:
     ap.add_argument("--mock", action="store_true",
                     help="in-process gripper, and allowed to move to the plan start (mock hardware only)")
     ap.add_argument("--dry", action="store_true", help="build, print, publish markers; no motion")
+    ap.add_argument("--deeper", type=float, default=0.0, metavar="M",
+                    help="continue the blind approach this far past the planned grasp (0..0.02 m); "
+                         "the reach and its standoff are unchanged; recorded in exec.json")
     a = ap.parse_args(argv)
     if not 0 < a.speed <= 0.5:
         ap.error("--speed must be in (0, 0.5]")
