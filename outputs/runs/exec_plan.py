@@ -160,8 +160,8 @@ def _ros_main(a, ge) -> int:
     pub.publish(ma)
     print("[exec] tool0 paths latched on /exec/markers (base_link)")
     if a.dry:
-        time.sleep(1.0)
-        rclpy.shutdown()
+        ge.hold_until_ctrl_c("dry run: nothing moved; markers held on /exec/markers")
+        ge.stop_node(node)
         return 0
 
     log, status = [], "error"
@@ -177,7 +177,7 @@ def _ros_main(a, ge) -> int:
                                    "controller": a.controller, "mock": a.mock,
                                    "segments": log}, indent=1, default=float) + "\n")
         print(f"[exec] {status} -> {out}")
-        rclpy.shutdown()
+        ge.stop_node(node)
     return 0 if status == "done" else 1
 
 

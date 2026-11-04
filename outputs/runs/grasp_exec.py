@@ -270,8 +270,33 @@ def start_node(name):
     node = Node(name)
     exe = MultiThreadedExecutor()
     exe.add_node(node)
-    threading.Thread(target=exe.spin, daemon=True).start()
+    th = threading.Thread(target=exe.spin, daemon=True)
+    th.start()
+    node.exec_spin = (exe, th)                   # stop_node shuts these down in order
     return node
+
+
+def stop_node(node):
+    """Stop the background executor, THEN shut rclpy down. Shutting rclpy down
+    under a spinning executor thread aborts the process at exit ("terminate
+    called without an active exception")."""
+    import rclpy
+    exe, th = getattr(node, "exec_spin", (None, None))
+    if exe is not None:
+        exe.shutdown(timeout_sec=2.0)
+        th.join(timeout=2.0)
+    rclpy.try_shutdown()
+
+
+def hold_until_ctrl_c(what):
+    """Keep a latched publisher alive: a transient-local topic is only served
+    while its publisher's process runs (rviz connecting later sees nothing)."""
+    print(f"[exec] {what}; Ctrl-C to exit")
+    try:
+        while True:
+            time.sleep(0.5)
+    except KeyboardInterrupt:
+        pass
 
 
 def _wait(fut, on_interrupt=None):
@@ -395,8 +420,8 @@ def _ros_main(a) -> int:
     pub.publish(ma)
     print("[exec] tool0 paths latched on /grasp/exec_markers (base_link)")
     if a.dry:
-        time.sleep(1.0)
-        rclpy.shutdown()
+        hold_until_ctrl_c("dry run: nothing moved; markers held on /grasp/exec_markers")
+        stop_node(node)
         return 0
 
     log = []
@@ -411,7 +436,7 @@ def _ros_main(a) -> int:
                                    "controller": a.controller, "mock": a.mock, "lift_m": LIFT_M,
                                    "segments": log}, indent=1, default=float) + "\n")
         print(f"[exec] {status} -> {out}")
-        rclpy.shutdown()
+        stop_node(node)
     return 0 if status == "done" else 1
 
 

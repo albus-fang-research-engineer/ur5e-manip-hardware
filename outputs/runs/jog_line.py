@@ -65,6 +65,7 @@ def main(argv=None) -> int:
 
     ge = _grasp_exec()
     from manip_bridge import ur_motion as um
+    node = None
     try:
         import tf2_ros
         node = ge.start_node("jog_line")
@@ -98,8 +99,11 @@ def main(argv=None) -> int:
         print(f"[jog] REFUSED: {e}", file=sys.stderr)
         return 2
     finally:
-        import rclpy
-        rclpy.try_shutdown()
+        if node is not None:
+            ge.stop_node(node)
+        else:
+            import rclpy
+            rclpy.try_shutdown()
 
 
 if __name__ == "__main__":
