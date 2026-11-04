@@ -76,3 +76,14 @@ def test_refuses_a_closing_axis_not_perpendicular_to_the_approach(tg, lib):
     bad = dict(lib, grasps=[dict(lib["grasps"][0], closing_body=lib["grasps"][0]["approach_body"])])
     with pytest.raises(tg.TaughtRefusal, match="off perpendicular"):
         tg.resolve(summary(), "m2", bad, mesh_sha=lib["mesh_sha256"])
+
+
+def test_deeper_moves_each_pad_centre_along_its_own_approach(tg, lib):
+    base = tg.resolve(summary(), "m2", lib, mesh_sha=lib["mesh_sha256"])
+    deep = tg.resolve(summary(), "m2", lib, mesh_sha=lib["mesh_sha256"], deeper=0.007)
+    for b, d in zip(base, deep):
+        np.testing.assert_allclose(d["T_base_e"][:3, 3] - b["T_base_e"][:3, 3], 0.007 * b["approach_base"], atol=1e-12)
+        np.testing.assert_allclose(d["T_base_e"][:3, :3], b["T_base_e"][:3, :3], atol=1e-12)
+    for bad in (-0.001, 0.03):
+        with pytest.raises(tg.TaughtRefusal, match="must be within"):
+            tg.resolve(summary(), "m2", lib, mesh_sha=lib["mesh_sha256"], deeper=bad)

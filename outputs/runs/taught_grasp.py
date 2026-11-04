@@ -71,9 +71,18 @@ def T_body_e(g: dict) -> np.ndarray:
     return T
 
 
-def resolve(summary: dict, key: str, lib: dict, mesh_sha=None) -> list[dict]:
-    """[{name, T_base_e, approach_base, height_above_table?}] in file order.
-    mesh_sha: the sha256 of the file the run registered on (None = read it)."""
+MAX_DEEPER_M = 0.02
+
+
+def resolve(summary: dict, key: str, lib: dict, mesh_sha=None, deeper=0.0) -> list[dict]:
+    """[{name, T_base_e, approach_base, elevation_deg}] in file order.
+    mesh_sha: the sha256 of the file the run registered on (None = read it).
+    deeper: metres to move every pad centre further ALONG its approach (a
+    per-run correction observed at the bench, e.g. the library mesh's
+    handle sitting outside the real one); recorded, never stored in the
+    library."""
+    if not 0.0 <= float(deeper) <= MAX_DEEPER_M:
+        raise TaughtRefusal(f"--deeper {deeper} m: must be within 0..{MAX_DEEPER_M} m")
     o = (summary.get("objects") or {}).get(key)
     if o is None:
         raise TaughtRefusal(f"summary has no objects[{key!r}]")
@@ -99,6 +108,7 @@ def resolve(summary: dict, key: str, lib: dict, mesh_sha=None) -> list[dict]:
     out = []
     for g in lib["grasps"]:
         T = T_bo @ T_body_e(g)
+        T[:3, 3] += float(deeper) * T[:3, 2]
         out.append({"name": g["name"], "T_base_e": T, "approach_base": T[:3, 2].copy(),
                     "elevation_deg": float(np.degrees(np.arcsin(np.clip(-T[2, 2], -1, 1))))})
     return out
@@ -120,18 +130,23 @@ def main(argv=None) -> int:
     ap.add_argument("--key", required=True, help="the registered object key, e.g. m2")
     ap.add_argument("--grasps", required=True, type=Path, help="<library>.taught_grasps.json")
     ap.add_argument("--tag", default=None, help="publishes /grasp/<tag>/filtered; default <key>_taught")
+    ap.add_argument("--deeper", type=float, default=0.0, metavar="M",
+                    help="move each pad centre this far further along its approach (0..0.02 m); "
+                         "a bench correction, recorded in m3/taught_grasps.json")
     a = ap.parse_args(argv)
     tag = a.tag or f"{a.key}_taught"
     try:
         summary = json.loads((a.run / "summary.json").read_text())
         lib = json.loads(a.grasps.read_text())
-        rows = resolve(summary, a.key, lib)
+        rows = resolve(summary, a.key, lib, deeper=a.deeper)
     except (OSError, ValueError) as e:
         print(f"[taught] REFUSED: {e}", file=sys.stderr)
         return 2
     except TaughtRefusal as e:
         print(f"[taught] REFUSED: {e}", file=sys.stderr)
         return 2
+    if a.deeper:
+        print(f"[taught] every pad centre moved {a.deeper * 1000:.0f} mm further along its approach (--deeper)")
     for r in rows:
         print(f"[taught] {r['name']}: pad centre {np.round(r['T_base_e'][:3, 3], 3).tolist()}  approach "
               f"{np.round(r['approach_base'], 2).tolist()} ({r['elevation_deg']:+.0f} deg below horizontal)")
@@ -139,6 +154,7 @@ def main(argv=None) -> int:
     out.mkdir(parents=True, exist_ok=True)
     (out / "taught_grasps.json").write_text(json.dumps({
         "key": a.key, "tag": tag, "library": str(a.grasps.resolve()), "mesh_sha256": lib["mesh_sha256"],
+        "deeper_m": a.deeper,
         "note": "TAUGHT grasps, not AnyGrasp + TSR: record any result obtained with them as taught",
         "grasps": [{"name": r["name"], "T_base_e": r["T_base_e"].tolist(),
                     "elevation_deg": r["elevation_deg"]} for r in rows]}, indent=1) + "\n")
