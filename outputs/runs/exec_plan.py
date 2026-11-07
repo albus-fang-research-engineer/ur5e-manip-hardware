@@ -18,7 +18,8 @@ CBiRRT, a hand-made path); grasp_exec stays the grasp-only run.
             v  every step is built before anything moves:
             v    traj with velocities + dt   the planner's timing, stretched
             v                                uniformly under --speed (cuRobo)
-            v    traj, positions only        TOPP-RA under --speed (CBiRRT, IK paths)
+            v    traj, positions only        densified (ur_motion.densify), then
+            v                                TOPP-RA under --speed (CBiRRT, IK paths)
             v    each traj must start where the previous traj ended (0.01 rad)
             |
     gates (Enter = go, anything else = stop); "gate": false skips one
@@ -95,8 +96,11 @@ def build(spec: dict, ch, ge, speed: float) -> list:
             V = um.to_dh_path(t["velocities"], t["joint_names"])
             seg = ge._timed(name, ch, Q, V, float(t["dt"]), speed, note="(planner timing)")
         else:
+            # the sim executor's densify: a sparse planner path (CBiRRT) is
+            # timed along its straight joint segments, not refused by the
+            # spline check; an already-dense path is unchanged
             md = float(t.get("min_duration_s", 0.0))
-            seg = ge._traj(name, ch, Q, speed, min_duration=md,
+            seg = ge._traj(name, ch, um.densify(Q), speed, min_duration=md,
                            note="(TOPP-RA" + (f", >= {md:.1f} s)" if md else ")"))
         seg.gate = gate
         segs.append(seg)

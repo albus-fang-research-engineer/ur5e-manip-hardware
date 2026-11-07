@@ -87,7 +87,9 @@ def test_densify_keeps_waypoints_bounds_the_step_and_lets_a_corner_be_timed():
     assert np.abs(np.diff(D, axis=0)).max() <= um.DENSIFY_STEP + 1e-12
     for q in corner:                                              # every waypoint survives
         assert np.min(np.abs(D - q).max(axis=1)) < 1e-12
-    t, Qs, _ = um.time_optimal(D)                                 # the sparse corner is refused
+    with pytest.raises(um.MotionRefusal, match="leaves the joint path"):
+        um.time_optimal(corner)                                   # raw: refused
+    t, Qs, _ = um.time_optimal(D)                                 # densified: timed
     np.testing.assert_allclose(Qs[[0, -1]], corner[[0, -1]])
 
 

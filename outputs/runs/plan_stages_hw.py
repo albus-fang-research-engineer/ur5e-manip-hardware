@@ -208,11 +208,14 @@ def excess_metrics(ch, Q, T_ee_canon, path_tsr, speed: float) -> dict:
         out["dense"] = {"refused": str(e)}
         return out
     td, rd = ex(Qs)
-    i = int(np.argmax(td + rd))
+
+    def at(i):
+        return {"t_s": round(float(t[i]), 2), "fraction": round(i / (len(Qs) - 1), 3),
+                "body_xyz": np.round((ch.fk(Qs[i]) @ T_ee_canon)[:3, 3], 4).tolist()}
+
     out["dense"] = {"n_samples": int(len(Qs)), "duration_s": round(float(t[-1]), 2),
                     "trans_mm": _stats(td), "rot_deg": _stats(rd),
-                    "worst_at": {"t_s": round(float(t[i]), 2), "fraction": round(i / (len(Qs) - 1), 3),
-                                 "body_xyz": np.round((ch.fk(Qs[i]) @ T_ee_canon)[:3, 3], 4).tolist()}}
+                    "worst_trans_at": at(int(np.argmax(td))), "worst_rot_at": at(int(np.argmax(rd)))}
     return out
 
 
@@ -225,7 +228,8 @@ def _fmt_metrics(m) -> str:
     return (s + f"; dense ({d['n_samples']} @ {um.SAMPLE_DT * 1000:.0f} ms): trans max "
             f"{d['trans_mm']['max']} / med {d['trans_mm']['median']} / p95 {d['trans_mm']['p95']} mm, "
             f"rot max {d['rot_deg']['max']} / med {d['rot_deg']['median']} / p95 "
-            f"{d['rot_deg']['p95']} deg (worst at {d['worst_at']['fraction']:.0%})")
+            f"{d['rot_deg']['p95']} deg (worst trans at {d['worst_trans_at']['fraction']:.0%}, "
+            f"rot at {d['worst_rot_at']['fraction']:.0%})")
 
 
 # ---------------------------------------------------------------- planning
@@ -296,11 +300,14 @@ def run(a) -> int:
     out = Path(a.out) if a.out else run_dir / "m4"
     summary = json.loads((run_dir / "summary.json").read_text())
     tk, mk = (a.teapot_key, a.mug_key) if a.teapot_key else object_keys(summary)
-    tp_mesh, mug_mesh = Path(so.mesh_path(summary, tk)), Path(so.mesh_path(summary, mk))
+    try:                                   # scene_ops raises ValueError on a missing field
+        tp_mesh, mug_mesh = Path(so.mesh_path(summary, tk)), Path(so.mesh_path(summary, mk))
+        T_tp, T_mug = so.T_base_obj(summary, tk), so.T_base_obj(summary, mk)
+    except ValueError as e:
+        raise PlanRefusal(f"{run_dir / 'summary.json'}: {e}") from e
     tp, mug = load_fixture(Path(a.library), tp_mesh), load_fixture(Path(a.library), mug_mesh)
 
     # ---- poses (base_link), canonical frames
-    T_tp, T_mug = so.T_base_obj(summary, tk), so.T_base_obj(summary, mk)
     T_tpC, T_mugC = T_tp @ _block(tp["_R"]), T_mug @ _block(mug["_R"])
     up_dev = {k: round(float(np.degrees(np.arccos(np.clip(T[2, 2], -1, 1)))), 2)
               for k, T in (("teapot", T_tpC), ("mug", T_mugC))}
@@ -343,34 +350,41 @@ def run(a) -> int:
 
     pair_tr = frames.transport(T_tpC, T_mugC, height=TRANSPORT_HEIGHT, z_corridor=TRANSPORT_Z_CORRIDOR)
     print(f"[transport] start vs path excess: {np.round(pair_tr.path.excess(ch.fk(q_lift) @ T_ee_canon), 4).tolist()}")
-    done = None
-    for k in range(a.tries):
-        tr = plan_stage(cli, "transport", q_lift, T_ee_canon, pair_tr, spheres, scene, a, k, TRANSPORT_EPS)
-        att = {"seed": k, "transport": {kk: v for kk, v in tr.items() if kk != "Q"}}
-        report["attempts"].append(att)
-        if not tr["success"]:
-            continue
-        Q_tr = tr["Q"]
-        T_entry = ch.fk(Q_tr[-1]) @ T_ee_canon
-        pair_p = frames.pour(T_entry, T_mugC, tilt_target)
-        ex = pair_p.path.excess(T_entry)
-        att["pour_entry_excess"] = np.round(ex, 5).tolist()
-        po = plan_stage(cli, "pour", Q_tr[-1], T_ee_canon, pair_p, spheres, scene, a, k, POUR_EPS)
-        att["pour"] = {kk: v for kk, v in po.items() if kk != "Q"}
-        if po["success"]:
-            done = (Q_tr, pair_tr, po["Q"], pair_p)
-            break
-    if done is None:
+    def save_report():
         (out / "report.json").write_text(json.dumps(report, indent=1, default=float) + "\n")
+
+    done = None
+    try:
+        for k in range(a.tries):
+            tr = plan_stage(cli, "transport", q_lift, T_ee_canon, pair_tr, spheres, scene, a, k,
+                            TRANSPORT_EPS)
+            att = {"seed": k, "transport": {kk: v for kk, v in tr.items() if kk != "Q"}}
+            report["attempts"].append(att)
+            if not tr["success"]:
+                continue
+            Q_tr = tr["Q"]
+            T_entry = ch.fk(Q_tr[-1]) @ T_ee_canon
+            pair_p = frames.pour(T_entry, T_mugC, tilt_target)
+            att["pour_entry_excess"] = np.round(pair_p.path.excess(T_entry), 5).tolist()
+            po = plan_stage(cli, "pour", Q_tr[-1], T_ee_canon, pair_p, spheres, scene, a, k, POUR_EPS)
+            att["pour"] = {kk: v for kk, v in po.items() if kk != "Q"}
+            if po["success"]:
+                done = (Q_tr, pair_tr, po["Q"], pair_p)
+                break
+    except PlanRefusal as e:                 # keep the attempts that did run
+        report["status"], report["error"] = "refused", str(e)
+        save_report()
+        raise
+    if done is None:
+        save_report()
         print(f"[plan] FAILED after {a.tries} transport seeds -> {out / 'report.json'}")
         return 2
 
+    # the planner's waypoints are written as they are; exec_plan densifies and
+    # times them, and excess_metrics samples exactly that
     Q_tr, pair_tr, Q_pour, pair_p = done
-    # the sim executor's densify: the planner's waypoints kept, straight joint
-    # segments filled in; what exec_plan times and what the metrics sample
     report["metrics"] = {"transport": excess_metrics(ch, Q_tr, T_ee_canon, pair_tr.path, a.speed),
                          "pour": excess_metrics(ch, Q_pour, T_ee_canon, pair_p.path, a.speed)}
-    Q_tr, Q_pour = um.densify(Q_tr), um.densify(Q_pour)
     d_end = pair_p.subgoal.displacement(ch.fk(Q_pour[-1]) @ T_ee_canon)
     report["pour_tilt_achieved_deg"] = round(float(np.degrees(d_end[3])), 1)
     for name, m in report["metrics"].items():
@@ -385,7 +399,7 @@ def run(a) -> int:
         exec_plan_doc(reach["plan"], segs, Q_tr, Q_pour, ge.LINE_SPEED_M_S)) + "\n")
     report["status"] = "planned"
     report["outputs"] = {"stages": str(out / "stages.json"), "plan": str(out / "plan.json")}
-    (out / "report.json").write_text(json.dumps(report, indent=1, default=float) + "\n")
+    save_report()
     print(f"[plan] OK -> {out}/{{report,stages,plan}}.json\n"
           f"       rviz: python3 /data/runs/exec_plan.py {out / 'plan.json'} --dry")
     return 0

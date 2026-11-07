@@ -125,8 +125,9 @@ def densify(Q, max_joint_step=DENSIFY_STEP) -> np.ndarray:
     """Insert waypoints on the straight joint segments so consecutive points
     differ by <= max_joint_step on every joint; the given waypoints are kept.
     Same as ur5e-manip-sim's manip_sim.execution.densify, which its executor
-    applies to every planned path. A sparse CBiRRT path (the pour's sharp
-    turns) otherwise fails time_optimal's spline check."""
+    applies to every planned path; exec_plan applies it to every untimed
+    step. A sparse CBiRRT path (the pour's sharp turns) otherwise fails
+    time_optimal's spline check."""
     Q = np.asarray(Q, float)
     out = [Q[0]]
     for qa, qb in zip(Q[:-1], Q[1:]):

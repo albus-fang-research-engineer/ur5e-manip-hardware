@@ -114,6 +114,15 @@ def test_min_duration_slows_an_untimed_step(ep, ge, ch):
     np.testing.assert_allclose(slow.Q[[0, -1]], fast.Q[[0, -1]])
 
 
+def test_sparse_untimed_path_is_densified_not_refused(ep, ge, ch):
+    pytest.importorskip("toppra")
+    corner = np.stack([Q0, Q0 + [0.6, 0, 0, 0, 0, 0], Q0 + [0.6, 0.6, 0, 0, 0, 0]])
+    with pytest.raises(um.MotionRefusal, match="leaves the joint path"):
+        um.time_optimal(corner)                                   # what exec_plan used to send
+    seg = ep.build({"steps": [{"name": "carry", "traj": traj(corner)}]}, ch, ge, 0.1)[0]
+    np.testing.assert_allclose(seg.Q[[0, -1]], corner[[0, -1]])
+
+
 def test_build_refuses_bad_plans(ep, ge, ch):
     spec, P1, P2 = spec_two_stages()
     gap = dict(spec, steps=[spec["steps"][0], {"name": "carry", "traj": traj(P2 + 0.05)}])
