@@ -43,7 +43,9 @@ except ImportError as e:
         "    ls /opt/manip-sim/scripts/plan_stages.py\n"
         "    python3 -c 'import scripts; print(scripts.__path__)'") from e
 
+import hashlib
 import json
+import sys
 from pathlib import Path
 
 from manip_bridge.sim_provenance import provenance as _provenance
@@ -53,10 +55,28 @@ import manip_sim.selection as _sel  # noqa: E402  (already imported by plan_stag
 SOURCES = (_ps.__file__, _sel.__file__)
 
 
+def contract_changed(doc) -> str | None:
+    """None if the contract file still has the sha256 the artifact was bound
+    with (hardware.task_spec_sha256), else what differs. An artifact that
+    records no sha256 (bound before it was recorded) is not compared."""
+    hw = doc.get("hardware") or {}
+    f, want = hw.get("task_spec_file"), hw.get("task_spec_sha256")
+    if not f or not want:
+        return None
+    try:
+        got = hashlib.sha256(Path(f).read_bytes()).hexdigest()
+    except OSError as e:
+        return f"cannot read {f}: {e}"
+    return None if got == want else f"{f} sha256 {got[:12]} != bound {want[:12]}"
+
+
 def load_plan(path):
     """load_bindings with the contract plan_scene --grounding bound the
     artifact with (hardware.task_spec_file). Refuses, as the reader does
-    (SystemExit), an artifact that records none."""
+    (SystemExit), an artifact that records none. If the contract file was
+    edited since binding, says so on stderr and reads on (log, not gate):
+    the reader then applies the EDITED rules -- re-bind with plan_scene
+    --replay ... --grounding to make them match."""
     doc = json.loads(Path(path).read_text())
     f = (doc.get("hardware") or {}).get("task_spec_file")
     if not f:
@@ -64,11 +84,15 @@ def load_plan(path):
         raise SystemExit(f"[stageplan-compat] {path} records no task contract "
                          "(hardware.task_spec_file) -- re-run plan_scene.py --replay ... "
                          "--grounding to bind it")
+    changed = contract_changed(doc)
+    if changed:
+        print(f"[stageplan-compat] WARNING {path}: task contract changed since binding ({changed}); "
+              "reading with the current file", file=sys.stderr)
     return load_bindings(path, load_task_spec(f))
 
 
 __all__ = ["Bindings", "TaskSpec", "DEFAULT_TASK_SPEC", "bind_roles", "blocking",
-           "load_bindings", "load_plan", "load_pool", "load_task_spec", "prune_parts",
+           "contract_changed", "load_bindings", "load_plan", "load_pool", "load_task_spec", "prune_parts",
            "verify", "provenance", "SOURCES"]
 
 

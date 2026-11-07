@@ -251,7 +251,7 @@ def test_compat_contracts_and_import_weight():
             "assert 'mujoco' not in sys.modules\n"
             "import manip_bridge.stageplan_compat as s\n"
             "assert set(s.__all__) == {'Bindings', 'TaskSpec', 'DEFAULT_TASK_SPEC', 'bind_roles', "
-            "'blocking', 'load_bindings', 'load_plan', 'load_pool', 'load_task_spec', "
+            "'blocking', 'contract_changed', 'load_bindings', 'load_plan', 'load_pool', 'load_task_spec', "
             "'prune_parts', 'verify', 'provenance', 'SOURCES'}\n"
             "assert s.SOURCES[0].endswith('scripts/plan_stages.py')\n"
             "assert s.SOURCES[1].endswith('manip_sim/selection.py')\n"
@@ -358,6 +358,37 @@ def test_body_dropped_binds_grasp_and_loads(drv, tmp_path):
     assert rec["key"] == "m2" and len(rec["frames_sha256"]) == 64
     out = _load_plan(run / "stage_plan" / "plan.json")
     assert out.startswith("ACCEPTED") and "'grasp': ('mug', 0, ['handle'])" in out, out
+
+
+def test_edited_contract_is_reported_not_refused(drv, tmp_path):
+    """load_plan compares the contract file with the sha256 recorded at
+    binding: an edit since then is a stderr WARNING naming both hashes, and
+    the plan is still read (log, not gate) -- with the edited rules."""
+    run = _run_dir(tmp_path)
+    art, log = _plan_and_log(drv, run, tmp_path, HANDLE_BODY)
+    g = _grounded(run, "m2", "mug", art["hardware"]["plan_sha"], ["handle", "body"], ["handle", "body"])
+    spec = mug_contract(tmp_path)
+    code, _, _ = drv.plan_scene(run, "pick up the mug by its handle", replay=str(log),
+                                grounding=str(g), task_spec=spec)
+    assert code == 0
+    path = run / "stage_plan" / "plan.json"
+    code = ("import sys\n"
+            "from manip_bridge.stageplan_compat import load_plan\n"
+            f"b = load_plan({str(path)!r})\n"
+            "print('ACCEPTED', sorted(b.roles))\n")
+    env = dict(os.environ, PYTHONPATH=os.pathsep.join([str(SIM_DIR), str(BRIDGE)]))
+
+    def read():
+        r = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True)
+        assert r.returncode == 0, r.stderr[-2000:]
+        return r.stdout, r.stderr
+
+    out, err = read()
+    assert out.startswith("ACCEPTED ['grasp']") and "WARNING" not in err
+    Path(spec).write_text(Path(spec).read_text() + "\n")       # any byte changes the hash
+    out, err = read()
+    assert out.startswith("ACCEPTED ['grasp']")
+    assert "task contract changed since binding" in err and "!= bound" in err
 
 
 def test_handle_dropped_body_survives_now_blocks(drv, tmp_path):

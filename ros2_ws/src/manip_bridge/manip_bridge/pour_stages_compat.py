@@ -34,7 +34,20 @@ except ImportError as e:
         "    ls /opt/manip-sim/manip_sim/pour_stages.py "
         "/opt/manip-sim/scripts/calibrate_frames_from_mesh.py") from e
 
+import manip_sim.frames as _fr  # noqa: E402  (already imported above)
+import manip_sim.tsr as _tsr  # noqa: E402
+import scripts.calibrate_frames_from_mesh as _cal  # noqa: E402
+
+from manip_bridge.sim_provenance import provenance as _provenance  # noqa: E402
+
 SIM_MODULE = _ps.__file__
+SOURCES = (_ps.__file__, _fr.__file__, _tsr.__file__, _cal.__file__)
 
 __all__ = ["Frame", "TSR", "TaskFrames", "transport_pair", "pour_pair",
-           "calibrate_teapot", "calibrate_mug", "mesh_pour_axis", "SIM_MODULE"]
+           "calibrate_teapot", "calibrate_mug", "mesh_pour_axis", "SIM_MODULE",
+           "SOURCES", "provenance"]
+
+
+def provenance():
+    """Which sim code ran: commit, dirty flag, sha256 of each imported file."""
+    return _provenance(SOURCES)

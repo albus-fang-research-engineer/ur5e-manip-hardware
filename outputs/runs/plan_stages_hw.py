@@ -19,7 +19,8 @@ stages 2-3 on the cuRobo sidecar's plan_constrained. Nothing moves.
             v  logging (no gate): every stage's path is timed by TOPP-RA as
             v  exec_plan will time it, sampled every 20 ms, and its excess
             v  against the stage's path TSR reported (max / median / p95,
-            v  translation mm, rotation deg), at the waypoints and densely
+            v  translation mm, rotation deg), at the waypoints and densely;
+            v  and each joint's total travel vs net change (wrist winding)
     <out>/report.json      inputs, poses, every attempt's funnel + reason, metrics
     <out>/stages.json      the transport / pour joint paths (UR joint names)
     <out>/plan.json        exec_plan format, the whole chain: open, reach,
@@ -219,6 +220,23 @@ def excess_metrics(ch, Q, T_ee_canon, path_tsr, speed: float) -> dict:
     return out
 
 
+def joint_travel(Q) -> dict:
+    """Per joint (UR names, DH order), in degrees: total distance travelled
+    along the path, net start->end change, and the swept range. Logging
+    only: a total far above |net| is a joint that winds and unwinds (CBiRRT
+    can spin wrist 3 the way the cuRobo reach did) -- watch it in rviz."""
+    Q = np.degrees(np.asarray(Q, float))
+    total = np.abs(np.diff(Q, axis=0)).sum(axis=0)
+    net, rng = Q[-1] - Q[0], Q.max(axis=0) - Q.min(axis=0)
+    return {n: {"total": round(float(t), 1), "net": round(float(d), 1), "range": round(float(r), 1)}
+            for n, t, d, r in zip(um.DH_ORDER, total, net, rng)}
+
+
+def _fmt_travel(jt) -> str:
+    return ", ".join(f"{n.replace('_joint', '')} {v['total']:.0f} (net {v['net']:+.0f})"
+                     for n, v in jt.items())
+
+
 def _fmt_metrics(m) -> str:
     w, d = m["waypoints"], m["dense"]
     s = (f"waypoints ({m['n_waypoints']}): trans max {w['trans_mm']['max']} / med "
@@ -339,6 +357,7 @@ def run(a) -> int:
     report = {"run": str(run_dir), "arm": "hand (pour_stages)", "scene": a.scene,
               "inputs": {"reach": reach["plan"].get("grasp"), "teapot_key": tk, "mug_key": mk,
                          "fixtures": [tp["_path"], mug["_path"]], "sim_module": psc.SIM_MODULE,
+                         "sim": psc.provenance(),
                          "tilt_deg": a.tilt_deg, "deeper_m": a.deeper},
               "poses": {"T_base_teapot": T_tp.tolist(), "T_base_mug": T_mug.tolist(),
                         "canonical_up_vs_base_z_deg": up_dev},
@@ -387,8 +406,10 @@ def run(a) -> int:
                          "pour": excess_metrics(ch, Q_pour, T_ee_canon, pair_p.path, a.speed)}
     d_end = pair_p.subgoal.displacement(ch.fk(Q_pour[-1]) @ T_ee_canon)
     report["pour_tilt_achieved_deg"] = round(float(np.degrees(d_end[3])), 1)
+    report["joint_travel_deg"] = {"transport": joint_travel(Q_tr), "pour": joint_travel(Q_pour)}
     for name, m in report["metrics"].items():
         print(f"[metrics] {name}: {_fmt_metrics(m)}")
+        print(f"[travel] {name} (deg): {_fmt_travel(report['joint_travel_deg'][name])}")
     print(f"[pour] achieved tilt {report['pour_tilt_achieved_deg']} deg (target {a.tilt_deg:.0f})")
 
     (out / "stages.json").write_text(json.dumps({
