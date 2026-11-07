@@ -105,6 +105,15 @@ def test_build_timing_names_and_gates(ep, ge, ch):
     assert by["open"].effort_n == ge.CLOSE_EFFORT_N              # default effort
 
 
+def test_min_duration_slows_an_untimed_step(ep, ge, ch):
+    spec, P1, P2 = spec_two_stages()
+    fast = {s.name: s for s in ep.build(spec, ch, ge, 0.1)}["carry"]
+    spec["steps"][2]["traj"]["min_duration_s"] = 3 * fast.t[-1]
+    slow = {s.name: s for s in ep.build(spec, ch, ge, 0.1)}["carry"]
+    assert slow.t[-1] == pytest.approx(3 * fast.t[-1], rel=0.02)
+    np.testing.assert_allclose(slow.Q[[0, -1]], fast.Q[[0, -1]])
+
+
 def test_build_refuses_bad_plans(ep, ge, ch):
     spec, P1, P2 = spec_two_stages()
     gap = dict(spec, steps=[spec["steps"][0], {"name": "carry", "traj": traj(P2 + 0.05)}])

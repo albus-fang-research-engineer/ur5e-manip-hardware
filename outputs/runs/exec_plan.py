@@ -10,6 +10,8 @@ CBiRRT, a hand-made path); grasp_exec stays the grasp-only run.
                                       "velocities": [[6], ...], "dt": 0.02}},
           {"name": "close",  "gripper": {"gap_m": 0.0, "effort_n": 60, "expect_object": true}},
           {"name": "carry",  "traj": {"joint_names": [6], "positions": [[6], ...]}},
+          {"name": "lift",   "traj": {"joint_names": [6], "positions": [[6], ...],
+                                      "min_duration_s": 2.5}},     # optional, slows TOPP-RA
           {"name": "open",   "gripper": {"gap_m": 0.085}, "gate": false}
         ]}
             |
@@ -93,7 +95,9 @@ def build(spec: dict, ch, ge, speed: float) -> list:
             V = um.to_dh_path(t["velocities"], t["joint_names"])
             seg = ge._timed(name, ch, Q, V, float(t["dt"]), speed, note="(planner timing)")
         else:
-            seg = ge._traj(name, ch, Q, speed, note="(TOPP-RA)")
+            md = float(t.get("min_duration_s", 0.0))
+            seg = ge._traj(name, ch, Q, speed, min_duration=md,
+                           note="(TOPP-RA" + (f", >= {md:.1f} s)" if md else ")"))
         seg.gate = gate
         segs.append(seg)
         q_end = seg.Q[-1]

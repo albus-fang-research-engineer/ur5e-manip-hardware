@@ -80,6 +80,17 @@ def test_time_optimal_refuses_a_spline_that_leaves_sparse_waypoints():
         um.time_optimal(corner)
 
 
+def test_densify_keeps_waypoints_bounds_the_step_and_lets_a_corner_be_timed():
+    pytest.importorskip("toppra")
+    corner = np.stack([Q0, Q0 + [0.6, 0, 0, 0, 0, 0], Q0 + [0.6, 0.6, 0, 0, 0, 0], Q0 + [0, 0.6, 0, 0, 0, 0]])
+    D = um.densify(corner)
+    assert np.abs(np.diff(D, axis=0)).max() <= um.DENSIFY_STEP + 1e-12
+    for q in corner:                                              # every waypoint survives
+        assert np.min(np.abs(D - q).max(axis=1)) < 1e-12
+    t, Qs, _ = um.time_optimal(D)                                 # the sparse corner is refused
+    np.testing.assert_allclose(Qs[[0, -1]], corner[[0, -1]])
+
+
 def test_names_and_start_check():
     names = list(reversed(um.DH_ORDER))
     np.testing.assert_array_equal(um.to_dh(Q0[::-1], names), Q0)

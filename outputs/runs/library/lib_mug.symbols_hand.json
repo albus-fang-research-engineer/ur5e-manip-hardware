@@ -1,0 +1,84 @@
+{
+ "object": "lib_mug",
+ "units": "meters",
+ "coordinates": "body frame of the tracked mesh lib_mug.obj (identity transform)",
+ "schema": "sim frames.json (points/axes/quantities); up/front/lateral axes define the canonical frame the hand arm plans in",
+ "points": {
+  "opening_center": {
+   "xyz": [
+    -0.012823,
+    0.043126,
+    -0.000611
+   ],
+   "status": "calibrated",
+   "comment": "calibrate_frames_from_mesh (sim) in the canonical frame, mapped to body; rim-band circle fit centre at rim height",
+   "depth_check": "skip"
+  }
+ },
+ "axes": {
+  "up_axis": {
+   "xyz": [
+    0.024851,
+    0.998345,
+    0.051865
+   ],
+   "status": "calibrated",
+   "comment": "canonical up (the input canonical.json's table normal)"
+  },
+  "front_axis": {
+   "xyz": [
+    -0.789077,
+    0.051443,
+    -0.612137
+   ],
+   "status": "calibrated",
+   "comment": "canonical frame: input canonical.json front"
+  },
+  "lateral_axis": {
+   "xyz": [
+    -0.613791,
+    -0.025714,
+    0.789049
+   ],
+   "status": "calibrated",
+   "comment": "canonical frame: up x front"
+  }
+ },
+ "quantities": {
+  "rim_radius": {
+   "value": 0.04311,
+   "status": "calibrated",
+   "comment": "calibrate_frames_from_mesh (sim) in the canonical frame, mapped to body"
+  }
+ },
+ "canonical": {
+  "R_body_from_canon": [
+   [
+    -0.789077,
+    -0.613791,
+    0.024851
+   ],
+   [
+    0.051443,
+    -0.025714,
+    0.998345
+   ],
+   [
+    -0.612137,
+    0.789049,
+    0.051865
+   ]
+  ],
+  "convention": "columns [x=front, y=up x front, z=up] in the body frame"
+ },
+ "diagnostics": {
+  "rim_radius_m": 0.04310859724981491
+ },
+ "provenance": {
+  "mesh": "/data/any6d/lib_mug.obj",
+  "mesh_sha256": "5d94b1080e8847079a7d03c6e4e8f2f9807800f2174ecd7f1076494fe8c52223",
+  "canonical_json": "/data/runs/20261031_174621/assets_canon/lib_mug/canonical.json",
+  "sim_module": "/opt/manip-sim/manip_sim/pour_stages.py",
+  "producer": "outputs/runs/hand_symbols.py"
+ }
+}

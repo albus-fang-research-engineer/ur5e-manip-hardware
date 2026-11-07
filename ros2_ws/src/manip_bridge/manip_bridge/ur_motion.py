@@ -117,6 +117,23 @@ def line(ch, q0, p_goal, step=0.005, max_joint_step=0.15, tol_p=1e-4, tol_r=1e-3
 
 SAMPLE_DT = 0.02                 # s between the points sent to the controller
 SPLINE_TOL = 1e-3                # rad, spline vs the straight joint segments between waypoints
+DENSIFY_STEP = 0.01              # rad; the sim executor uses 0.02, but a 0.02-dense pour
+                                 # (20261105_035449) still left SPLINE_TOL by 0.0014 rad
+
+
+def densify(Q, max_joint_step=DENSIFY_STEP) -> np.ndarray:
+    """Insert waypoints on the straight joint segments so consecutive points
+    differ by <= max_joint_step on every joint; the given waypoints are kept.
+    Same as ur5e-manip-sim's manip_sim.execution.densify, which its executor
+    applies to every planned path. A sparse CBiRRT path (the pour's sharp
+    turns) otherwise fails time_optimal's spline check."""
+    Q = np.asarray(Q, float)
+    out = [Q[0]]
+    for qa, qb in zip(Q[:-1], Q[1:]):
+        n = max(1, int(np.ceil(np.max(np.abs(qb - qa)) / max_joint_step)))
+        for k in range(1, n + 1):
+            out.append(qa + (qb - qa) * k / n)
+    return np.asarray(out)
 
 
 def time_optimal(Q, v_max=UR5E_VMAX, a_max=UR5E_AMAX, min_duration=0.0, dt=SAMPLE_DT):

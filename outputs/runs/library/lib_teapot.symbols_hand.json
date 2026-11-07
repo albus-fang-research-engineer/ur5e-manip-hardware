@@ -1,0 +1,97 @@
+{
+ "object": "lib_teapot",
+ "units": "meters",
+ "coordinates": "body frame of the tracked mesh lib_teapot.obj (identity transform)",
+ "schema": "sim frames.json (points/axes/quantities); up/front/lateral axes define the canonical frame the hand arm plans in",
+ "points": {
+  "spout_tip": {
+   "xyz": [
+    0.000521,
+    0.043096,
+    0.088575
+   ],
+   "status": "calibrated",
+   "comment": "calibrate_frames_from_mesh (sim) in the canonical frame, mapped to body; centroid of the 0.1% extremal vertices along pour_axis",
+   "depth_check": "surface"
+  }
+ },
+ "axes": {
+  "up_axis": {
+   "xyz": [
+    -0.16779,
+    0.964414,
+    -0.204332
+   ],
+   "status": "calibrated",
+   "comment": "canonical up (the input canonical.json's table normal)"
+  },
+  "pour_axis": {
+   "xyz": [
+    0.059564,
+    0.21681,
+    0.974395
+   ],
+   "status": "calibrated",
+   "comment": "calibrate_frames_from_mesh (sim) in the canonical frame, mapped to body; horizontal spout direction"
+  },
+  "tilt_axis": {
+   "xyz": [
+    0.984022,
+    0.151323,
+    -0.093823
+   ],
+   "status": "calibrated",
+   "comment": "up_axis x pour_axis, positive tips the spout down"
+  },
+  "front_axis": {
+   "xyz": [
+    0.059564,
+    0.21681,
+    0.974395
+   ],
+   "status": "calibrated",
+   "comment": "canonical frame: front = pour_axis"
+  },
+  "lateral_axis": {
+   "xyz": [
+    0.984022,
+    0.151323,
+    -0.093823
+   ],
+   "status": "calibrated",
+   "comment": "canonical frame: up x front"
+  }
+ },
+ "quantities": {},
+ "canonical": {
+  "R_body_from_canon": [
+   [
+    0.059564,
+    0.984022,
+    -0.16779
+   ],
+   [
+    0.21681,
+    0.151323,
+    0.964414
+   ],
+   [
+    0.974395,
+    -0.093823,
+    -0.204332
+   ]
+  ],
+  "convention": "columns [x=front, y=up x front, z=up] in the body frame"
+ },
+ "diagnostics": {
+  "pour_axis_vs_input_front_deg": 13.068000478801636,
+  "spout_tip_reach_m": 0.09733768693420895
+ },
+ "provenance": {
+  "mesh": "/data/any6d/lib_teapot.obj",
+  "mesh_sha256": "3ca2c9c5c597e6ad4bf22fc23b2969691712f67ebdef798fdda6564b3ff0070b",
+  "canonical_json": "/data/runs/20261031_174621/assets_canon/lib_teapot/canonical.json",
+  "sim_module": "/opt/manip-sim/manip_sim/pour_stages.py",
+  "producer": "outputs/runs/hand_symbols.py"
+ }
+}
