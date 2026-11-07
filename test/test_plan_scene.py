@@ -391,6 +391,18 @@ def test_edited_contract_is_reported_not_refused(drv, tmp_path):
     assert "task contract changed since binding" in err and "!= bound" in err
 
 
+def test_missing_contract_file_is_a_reader_refusal(drv, tmp_path):
+    run = _run_dir(tmp_path)
+    art, log = _plan_and_log(drv, run, tmp_path, HANDLE_BODY)
+    g = _grounded(run, "m2", "mug", art["hardware"]["plan_sha"], ["handle", "body"], ["handle", "body"])
+    spec = mug_contract(tmp_path)
+    assert drv.plan_scene(run, "pick up the mug by its handle", replay=str(log),
+                          grounding=str(g), task_spec=spec)[0] == 0
+    Path(spec).unlink()
+    out = _load_plan(run / "stage_plan" / "plan.json")
+    assert out.startswith("REFUSED") and "missing here" in out
+
+
 def test_handle_dropped_body_survives_now_blocks(drv, tmp_path):
     """The gap structural binding left open: the grasp stage keeps `body`,
     but the contract needs `handle` -- coverage[mug] and role[grasp] block."""
@@ -529,16 +541,50 @@ def test_model_handles_are_relabelled_to_contract_names(drv, tmp_path, capsys):
     assert "role pour               -> teapot @ stage 2" in out and "load_plan" in out
 
 
-def test_two_stage_pour_is_refused_by_the_reader(drv, tmp_path, capsys):
+def test_two_stage_pour_blocks_in_the_gate_itself(drv, tmp_path, capsys):
     """Hardware's 10/31 and 11/04 plans (Sonnet 4.6): grasp, then one "pour"
     stage, no transport. pour_tea needs grasp, transport, pour: transport_active
-    takes the one stage, pour has none after it, and plan_stages' reader
-    refuses -- reported, exit 2."""
+    takes the one stage and pour has none after it. That is bound[pour],
+    blocking, in the artifact's own gate (plan_stages' reader refuses it too),
+    exit 2."""
     run, log, g = _pour_run(drv, tmp_path, [GRASP_T, POUR_T])
     code, art, rep = drv.plan_scene(run, "pour tea into the mug", replay=str(log),
                                     grounding=str(g), task_spec=str(POUR_TEA))
-    assert art["gate"]["blocking"] == [] and art["roles"]["pour"]["stage"] is None
-    assert code == 2 and "role 'pour' unbound" in rep["refused"]
+    assert code == 2 and art["roles"]["pour"]["stage"] is None
+    assert art["gate"]["blocking"] == ["bound[pour]"]
+    by = {c["check"]: c for c in art["checks"]}
+    assert "after transport_active" in by["bound[pour]"]["detail"] and by["bound[grasp]"]["pass"]
+    out = _load_plan(run / "stage_plan" / "plan.json")
+    assert out.startswith("REFUSED") and "bound[pour]" in out
+
+
+def test_object_mapping_is_validated(drv, tmp_path):
+    """--object typos and collisions refuse by name instead of surfacing as an
+    unexplained coverage failure (or two objects merged onto one name)."""
+    h = ("red_mug", "teal_teapot")
+    run, log, g = _pour_run(drv, tmp_path, [GRASP_T, CARRY_T, POUR_T], handles=h)
+    for objects, msg in (({"teapot": 3}, "no object on mark 3"),
+                         ({"teapot": 2, "mug": 2}, "mark 2 given twice"),
+                         ({"red_mug": 2}, "would both be named")):
+        with pytest.raises(drv.PlanRefusal, match=msg):
+            drv.plan_scene(run, "pour tea into the mug", replay=str(log), grounding=str(g),
+                           task_spec=str(POUR_TEA), objects=objects)
+
+
+def test_malformed_contract_is_a_refusal_not_a_traceback(drv, tmp_path):
+    run, log, g = _pour_run(drv, tmp_path, [GRASP_T, CARRY_T, POUR_T])
+    bad = json.loads(POUR_TEA.read_text())
+    bad["roles"]["pour"]["after"] = "no_such_role"
+    f = tmp_path / "bad.json"
+    f.write_text(json.dumps(bad))
+    with pytest.raises(drv.PlanRefusal, match="no_such_role"):
+        drv.plan_scene(run, "pour tea into the mug", replay=str(log), grounding=str(g),
+                       task_spec=str(f))
+
+
+def test_shipped_mug_grasp_contract_is_the_tested_one():
+    f = Path(__file__).resolve().parents[1] / "outputs" / "runs" / "tasks" / "mug_grasp.json"
+    assert json.loads(f.read_text()) == MUG_GRASP
 
 
 def test_grounding_cli(drv, tmp_path, capsys):

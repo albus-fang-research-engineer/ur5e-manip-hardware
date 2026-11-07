@@ -56,7 +56,9 @@ plan_stages' --replay --grounding, on hardware:
               (sim's gate: every failed check blocks)
   roles       sim plan_stages.bind_roles with the same contract: each role
               -> {object, stage}, the first stage whose parts cover the
-              role's tags (`after` / optional as the contract says). Then
+              role's tags (`after` / optional as the contract says); a
+              required role left with no stage fails bound[<role>]
+              (blocking, recorded in the gate). Then
               the written artifact is read back through plan_stages' reader
               (stageplan_compat.load_plan); a refusal there (a required role
               matched by verify but with no stage after its dependency)
@@ -87,18 +89,20 @@ deferred), or with --grounding: roles bound and nothing blocks; 2 refused
 -- the artifact is still written when a plan exists (and with --grounding
 once the inputs pass the gate), so what was decided is always inspectable.
 
-In the ros2 container (ANTHROPIC_API_KEY set; MANIP_VLM_MODEL optional):
+From the host, live calls go through scripts/vlm_run.sh (key and model from
+.env, every live call logged); --replay makes no API call. Keep --task the
+SAME on every step: the task text is part of the plan's sha, and grounding
+belongs to the plan that named its parts.
 
-    export PYTHONPATH=/root/ros2_ws/src/manip_bridge:$PYTHONPATH
-    python3 /data/runs/plan_scene.py --run /data/runs/<stamp> \\
-        --task "pick up the mug by its handle"
-    python3 /data/runs/plan_scene.py --run /data/runs/<stamp> \\
-        --task "pick up the mug by its handle" --replay /data/runs/<stamp>/stage_plan/plan.log.json
-    # after the printed make_part_masks / ground_asset / check_symbols:
-    python3 /data/runs/plan_scene.py --run /data/runs/<stamp> \\
-        --task "pour tea into the mug" --replay /data/runs/<stamp>/stage_plan/plan.log.json \\
-        --grounding /data/runs/<stamp>/grounding_vlm [--object teapot=2 --object mug=1] \\
-        [--task-spec /opt/manip-sim/tasks/<name>.json]      # default pour_tea.json
+    scripts/vlm_run.sh plan_scene.py --run /data/runs/<stamp> --task "pour tea into the mug"
+    # after the printed canonicalize / part_phrases / make_part_masks / ground_asset / check_symbols:
+    scripts/vlm_run.sh plan_scene.py --run /data/runs/<stamp> --task "pour tea into the mug" \\
+        --replay /data/runs/<stamp>/stage_plan/plan.log.json \\
+        --grounding /data/runs/<stamp>/grounding_vlm --object teapot=2 --object mug=1
+
+The contract defaults to sim's tasks/pour_tea.json. Any other task needs its
+own: a grasp-only run ("pick up the mug by its handle") binds with
+--task-spec /data/runs/tasks/mug_grasp.json (sim ships no contract for it).
 """
 import argparse
 import hashlib
@@ -275,9 +279,23 @@ def contract_names(plan, objects: dict[str, int] | None) -> dict[str, str]:
     names, applies; hardware has no manifest, so the operator's
     --object NAME=MARK is that ground truth. Unmapped handles are kept
     (a plan whose handles already are the contract's names needs none)."""
-    by_mark = {int(m): n for n, m in (objects or {}).items()}
-    return {h: by_mark[int(ref.mark)] for h, ref in plan.objects.items()
-            if ref.mark is not None and int(ref.mark) in by_mark}
+    objects = objects or {}
+    marks = {int(ref.mark): h for h, ref in plan.objects.items() if ref.mark is not None}
+    by_mark: dict[int, str] = {}
+    for n, m in objects.items():
+        if int(m) not in marks:
+            raise PlanRefusal(f"--object {n}={m}: the plan has no object on mark {m} "
+                              f"(its marks: {sorted(marks)})")
+        if int(m) in by_mark:
+            raise PlanRefusal(f"--object: mark {m} given twice ({by_mark[int(m)]}, {n})")
+        by_mark[int(m)] = n
+    names = {marks[m]: n for m, n in by_mark.items()}
+    final = [names.get(h, h) for h in plan.objects]
+    clash = sorted({n for n in final if final.count(n) > 1})
+    if clash:
+        raise PlanRefusal(f"--object: two plan objects would both be named {clash} "
+                          f"(handles {sorted(plan.objects)}, mapping {names})")
+    return names
 
 
 def ground_pass(plan, plan_sha: str, parts: dict, mark_key: dict, grounding: Path,
@@ -298,9 +316,22 @@ def ground_pass(plan, plan_sha: str, parts: dict, mark_key: dict, grounding: Pat
             pools[n] = sp.load_pool(g["canon_dir"])
         except Exception as e:                            # selection.ResolutionError
             raise PlanRefusal(f"pool for {n}: {e}") from e
-    checks = [{"check": c, "pass": ok, "blocking": True, "detail": d}
-              for c, ok, d in sp.verify(gplan, pools, spec, False)]
-    roles = sp.bind_roles(gplan, pools, spec, False)
+    try:
+        checks = [{"check": c, "pass": ok, "blocking": True, "detail": d}
+                  for c, ok, d in sp.verify(gplan, pools, spec, False)]
+        roles = sp.bind_roles(gplan, pools, spec, False)
+    except ValueError as e:                               # a malformed contract
+        raise PlanRefusal(f"contract {spec_file}: {e}") from e
+    # plan_stages' reader refuses a required role left without a stage (e.g.
+    # `pour` with no stage after `transport_active`); record that in the gate
+    # itself, so the artifact on disk never shows a clean gate the reader refuses
+    for r, b in roles.items():
+        if r in spec.optional:
+            continue
+        checks.append({"check": f"bound[{r}]", "pass": b["stage"] is not None, "blocking": True,
+                       "detail": (f"{r} -> {b['object']} @ stage {b['stage']}" if b["stage"] is not None
+                                  else f"required role {r} has no stage"
+                                  + (f" after {spec.role_after[r]}" if r in spec.role_after else ""))})
     record = {"dir": str(grounding.resolve()), "spec": spec.name,
               "objects": {n: {k: v for k, v in g.items() if k != "dropped"}
                           for n, g in got.items()},
@@ -410,6 +441,7 @@ def plan_scene(run, task: str, replay: str | None = None, out: str | None = None
             "parts_dropped": {h: list(d) for h, d in dropped.items()},
             "task_spec": grec["spec"],
             "object_parts": object_parts(gplan),
+            "object_parts_requested": {names.get(h, h): ps for h, ps in parts.items()},
             "roles": roles,
             "checks": [{"check": c["check"], "pass": c["pass"], "detail": c["detail"]}
                        for c in checks],
@@ -462,6 +494,8 @@ def main(argv=None) -> int:
             name, _, mark = kv.partition("=")
             if not name or not mark.strip().isdigit():
                 ap.error(f"--object {kv!r}: want NAME=MARK, e.g. teapot=2")
+            if name.strip() in objects:
+                ap.error(f"--object {name.strip()!r} given twice")
             objects[name.strip()] = int(mark)
         code, art, rep = plan_scene(a.run, a.task, a.replay, a.out, grounding=a.grounding,
                                     task_spec=a.task_spec, objects=objects)

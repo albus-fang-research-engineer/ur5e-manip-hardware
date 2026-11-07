@@ -817,14 +817,22 @@ The hand-typed `--parts handle,rim` of milestone 1 is replaced by the
 model's output; a part the model named but SAM3 cannot find is dropped and
 recorded by `ground_asset` (exit 1), so the printed commands run unedited.
 
-    export PYTHONPATH=/root/ros2_ws/src/manip_bridge:$PYTHONPATH   # + ANTHROPIC_API_KEY
-    python3 /data/runs/plan_scene.py --run $RUN --task "pick up the mug by its handle"
-    python3 /data/runs/plan_scene.py --run $RUN --task "..." --replay $RUN/stage_plan/plan.log.json
+    scripts/vlm_run.sh plan_scene.py --run $RUN --task "pour tea into the mug"     # live, from the host
+    scripts/vlm_run.sh plan_scene.py --run $RUN --task "pour tea into the mug" \
+        --replay $RUN/stage_plan/plan.log.json                                       # no API call
+
+`scripts/vlm_run.sh` runs any `/data/runs` VLM driver in Ros2Bridge with
+`ANTHROPIC_API_KEY`, `MANIP_VLM_MODEL` (required) and `MANIP_VLM_TEMPERATURE`
+(`none` for Opus 5, which rejects the key) from `.env`, and appends every
+live call to `outputs/vlm_calls.log`. Keep `--task` identical on every step:
+it is part of the plan's sha, and grounding belongs to that plan.
 
 Writes `<run>/stage_plan/plan.json` (plan, per-object parts, mark -> run key,
 checks, model, sim provenance) and `plan.log.json` (every raw response;
 `--replay` feeds them back with no API call). The model is
-`MANIP_VLM_MODEL` (default `claude-sonnet-4-6`). Outputs of the printed
+`MANIP_VLM_MODEL` (the drivers' own default is `claude-sonnet-4-6`, which
+produced 1-2 stage pour plans on hardware; `vlm_run.sh` refuses to run
+without it set). Outputs of the printed
 commands land in `<run>/masks_vlm_<plan hash>/` and `<run>/grounding_vlm/`,
 beside milestone 1's, not over them.
 
@@ -855,8 +863,11 @@ printed commands have run, the same plan is replayed against what was
 grounded and `plan.json` is rewritten -- sim's `plan_stages --replay
 --grounding`, on hardware:
 
-    python3 /data/runs/plan_scene.py --run $RUN --task "pick up the mug by its handle" \
-        --replay $RUN/stage_plan/plan.log.json --grounding $RUN/grounding_vlm
+    scripts/vlm_run.sh plan_scene.py --run $RUN --task "pour tea into the mug" \
+        --replay $RUN/stage_plan/plan.log.json --grounding $RUN/grounding_vlm \
+        --object teapot=2 --object mug=1
+    # a grasp-only task needs its own contract (sim ships none):
+    #   --task "pick up the mug by its handle" ... --task-spec /data/runs/tasks/mug_grasp.json
 
 - *gate:* every used object's `DIR/<key>/frames.json` must come from this
   plan (`provenance.canonical.masks_root` is `masks_vlm_<plan sha8>`);
@@ -868,14 +879,19 @@ grounded and `plan.json` is rewritten -- sim's `plan_stages --replay
   `--object NAME=MARK` (sim relabels from its manifest; on hardware the
   operator is that ground truth). Unmapped handles are kept, so a plan that
   already says `teapot` / `mug` needs none; 10/23's `teal_teapot` would.
+  A mark the plan does not have, a mark given twice, or two objects ending
+  up with one name is refused by name.
 - *verify:* sim's `verify` with sim's task contract (`--task-spec`, default
   `/opt/manip-sim/tasks/pour_tea.json`): `identity[]`, `grounds[]`,
   `menu[]`, `coverage[]`, `role[]`, `ordering[]` against the grounded pool
   (`DIR/canon/<name>/candidates.json`), all blocking.
-- *roles:* sim's `bind_roles` with the same contract, then the written
-  artifact is read back through plan_stages' reader (`load_plan`); a refusal
-  there -- a required role `verify` matched but with no stage after its
-  `after` dependency -- blocks too (exit 2).
+- *roles:* sim's `bind_roles` with the same contract. A required role left
+  with no stage (e.g. `pour` with no stage after `transport_active`, the
+  2-stage Sonnet plans) fails `bound[<role>]`, blocking, in the artifact's
+  own gate; the written artifact is then read back through plan_stages'
+  reader (`load_plan`), whose refusal blocks too (exit 2). `load_plan`
+  warns when the contract file's sha256 differs from the one bound with,
+  and refuses when the file is missing.
 
 Hardware bound roles by stage structure alone until 2026-11-06 (a
 task-requirements file was declined on 2026-10-12 as one hand-written file

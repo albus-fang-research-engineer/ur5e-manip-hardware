@@ -1,0 +1,19 @@
+{
+  "name": "mug_grasp",
+  "required_tags": {
+    "mug": [
+      "handle"
+    ]
+  },
+  "roles": {
+    "grasp": {
+      "active": "mug",
+      "passive": null,
+      "tags": {
+        "mug": [
+          "handle"
+        ]
+      }
+    }
+  }
+}

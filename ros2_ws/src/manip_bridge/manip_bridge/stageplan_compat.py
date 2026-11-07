@@ -43,12 +43,11 @@ except ImportError as e:
         "    ls /opt/manip-sim/scripts/plan_stages.py\n"
         "    python3 -c 'import scripts; print(scripts.__path__)'") from e
 
-import hashlib
 import json
 import sys
 from pathlib import Path
 
-from manip_bridge.sim_provenance import provenance as _provenance
+from manip_bridge.sim_provenance import _sha256, provenance as _provenance
 
 import manip_sim.selection as _sel  # noqa: E402  (already imported by plan_stages)
 
@@ -64,7 +63,7 @@ def contract_changed(doc) -> str | None:
     if not f or not want:
         return None
     try:
-        got = hashlib.sha256(Path(f).read_bytes()).hexdigest()
+        got = _sha256(f)
     except OSError as e:
         return f"cannot read {f}: {e}"
     return None if got == want else f"{f} sha256 {got[:12]} != bound {want[:12]}"
@@ -84,6 +83,9 @@ def load_plan(path):
         raise SystemExit(f"[stageplan-compat] {path} records no task contract "
                          "(hardware.task_spec_file) -- re-run plan_scene.py --replay ... "
                          "--grounding to bind it")
+    if not Path(f).is_file():
+        raise SystemExit(f"[stageplan-compat] {path} was bound with task contract {f}, which is "
+                         "missing here (moved, or the sim checkout is not mounted)")
     changed = contract_changed(doc)
     if changed:
         print(f"[stageplan-compat] WARNING {path}: task contract changed since binding ({changed}); "

@@ -19,7 +19,10 @@ sampler has something to sample. Two requests, same everything else:
                                       a zero above is the mug, not IK, the
                                       table or the grasp)
 
-Both need n_ik > 0, or the check says nothing. Plus the mesh's own stats
+The control needs n_ik > 0 and some free goals, or the check says nothing.
+With the mug, a goal can die at IK (cuRobo's IK shares the scene's collision
+checker) or at the collision filter: either way 0 free is a PASS, and which
+layer stopped it is recorded. Plus the mesh's own stats
 (watertight, consistent winding, volume). Log only: the verdict is printed
 and written to <run>/m4/mug_obstacle_check.json; the exit code is 0 unless
 the check could not run.
@@ -66,10 +69,24 @@ def main(argv=None) -> int:
     ap.add_argument("--run", required=True)
     ap.add_argument("--reach", default=None, help="default <run>/m3/reach.json")
     ap.add_argument("--library", default=str(HERE / "library"))
+    ap.add_argument("--teapot-key", default=None)
+    ap.add_argument("--mug-key", default=None)
+    ap.add_argument("--deeper", type=float, default=0.0, help="as plan_stages_hw / grasp_exec --deeper")
     ap.add_argument("--n-goal-samples", type=int, default=60)
     ap.add_argument("--timeout", type=float, default=3.0, help="CBiRRT budget; only the goal funnel matters")
     a = ap.parse_args(argv)
+    if bool(a.teapot_key) != bool(a.mug_key):
+        ap.error("--teapot-key and --mug-key go together")
+    try:
+        return run(a)
+    except Exception as e:
+        if type(e).__name__ != "PlanRefusal":
+            raise
+        print(f"[check] REFUSED: {e}")
+        return 2
 
+
+def run(a) -> int:
     import trimesh
     hw = _load("plan_stages_hw")
     so, um, psc = hw.so, hw.um, hw.psc
@@ -77,16 +94,19 @@ def main(argv=None) -> int:
 
     run_dir = Path(a.run)
     summary = json.loads((run_dir / "summary.json").read_text())
-    tk, mk = hw.object_keys(summary)
-    tp_mesh, mug_mesh = Path(so.mesh_path(summary, tk)), Path(so.mesh_path(summary, mk))
-    T_tp, T_mug = so.T_base_obj(summary, tk), so.T_base_obj(summary, mk)
+    tk, mk = (a.teapot_key, a.mug_key) if a.teapot_key else hw.object_keys(summary)
+    try:                                   # scene_ops raises ValueError on a missing field
+        tp_mesh, mug_mesh = Path(so.mesh_path(summary, tk)), Path(so.mesh_path(summary, mk))
+        T_tp, T_mug = so.T_base_obj(summary, tk), so.T_base_obj(summary, mk)
+    except ValueError as e:
+        raise hw.PlanRefusal(f"{run_dir / 'summary.json'}: {e}") from e
     tp = hw.load_fixture(Path(a.library), tp_mesh)
     T_tpC = T_tp @ hw._block(tp["_R"])
 
     # grasp, exactly as plan_stages_hw builds it
     ch, ge = um.chain(), hw._load("grasp_exec")
     reach = json.loads(Path(a.reach or run_dir / "m3" / "reach.json").read_text())
-    by = {s.name: s for s in ge.build(reach["plan"], ch)}
+    by = {s.name: s for s in ge.build(reach["plan"], ch, deeper=a.deeper)}
     q_grasp, q_lift = by["approach"].Q[-1], by["lift"].Q[-1]
     T_tool0_grasp = ch.fk(q_grasp)
     T_ee_canon = np.linalg.inv(T_tool0_grasp) @ T_tpC
@@ -123,19 +143,21 @@ def main(argv=None) -> int:
         res[name] = {k: r.get(k) for k in ("funnel", "reason", "wall_s")}
 
     f_mug, f_ctl = res["with_mug"]["funnel"] or {}, res["table_only"]["funnel"] or {}
-    ik_ok = (f_mug.get("n_ik") or 0) > 0 and (f_ctl.get("n_ik") or 0) > 0
     blocked = (f_mug.get("n_collision_free") or 0) == 0
-    control_free = (f_ctl.get("n_collision_free") or 0) > 0
-    if not ik_ok:
-        verdict = "inconclusive: no IK solutions at the target (move it / widen the freedom)"
-    elif not control_free:
+    if not (f_ctl.get("n_ik") or 0):
+        verdict = "inconclusive: no IK solutions at the target even without the mug (move it / widen the freedom)"
+    elif not (f_ctl.get("n_collision_free") or 0):
         verdict = "inconclusive: the table-only control is blocked too (table or grasp, not the mug)"
     elif blocked:
-        verdict = "PASS: the mug mesh blocks every teapot-in-mug goal the table-only scene allows"
+        layer = ("at IK (cuRobo's IK sees the mug)" if not (f_mug.get("n_ik") or 0)
+                 else f"at the collision filter ({f_mug.get('n_ik')} IK solutions, 0 free)")
+        verdict = (f"PASS: the mug mesh blocks every teapot-in-mug goal the table-only scene "
+                   f"allows -- {layer}")
     else:
         verdict = (f"FAIL: {f_mug.get('n_collision_free')} of {f_mug.get('n_ik')} teapot-in-mug goals "
                    "are collision-free with the mug in the scene")
-    report = {"run": str(run_dir), "teapot_key": tk, "mug_key": mk, "mug_mesh": str(mug_mesh),
+    report = {"run": str(run_dir), "teapot_key": tk, "mug_key": mk, "deeper_m": a.deeper,
+              "mug_mesh": str(mug_mesh),
               "mug_mesh_stats": mesh_stats(m_mug), "target_T_base_canon": T_target.tolist(),
               "shift_m": d.tolist(), "results": res, "verdict": verdict}
     out = run_dir / "m4" / "mug_obstacle_check.json"
