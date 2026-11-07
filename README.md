@@ -743,9 +743,9 @@ with `;` or run them one by one, not with `&&`.
 Whether a drop is fatal is decided downstream, at `plan_scene --grounding`
 (sim's rule: "whether the drop is fatal is decided by the contract
 checks"): a bound role whose stage has no surviving part on its object
-blocks there. Roles bind structurally on hardware (no task contract), so a
-drop that leaves the stage another part -- `handle` dropped, `body`
-survives -- is not caught at binding; see "After grounding" below.
+blocks there. Roles bind against sim's task contract, which names the part
+each role needs, so `handle` dropped with `body` surviving blocks too; see
+"After grounding" below.
 
 **What grounding passes in.** `up_sigma_deg = max(fit_sigma_deg,
 angle_to_table_deg)` from canonical.json (2.07 deg on the mug), plumbed
@@ -864,29 +864,29 @@ grounded and `plan.json` is rewritten -- sim's `plan_stages --replay
 - *prune:* parts the plan named that did not ground (dropped, ungrounded,
   or never requested) leave `plan_grounded` and are recorded in
   `parts_dropped`, with reasons under `hardware.parts_dropped_reasons`.
-- *verify:* sim's `verify` with an empty spec (`STRUCTURAL_SPEC`):
-  `identity[]`, `grounds[]`, `menu[]` against the grounded pool
-  (`DIR/canon/<name>/candidates.json`), all blocking; no contract checks.
-- *roles, structural:* grasp = the first active-only stage. `role[grasp]`
-  blocks when that stage has no surviving part on its object -- there the
-  drop is fatal. Other stages are recorded as `unbound[stage<i>]` (mover
-  roles bind at milestone 4); a plan with no active-only stage blocks as
-  `roles[none]`.
+- *relabel:* plan handles -> the contract's object names from
+  `--object NAME=MARK` (sim relabels from its manifest; on hardware the
+  operator is that ground truth). Unmapped handles are kept, so a plan that
+  already says `teapot` / `mug` needs none; 10/23's `teal_teapot` would.
+- *verify:* sim's `verify` with sim's task contract (`--task-spec`, default
+  `/opt/manip-sim/tasks/pour_tea.json`): `identity[]`, `grounds[]`,
+  `menu[]`, `coverage[]`, `role[]`, `ordering[]` against the grounded pool
+  (`DIR/canon/<name>/candidates.json`), all blocking.
+- *roles:* sim's `bind_roles` with the same contract, then the written
+  artifact is read back through plan_stages' reader (`load_plan`); a refusal
+  there -- a required role `verify` matched but with no stage after its
+  `after` dependency -- blocks too (exit 2).
 
-Hardware binds roles by structure only, per the 2026-09-12 rule (contract
-tag checks are an eval fixture; active-only = grasp, active+passive =
-interaction). A placeholder-keyed task-requirements file that would name
-the part each role needs was considered and declined on 2026-10-12: neither
-OmniManip nor ReKep has one, and it would add a hand-written file per task.
-The cost, stated: "handle dropped, body survives" binds the grasp to the
-body's stage. It is caught by looking, as OmniManip does -- call #2 sees
-"grasp mug by handle" with no handle marks, its overlay on the real frame,
-and later the call-#4 critic -- not at binding.
+Hardware bound roles by stage structure alone until 2026-11-06 (a
+task-requirements file was declined on 2026-10-12 as one hand-written file
+per task). It now reuses sim's own contracts, `tasks/<name>.json`, which
+sim already keeps per task, so "handle dropped, body survives" fails
+`coverage[]` / `role[grasp]` instead of binding the grasp to the body.
 
-Read the bound artifact with `stageplan_compat.load_structural(path)`,
-never bare `load_bindings(path)`: that default is sim's
-`tasks/pour_tea.json`, whose `after` ordering would be applied to any
-hardware role sharing a pour-tea role name.
+Read the bound artifact with `stageplan_compat.load_plan(path)`: it reads
+back with the contract file the artifact records
+(`hardware.task_spec_file`, + sha256), never `load_bindings`' pour-tea
+fallback.
 
 ## VLM call #2 on a run (`outputs/runs/select_scene.py`, milestone 2)
 
@@ -898,7 +898,7 @@ the pick is resolved and drawn on the real frame.
     python3 /data/runs/select_scene.py --run $RUN --replay $RUN/call2/selections.log.json
 
 - *inputs:* the bound `stage_plan/plan.json`, read with
-  `stageplan_compat.load_structural` (a blocked or unbound plan is refused by
+  `stageplan_compat.load_plan` (a blocked or unbound plan is refused by
   plan_stages' own reader), and per object `grounding_vlm/canon/<name>/` --
   `ground_object` already leaves a full asset dir there (frames.json,
   candidates.json, `<name>.xml` and `meshes/` links), so no asset is built.
@@ -927,8 +927,8 @@ body (`R_body_from_canon`) -> camera (`pose_on_final`) -> pixel (summary K)
 and drawn on `rgb.png` with the other menu marks; `in_outline` records
 whether it falls inside the object's mask with enclosed holes filled,
 dilated as check_symbols does. Report-only, printed as a WARNING when false:
-this is where a pick on the wrong part is caught, including structural
-binding's known gap ("handle dropped, body survives").
+this is where a pick on the wrong part is caught (the contract checks only
+that a part with the right name grounded, not where the pick lands).
 
 Point-only scheme (sim's default): no axis is selected; `resolve_selection`
 anchors the frame's axis on the canonical up by explicit default and says so

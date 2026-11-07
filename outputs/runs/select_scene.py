@@ -18,8 +18,9 @@ the pick is resolved and drawn on the real frame (milestone 2).
     <out>/selection_<role>.png       the pick on the real RGB frame
 
 Gates, each a refusal naming its fix (exit 2):
-  plan      read with stageplan_compat.load_structural -- a blocked or
-            unbound plan is refused by plan_stages' own reader
+  plan      read with stageplan_compat.load_plan (the sim task contract it
+            was bound with) -- a blocked or unbound plan is refused by
+            plan_stages' own reader
   grounding each bound object's grounding_vlm/<key>/frames.json must still
             hash to what plan_scene --grounding recorded: a grounding redone
             after binding would otherwise reach call #2 silently
@@ -36,8 +37,8 @@ camera (summary pose_on_final) -> pixel (summary K), drawn on rgb.png with
 the other menu marks, plus in_outline: whether that pixel is inside the
 object's mask with enclosed holes filled, dilated as check_symbols does
 (its outline, its mask_dilate_frac). This image is where "the model picked
-the wrong part" is caught -- including the known gap of structural role
-binding ("handle dropped, body survives"; see the README).
+the wrong part" is caught (the contract checks only that a part with the
+right NAME grounded, not where the model's pick lands).
 
 Point-only scheme: the model picks a mark, no axis; resolve_selection
 anchors the frame's axis on the canonical up BY EXPLICIT DEFAULT and says
@@ -100,7 +101,7 @@ def load_inputs(run: Path, plan_path: Path) -> tuple:
         raise SelectRefusal(f"{plan_path} not found -- run plan_scene.py, then the printed "
                             "commands, then plan_scene.py --replay ... --grounding")
     try:
-        b = spc.load_structural(plan_path)
+        b = spc.load_plan(plan_path)
     except SystemExit as e:                       # plan_stages' reader refuses by exiting
         raise SelectRefusal(f"plan_stages' reader refused {plan_path}: {e}") from None
     doc = json.loads(plan_path.read_text())

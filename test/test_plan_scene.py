@@ -250,12 +250,13 @@ def test_compat_contracts_and_import_weight():
             "assert v.SOURCES[0].endswith('manip_sim/vlm.py')\n"
             "assert 'mujoco' not in sys.modules\n"
             "import manip_bridge.stageplan_compat as s\n"
-            "assert set(s.__all__) == {'Bindings', 'TaskSpec', 'STRUCTURAL_SPEC', 'blocking', "
-            "'load_bindings', 'load_structural', 'load_pool', 'prune_parts', 'verify', "
-            "'provenance', 'SOURCES'}\n"
+            "assert set(s.__all__) == {'Bindings', 'TaskSpec', 'DEFAULT_TASK_SPEC', 'bind_roles', "
+            "'blocking', 'load_bindings', 'load_plan', 'load_pool', 'load_task_spec', "
+            "'prune_parts', 'verify', 'provenance', 'SOURCES'}\n"
             "assert s.SOURCES[0].endswith('scripts/plan_stages.py')\n"
             "assert s.SOURCES[1].endswith('manip_sim/selection.py')\n"
-            "assert s.STRUCTURAL_SPEC.roles == {} and s.STRUCTURAL_SPEC.required_tags == {}\n"
+            "assert s.DEFAULT_TASK_SPEC.name == 'pour_tea.json'\n"
+            "assert s.load_task_spec(s.DEFAULT_TASK_SPEC).name == 'pour_tea'\n"
             "assert 'mujoco' not in sys.modules\n")
     env = dict(os.environ, PYTHONPATH=os.pathsep.join([str(SIM_DIR), str(BRIDGE)]))
     r = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True)
@@ -266,6 +267,16 @@ def test_compat_contracts_and_import_weight():
 
 HANDLE_BODY = _resp({"2": "mug"}, [{"name": "grasp mug by handle", "active": 2, "passive": None,
                                     "parts": {"2": ["handle", "body"]}}])
+MUG_GRASP = {"name": "mug_grasp", "required_tags": {"mug": ["handle"]},
+             "roles": {"grasp": {"active": "mug", "passive": None, "tags": {"mug": ["handle"]}}}}
+POUR_TEA = SIM_DIR / "tasks" / "pour_tea.json"
+
+
+def mug_contract(tmp):
+    """A grasp-only contract in sim's format (sim has none for this task)."""
+    f = tmp / "mug_grasp.json"
+    f.write_text(json.dumps(MUG_GRASP))
+    return str(f)
 
 
 def _plan_and_log(drv, run, tmp, response, task="pick up the mug by its handle"):
@@ -298,11 +309,12 @@ def _grounded(run, key, name, plan_sha, requested, grounded, dropped=None, primi
     return g
 
 
-def _load_structural(path):
-    code = ("from manip_bridge.stageplan_compat import load_structural\n"
+def _load_plan(path):
+    code = ("from manip_bridge.stageplan_compat import load_plan\n"
             "try:\n"
-            f"    b = load_structural({str(path)!r})\n"
-            "    print('ACCEPTED', {r: (o, s.index, list(s.parts[o])) for r, (o, s) in b.roles.items()})\n"
+            f"    b = load_plan({str(path)!r})\n"
+            "    print('ACCEPTED', {r: (o, s.index, list(s.parts[o])) for r, (o, s) in b.roles.items()},"
+            " sorted(b.entry_synthesized))\n"
             "except SystemExit as e:\n"
             "    print('REFUSED', e)\n")
     env = dict(os.environ, PYTHONPATH=os.pathsep.join([str(SIM_DIR), str(BRIDGE)]))
@@ -313,16 +325,17 @@ def _load_structural(path):
 
 def test_body_dropped_binds_grasp_and_loads(drv, tmp_path):
     """M2's run: the model named handle,body; SAM3 found body nowhere. The
-    pass prunes body, verifies against the grounded pool, binds grasp to the
-    mug's stage, and plan_stages' own reader ACCEPTS the artifact."""
+    pass prunes body, verifies against the grounded pool with the contract,
+    binds grasp to the mug's stage, and plan_stages' own reader ACCEPTS it."""
     run = _run_dir(tmp_path)
     art, log = _plan_and_log(drv, run, tmp_path, HANDLE_BODY)
     sha = art["hardware"]["plan_sha"]
     g = _grounded(run, "m2", "mug", sha, ["handle", "body"], ["handle"],
                   dropped={"body": "no mask in any of 8 views of x/manifest.json"})
+    spec = mug_contract(tmp_path)
     code, art2, rep = drv.plan_scene(run, "pick up the mug by its handle", replay=str(log),
-                                     grounding=str(g))
-    assert code == 0, art2["gate"]
+                                     grounding=str(g), task_spec=spec)
+    assert code == 0 and rep["refused"] is None, (art2["gate"], rep["refused"])
     assert json.loads((run / "stage_plan" / "plan.json").read_text()) == json.loads(json.dumps(art2))
     art2 = json.loads(json.dumps(art2))                          # compare as written (tuples -> lists)
     assert art2["roles"] == {"grasp": {"object": "mug", "stage": 0}}
@@ -334,33 +347,45 @@ def test_body_dropped_binds_grasp_and_loads(drv, tmp_path):
     assert art2["object_parts_requested"] == {"mug": ["handle", "body"]}
     by = {c["check"]: c for c in art2["checks"]}
     assert "roles[deferred]" not in by
-    for c in ("identity[mug]", "grounds[stage0]", "menu[mug]", "role[grasp]"):
+    for c in ("identity[mug]", "grounds[stage0]", "menu[mug]", "coverage[mug]", "role[grasp]"):
         assert by[c]["pass"], by[c]
     assert art2["gate"] == {"defer_grounding": False, "blocking": []}
-    assert art2["task_spec"].startswith("structural")
-    rec = art2["hardware"]["grounding"]["objects"]["mug"]
+    assert art2["task_spec"] == "mug_grasp"
+    hw = art2["hardware"]
+    assert hw["task_spec_file"] == str(Path(spec).resolve()) and len(hw["task_spec_sha256"]) == 64
+    assert hw["object_names"] == {}
+    rec = hw["grounding"]["objects"]["mug"]
     assert rec["key"] == "m2" and len(rec["frames_sha256"]) == 64
-    out = _load_structural(run / "stage_plan" / "plan.json")
+    out = _load_plan(run / "stage_plan" / "plan.json")
     assert out.startswith("ACCEPTED") and "'grasp': ('mug', 0, ['handle'])" in out, out
 
 
+def test_handle_dropped_body_survives_now_blocks(drv, tmp_path):
+    """The gap structural binding left open: the grasp stage keeps `body`,
+    but the contract needs `handle` -- coverage[mug] and role[grasp] block."""
+    run = _run_dir(tmp_path)
+    art, log = _plan_and_log(drv, run, tmp_path, HANDLE_BODY)
+    g = _grounded(run, "m2", "mug", art["hardware"]["plan_sha"], ["handle", "body"], ["body"],
+                  dropped={"handle": "no mask"})
+    code, art2, _ = drv.plan_scene(run, "pick up the mug by its handle", replay=str(log),
+                                   grounding=str(g), task_spec=mug_contract(tmp_path))
+    assert code == 2
+    assert {"coverage[mug]", "role[grasp]"} <= set(art2["gate"]["blocking"])
+    assert art2["roles"] == {"grasp": {"object": "mug", "stage": None}}
+    out = _load_plan(run / "stage_plan" / "plan.json")
+    assert out.startswith("REFUSED") and "role[grasp]" in out, out
+
+
 def test_every_grasp_part_lost_is_fatal(drv, tmp_path):
-    """The re-tightening, structurally: body dropped AND handle came back
-    ungrounded -> the grasp stage has no part left -> role[grasp] blocks
-    and load_structural refuses naming it."""
     run = _run_dir(tmp_path)
     art, log = _plan_and_log(drv, run, tmp_path, HANDLE_BODY)
     g = _grounded(run, "m2", "mug", art["hardware"]["plan_sha"], ["handle", "body"], ["handle"],
                   dropped={"body": "no mask"}, primitives={"handle": "ungrounded"}, pool_parts=[])
     code, art2, _ = drv.plan_scene(run, "pick up the mug by its handle", replay=str(log),
-                                   grounding=str(g))
+                                   grounding=str(g), task_spec=mug_contract(tmp_path))
     assert code == 2 and "role[grasp]" in art2["gate"]["blocking"]
     assert art2["hardware"]["parts_dropped_reasons"]["mug"] == {
         "handle": "ungrounded by ground_object", "body": "no mask"}
-    by = {c["check"]: c for c in art2["checks"]}
-    assert "NO grounded part left" in by["role[grasp]"]["detail"]
-    out = _load_structural(run / "stage_plan" / "plan.json")
-    assert out.startswith("REFUSED") and "role[grasp]" in out, out
 
 
 def test_part_never_requested_counts_as_dropped(drv, tmp_path):
@@ -371,7 +396,7 @@ def test_part_never_requested_counts_as_dropped(drv, tmp_path):
     art, log = _plan_and_log(drv, run, tmp_path, HANDLE_BODY)
     g = _grounded(run, "m2", "mug", art["hardware"]["plan_sha"], ["handle"], ["handle"])
     code, art2, _ = drv.plan_scene(run, "pick up the mug by its handle", replay=str(log),
-                                   grounding=str(g))
+                                   grounding=str(g), task_spec=mug_contract(tmp_path))
     assert code == 0
     assert art2["hardware"]["parts_dropped_reasons"] == {"mug": {"body": "not requested from ground_asset"}}
 
@@ -382,59 +407,107 @@ def test_grounding_from_another_plan_is_refused(drv, tmp_path):
     g = _grounded(run, "m2", "mug", art["hardware"]["plan_sha"], ["handle"], ["handle"],
                   root="masks_canon")
     with pytest.raises(drv.PlanRefusal, match=r"'masks_canon', not 'masks_vlm_"):
-        drv.plan_scene(run, "pick up the mug by its handle", replay=str(log), grounding=str(g))
+        drv.plan_scene(run, "pick up the mug by its handle", replay=str(log), grounding=str(g),
+                       task_spec=mug_contract(tmp_path))
 
 
 def test_grounding_input_refusals(drv, tmp_path):
     run = _run_dir(tmp_path)
     art, log = _plan_and_log(drv, run, tmp_path, HANDLE_BODY)
     g = run / "grounding_vlm"
+    spec = mug_contract(tmp_path)
     with pytest.raises(drv.PlanRefusal, match="--grounding needs --replay"):
         drv.plan_scene(run, "pick up the mug", transport=Canned(HANDLE_BODY), grounding=str(g))
+    with pytest.raises(drv.PlanRefusal, match="no such file"):
+        drv.plan_scene(run, "pick up the mug by its handle", replay=str(log), grounding=str(g),
+                       task_spec=str(tmp_path / "nope.json"))
     with pytest.raises(drv.PlanRefusal, match="m2/frames.json not found -- run the ground_asset"):
-        drv.plan_scene(run, "pick up the mug by its handle", replay=str(log), grounding=str(g))
+        drv.plan_scene(run, "pick up the mug by its handle", replay=str(log), grounding=str(g),
+                       task_spec=spec)
     g = _grounded(run, "m2", "mug", art["hardware"]["plan_sha"], ["handle"], ["handle"])
     fp = g / "m2" / "frames.json"
     doc = json.loads(fp.read_text())
     del doc["provenance"]["canonical"]["parts_grounded"]
     fp.write_text(json.dumps(doc))
     with pytest.raises(drv.PlanRefusal, match="predates ground_asset's parts_grounded"):
-        drv.plan_scene(run, "pick up the mug by its handle", replay=str(log), grounding=str(g))
+        drv.plan_scene(run, "pick up the mug by its handle", replay=str(log), grounding=str(g),
+                       task_spec=spec)
 
 
-def test_interaction_stage_is_recorded_unbound(drv, tmp_path):
-    run = _run_dir(tmp_path, registered=("m1", "m2"))
-    (run / "assets_canon" / "box").mkdir()
-    (run / "assets_canon" / "box" / "canonical.json").write_text(json.dumps({"inputs": {"key": "m1"}}))
-    plan = _resp({"2": "mug", "1": "box"},
-                 [{"name": "grasp mug", "active": 2, "passive": None, "parts": {"2": ["handle"]}},
-                  {"name": "put mug by box", "active": 2, "passive": 1,
-                   "parts": {"2": ["base"], "1": ["side"]}}])
-    art, log = _plan_and_log(drv, run, tmp_path, plan, "put the mug next to the box")
+# ---- pour_tea: sim's own contract file
+
+def _pour_run(drv, tmp, stages, handles=("mug", "teapot")):
+    """Two registered marks (1 = mug, 2 = teapot) under the model's handles,
+    call #1 canned, both grounded with every part the plan named."""
+    run = _run_dir(tmp, registered=("m1", "m2"))
+    plan = _resp({"1": handles[0], "2": handles[1]}, stages)
+    art, log = _plan_and_log(drv, run, tmp, plan, "pour tea into the mug")
     sha = art["hardware"]["plan_sha"]
-    _grounded(run, "m2", "mug", sha, ["handle", "base"], ["handle", "base"])
-    g = _grounded(run, "m1", "box", sha, ["side"], ["side"])
-    code, art2, _ = drv.plan_scene(run, "put the mug next to the box", replay=str(log),
-                                   grounding=str(g))
-    assert code == 0 and art2["roles"] == {"grasp": {"object": "mug", "stage": 0}}
-    by = {c["check"]: c for c in art2["checks"]}
-    assert by["unbound[stage1]"]["pass"] is False and "milestone 4" in by["unbound[stage1]"]["detail"]
-    assert "unbound[stage1]" not in art2["gate"]["blocking"]
+    for mark, key in (("1", "m1"), ("2", "m2")):
+        ps = art["object_parts"][handles[int(mark) - 1]]
+        g = _grounded(run, key, key, sha, ps, ps)
+    return run, log, g
 
 
-def test_mover_only_plan_blocks_as_roles_none(drv, tmp_path):
-    run = _run_dir(tmp_path, registered=("m1", "m2"))
-    (run / "assets_canon" / "box").mkdir()
-    (run / "assets_canon" / "box" / "canonical.json").write_text(json.dumps({"inputs": {"key": "m1"}}))
-    plan = _resp({"2": "mug", "1": "box"},
-                 [{"name": "push mug to box", "active": 2, "passive": 1,
-                   "parts": {"2": ["body"], "1": ["side"]}}])
-    art, log = _plan_and_log(drv, run, tmp_path, plan, "push the mug to the box")
-    sha = art["hardware"]["plan_sha"]
-    _grounded(run, "m2", "mug", sha, ["body"], ["body"])
-    g = _grounded(run, "m1", "box", sha, ["side"], ["side"])
-    code, art2, _ = drv.plan_scene(run, "push the mug to the box", replay=str(log), grounding=str(g))
-    assert code == 2 and "roles[none]" in art2["gate"]["blocking"] and art2["roles"] == {}
+GRASP_T = {"name": "grasp teapot", "active": 2, "passive": None, "parts": {"2": ["handle", "body"]}}
+CARRY_T = {"name": "move spout over mug", "active": 2, "passive": 1,
+           "parts": {"2": ["spout"], "1": ["rim"]}}
+POUR_T = {"name": "pour tea into mug", "active": 2, "passive": 1,
+          "parts": {"2": ["spout"], "1": ["rim", "opening"]}}
+
+
+def test_pour_tea_binds_every_sim_role(drv, tmp_path):
+    """grasp, carry, pour as sim's call #1 emits it: sim's tasks/pour_tea.json
+    binds all four roles exactly as plan_stages would, and load_plan
+    accepts them with the contract's stage restriction."""
+    run, log, g = _pour_run(drv, tmp_path, [GRASP_T, CARRY_T, POUR_T])
+    code, art, rep = drv.plan_scene(run, "pour tea into the mug", replay=str(log),
+                                    grounding=str(g), task_spec=str(POUR_TEA))
+    assert code == 0, (art["gate"], rep["refused"])
+    assert art["task_spec"] == "pour_tea"
+    assert art["roles"] == {"grasp": {"object": "teapot", "stage": 0},
+                            "transport_active": {"object": "teapot", "stage": 1},
+                            "pour": {"object": "teapot", "stage": 2},
+                            "transport_passive": {"object": "mug", "stage": 1}}
+    out = _load_plan(run / "stage_plan" / "plan.json")
+    assert out.startswith("ACCEPTED"), out
+    assert "'pour': ('teapot', 2, ['spout'])" in out and "'transport_passive': ('mug', 1, ['rim'])" in out
+
+
+def test_model_handles_are_relabelled_to_contract_names(drv, tmp_path, capsys):
+    """10/23's plan said teal_teapot / red_mug: unmapped, the contract's
+    objects are missing and the gate blocks; --object teapot=2 --object
+    mug=1 relabels them (sim's manifest relabel) and everything binds."""
+    h = ("red_mug", "teal_teapot")
+    run, log, g = _pour_run(drv, tmp_path, [GRASP_T, CARRY_T, POUR_T], handles=h)
+    code, art, _ = drv.plan_scene(run, "pour tea into the mug", replay=str(log), grounding=str(g),
+                                  task_spec=str(POUR_TEA))
+    assert code == 2 and {"coverage[teapot]", "coverage[mug]", "role[grasp]"} <= set(
+        art["gate"]["blocking"])
+    assert drv.main(["--run", str(run), "--task", "pour tea into the mug", "--replay", str(log),
+                     "--grounding", str(g), "--task-spec", str(POUR_TEA),
+                     "--object", "teapot=2", "--object", "mug=1"]) == 0
+    out = capsys.readouterr().out
+    art = json.loads((run / "stage_plan" / "plan.json").read_text())
+    assert art["hardware"]["object_names"] == {"red_mug": "mug", "teal_teapot": "teapot"}
+    assert art["hardware"]["mark_key"] == {"red_mug": "m1", "teal_teapot": "m2"}  # emitted handles
+    assert set(art["hardware"]["grounding"]["objects"]) == {"mug", "teapot"}
+    assert art["hardware"]["grounding"]["objects"]["teapot"]["key"] == "m2"
+    assert art["plan"]["objects"].keys() == {"red_mug", "teal_teapot"}           # as emitted
+    assert art["plan_grounded"]["stages"][2]["passive"] == "mug"
+    assert "role pour               -> teapot @ stage 2" in out and "load_plan" in out
+
+
+def test_two_stage_pour_is_refused_by_the_reader(drv, tmp_path, capsys):
+    """Hardware's 10/31 and 11/04 plans (Sonnet 4.6): grasp, then one "pour"
+    stage, no transport. pour_tea needs grasp, transport, pour: transport_active
+    takes the one stage, pour has none after it, and plan_stages' reader
+    refuses -- reported, exit 2."""
+    run, log, g = _pour_run(drv, tmp_path, [GRASP_T, POUR_T])
+    code, art, rep = drv.plan_scene(run, "pour tea into the mug", replay=str(log),
+                                    grounding=str(g), task_spec=str(POUR_TEA))
+    assert art["gate"]["blocking"] == [] and art["roles"]["pour"]["stage"] is None
+    assert code == 2 and "role 'pour' unbound" in rep["refused"]
 
 
 def test_grounding_cli(drv, tmp_path, capsys):
@@ -444,8 +517,11 @@ def test_grounding_cli(drv, tmp_path, capsys):
                   dropped={"body": "no mask in any of 8 views"})
     capsys.readouterr()
     assert drv.main(["--run", str(run), "--task", "pick up the mug by its handle",
-                     "--replay", str(log), "--grounding", str(g)]) == 0
+                     "--replay", str(log), "--grounding", str(g),
+                     "--task-spec", mug_contract(tmp_path)]) == 0
     out = capsys.readouterr().out
     assert "dropped mug.body: no mask in any of 8 views" in out
-    assert "role grasp            -> mug @ stage 0" in out and "load_structural" in out
-    assert "make_part_masks" not in out
+    assert "role grasp              -> mug @ stage 0" in out and "load_plan" in out
+    assert "contract mug_grasp" in out and "make_part_masks" not in out
+    with pytest.raises(SystemExit):
+        drv.main(["--run", str(run), "--task", "x", "--object", "teapot"])

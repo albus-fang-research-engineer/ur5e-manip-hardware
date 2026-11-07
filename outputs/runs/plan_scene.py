@@ -24,9 +24,9 @@ schema and that every mark id is on the image):
                                uses (an empty list would ground nothing and
                                pass every later gate quietly)
   structure[...]     recorded  grasp (active only) before interaction
-                               (active + passive) -- the one contract rule
-                               that survives without a task file; printed,
-                               not enforced
+                               (active + passive); printed, not enforced
+                               (the contract's ordering[] is checked after
+                               grounding)
   roles[deferred]    BLOCKING  for calls #2/#3 only: roles are bound by
                                the --grounding pass below, so plan_stages'
                                reader (load_bindings) refuses this artifact
@@ -45,29 +45,36 @@ plan_stages' --replay --grounding, on hardware:
               ground_asset, ungrounded by ground_object, or never
               requested) is removed from plan_grounded and recorded in
               parts_dropped (+ hardware.parts_dropped_reasons)
-  verify      sim plan_stages.verify with STRUCTURAL_SPEC (no task
-              contract): identity[], grounds[], menu[] against the
+  relabel     plan handles -> the contract's object names, from
+              --object NAME=MARK (sim relabels marks from its manifest;
+              hardware's operator is that ground truth). Unmapped handles
+              are kept, so a plan that already says "teapot"/"mug" needs none
+  verify      sim plan_stages.verify with the SIM TASK CONTRACT (--task-spec,
+              default /opt/manip-sim/tasks/pour_tea.json): identity[],
+              grounds[], menu[], coverage[], role[], ordering[] against the
               grounded pool (DIR/canon/<name>/candidates.json), all blocking
-  roles       STRUCTURAL binding (hardware has no task contract): grasp =
-              the first active-only stage, its object = that stage's
-              active. role[grasp] BLOCKS when that stage has no surviving
-              part on its object -- the drop is then fatal. Other stages
-              are recorded as unbound[stage<i>], never blocking
-              (active+passive stages bind as mover roles at milestone 4).
-              No bound role at all -> roles[none], blocking.
+              (sim's gate: every failed check blocks)
+  roles       sim plan_stages.bind_roles with the same contract: each role
+              -> {object, stage}, the first stage whose parts cover the
+              role's tags (`after` / optional as the contract says). Then
+              the written artifact is read back through plan_stages' reader
+              (stageplan_compat.load_plan); a refusal there (a required role
+              matched by verify but with no stage after its dependency)
+              blocks too, exit 2
 
-The known gap, stated rather than hidden: structure cannot tell which part
-a role NEEDS, so "handle dropped, body survives" binds the grasp to the
-body's stage. That case is caught where OmniManip catches it -- by looking:
-call #2 sees "grasp mug by handle" with no handle marks, its overlay on the
-real frame, and later the call-#4 critic -- not here. A task-requirements
-file would close it at the cost of one hand-written file per task; that was
-considered and declined (2026-10-12).
+The contract names the part each role needs, so "handle dropped, body
+survives" fails coverage[teapot] and role[grasp] here rather than binding
+the grasp to the body. (Hardware bound roles by structure alone until
+2026-11-06; reusing sim's contracts replaced that.)
 
 The artifact uses plan_stages' layout (plan, plan_grounded, object_parts,
-roles, checks, gate) so calls #2/#3 extend these same files. Hardware has
-no manifest, so plan_grounded is the plan as emitted (model handles), and
-`hardware.mark_key` maps each handle to its run key (m<id>).
+roles, checks, gate) so calls #2/#3 extend these same files. `plan` is as
+emitted (model handles); `plan_grounded`, `roles`, `object_parts` and
+`hardware.grounding.objects` are over the contract's names after
+--grounding (as sim's are over manifest names). `hardware.mark_key` maps
+each emitted handle to its run key (m<id>), `hardware.object_names` each
+handle to its contract name, `hardware.task_spec_file` (+ sha256) records
+the contract load_plan reads back with.
 
 Record/replay: every raw response goes into plan.log.json; --replay LOG
 feeds them back in order (no API call, same plan, same artifact), with the
@@ -89,8 +96,9 @@ In the ros2 container (ANTHROPIC_API_KEY set; MANIP_VLM_MODEL optional):
         --task "pick up the mug by its handle" --replay /data/runs/<stamp>/stage_plan/plan.log.json
     # after the printed make_part_masks / ground_asset / check_symbols:
     python3 /data/runs/plan_scene.py --run /data/runs/<stamp> \\
-        --task "pick up the mug by its handle" --replay /data/runs/<stamp>/stage_plan/plan.log.json \\
-        --grounding /data/runs/<stamp>/grounding_vlm
+        --task "pour tea into the mug" --replay /data/runs/<stamp>/stage_plan/plan.log.json \\
+        --grounding /data/runs/<stamp>/grounding_vlm [--object teapot=2 --object mug=1] \\
+        [--task-spec /opt/manip-sim/tasks/<name>.json]      # default pour_tea.json
 """
 import argparse
 import hashlib
@@ -261,63 +269,67 @@ def read_grounding(grounding: Path, plan_sha: str, parts: dict, mark_key: dict) 
     return out
 
 
-def bind_structural(gplan) -> tuple[dict, list[dict]]:
-    """roles + role checks, by stage structure only (no task contract)."""
-    checks, roles = [], {}
-    grasp = [s for s in gplan.stages if s.passive is None]
-    if grasp:
-        s = grasp[0]
-        left = list(s.parts.get(s.active, ()))
-        roles["grasp"] = {"object": s.active, "stage": s.index}
-        checks.append({"check": "role[grasp]", "pass": bool(left), "blocking": True,
-                       "detail": f"stage {s.index} {s.name!r} (active-only) -> {s.active}; "
-                                 + (f"grounded parts {left}" if left else
-                                    "NO grounded part left on it -- every part the plan "
-                                    "named for the grasp was dropped, nothing to grasp")})
-    for s in gplan.stages:
-        if roles.get("grasp", {}).get("stage") == s.index:
-            continue
-        kind = ("active+passive: mover roles bind at milestone 4" if s.passive is not None
-                else "a further active-only stage: only the first binds grasp")
-        checks.append({"check": f"unbound[stage{s.index}]", "pass": False, "blocking": False,
-                       "detail": f"{s.name!r} ({kind})"})
-    if not roles:
-        checks.append({"check": "roles[none]", "pass": False, "blocking": True,
-                       "detail": "no active-only stage: nothing binds structurally (mover-only "
-                                 "plans wait for milestone 4) -- calls #2/#3 would get empty roles"})
-    return roles, checks
+def contract_names(plan, objects: dict[str, int] | None) -> dict[str, str]:
+    """{plan handle: contract object name}. Sim relabels mark-mode handles
+    to manifest names (to_ground_truth) so the contract, written over
+    names, applies; hardware has no manifest, so the operator's
+    --object NAME=MARK is that ground truth. Unmapped handles are kept
+    (a plan whose handles already are the contract's names needs none)."""
+    by_mark = {int(m): n for n, m in (objects or {}).items()}
+    return {h: by_mark[int(ref.mark)] for h, ref in plan.objects.items()
+            if ref.mark is not None and int(ref.mark) in by_mark}
 
 
-def ground_pass(plan, plan_sha: str, parts: dict, mark_key: dict, grounding: Path):
-    """(plan_grounded, dropped {h: {part: reason}}, checks, roles, record)."""
+def ground_pass(plan, plan_sha: str, parts: dict, mark_key: dict, grounding: Path,
+                spec_file: Path, names: dict[str, str]):
+    """sim plan_stages' run_one after grounding, on hardware: relabel to the
+    contract's names, prune what did not ground, verify and bind roles with
+    the contract. -> (plan_grounded, dropped {name: {part: reason}}, checks,
+    roles, record)."""
     from manip_bridge import stageplan_compat as sp      # loaded only on this pass
+    spec = sp.load_task_spec(spec_file)
     got = read_grounding(grounding, plan_sha, parts, mark_key)
-    dropped = {h: g["dropped"] for h, g in got.items() if g["dropped"]}
-    gplan = sp.prune_parts(plan, {h: tuple(d) for h, d in dropped.items()})
+    got = {names.get(h, h): g for h, g in got.items()}
+    dropped = {n: g["dropped"] for n, g in got.items() if g["dropped"]}
+    gplan = sp.prune_parts(plan.relabel(names), {n: tuple(d) for n, d in dropped.items()})
     pools = {}
-    for h, g in got.items():
+    for n, g in got.items():
         try:
-            pools[h] = sp.load_pool(g["canon_dir"])
+            pools[n] = sp.load_pool(g["canon_dir"])
         except Exception as e:                            # selection.ResolutionError
-            raise PlanRefusal(f"pool for {h}: {e}") from e
+            raise PlanRefusal(f"pool for {n}: {e}") from e
     checks = [{"check": c, "pass": ok, "blocking": True, "detail": d}
-              for c, ok, d in sp.verify(gplan, pools, sp.STRUCTURAL_SPEC, False)]
-    roles, rchecks = bind_structural(gplan)
-    record = {"dir": str(grounding.resolve()), "spec": sp.STRUCTURAL_SPEC.name,
-              "objects": {h: {k: v for k, v in g.items() if k != "dropped"}
-                          for h, g in got.items()},
+              for c, ok, d in sp.verify(gplan, pools, spec, False)]
+    roles = sp.bind_roles(gplan, pools, spec, False)
+    record = {"dir": str(grounding.resolve()), "spec": spec.name,
+              "objects": {n: {k: v for k, v in g.items() if k != "dropped"}
+                          for n, g in got.items()},
               "stageplan": sp.provenance()}
-    return gplan, dropped, checks + rchecks, roles, record
+    return gplan, dropped, checks, roles, record
+
+
+def read_back(path: Path) -> str | None:
+    """None when plan_stages' reader (via load_plan) accepts the artifact,
+    else its refusal -- e.g. a required role verify matched but bind_roles
+    could not place after its dependency."""
+    from manip_bridge import stageplan_compat as sp
+    try:
+        sp.load_plan(path)
+    except SystemExit as e:
+        return str(e)
+    return None
 
 
 # ------------------------------------------------------------------ the call
 
 def plan_scene(run, task: str, replay: str | None = None, out: str | None = None,
-               transport=None, grounding: str | None = None) -> tuple[int, dict, dict]:
+               transport=None, grounding: str | None = None, task_spec: str | None = None,
+               objects: dict[str, int] | None = None) -> tuple[int, dict, dict]:
     """Returns (exit_code, artifact, report). `transport` is injectable for
     tests (a callable payload -> raw text, recorded like the live one).
     `grounding` (requires `replay`): the pass after grounding, see the
-    module docstring."""
+    module docstring; `task_spec` the sim contract file (default sim's
+    tasks/pour_tea.json), `objects` {contract name: mark id}."""
     run = Path(run)
     if not task or not task.strip():
         raise PlanRefusal("--task is empty")
@@ -376,13 +388,21 @@ def plan_scene(run, task: str, replay: str | None = None, out: str | None = None
         "sim": vlm_compat.provenance(),
     }
     grounding_blocked = [b for b in blocking if b != DEFERRED]
-    roles = None
+    roles, refused = None, None
     if grounding:
         if grounding_blocked:
             raise PlanRefusal(f"--grounding: the plan itself is blocked for grounding "
                               f"({grounding_blocked}) -- nothing was grounded from it")
+        if task_spec is None:
+            from manip_bridge import stageplan_compat as sp
+            task_spec = sp.DEFAULT_TASK_SPEC
+        spec_file = Path(task_spec).resolve()
+        if not spec_file.is_file():
+            raise PlanRefusal(f"--task-spec {task_spec}: no such file (sim contracts live in "
+                              "/opt/manip-sim/tasks/)")
+        names = contract_names(plan, objects)
         gplan, dropped, gchecks, roles, grec = ground_pass(plan, plan_sha, parts, mark_key,
-                                                           Path(grounding))
+                                                           Path(grounding), spec_file, names)
         checks = [c for c in checks if c["check"] != DEFERRED] + gchecks
         blocking = [c["check"] for c in checks if c["blocking"] and not c["pass"]]
         artifact.update({
@@ -397,20 +417,24 @@ def plan_scene(run, task: str, replay: str | None = None, out: str | None = None
         })
         artifact["hardware"].update({
             "blocking_policy": {c["check"]: c["blocking"] for c in checks},
-            "parts_dropped_reasons": dropped, "grounding": grec})
+            "parts_dropped_reasons": dropped, "grounding": grec,
+            "task_spec_file": str(spec_file), "task_spec_sha256": _sha256(spec_file),
+            "object_names": names})
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "plan.json").write_text(json.dumps(artifact, indent=2) + "\n")
     (out_dir / "plan.log.json").write_text(json.dumps({
         "model": client.model, "task": task,
         "client_logs": [asdict(log) for log in client.logs],
         "raw_responses": rec.raw}, indent=2) + "\n")
+    if grounding and not blocking:
+        refused = read_back(out_dir / "plan.json")
     report = {"plan": plan, "parts": parts, "mark_key": mark_key, "checks": checks,
               "out": str(out_dir / "plan.json"), "grounding_blocked": grounding_blocked,
-              "roles": roles, "blocking": blocking,
+              "roles": roles, "blocking": blocking, "refused": refused,
               "next": [] if grounding_blocked or grounding else
               next_commands(run, plan_sha, parts, mark_key, info)}
     if grounding:
-        return (2 if blocking else 0), artifact, report
+        return (2 if blocking or refused else 0), artifact, report
     return (2 if grounding_blocked else 0), artifact, report
 
 
@@ -424,9 +448,23 @@ def main(argv=None) -> int:
     ap.add_argument("--grounding", default=None,
                     help="after grounding (needs --replay): the --out of the printed "
                          "ground_asset commands, e.g. <run>/grounding_vlm")
+    ap.add_argument("--task-spec", default=None, metavar="JSON",
+                    help="with --grounding: the sim task contract (default "
+                         "/opt/manip-sim/tasks/pour_tea.json)")
+    ap.add_argument("--object", action="append", default=[], metavar="NAME=MARK",
+                    help="with --grounding: the contract object a mark is, e.g. teapot=2 "
+                         "(repeat per object; not needed when the plan's handles already "
+                         "are the contract's names)")
     a = ap.parse_args(argv)
     try:
-        code, art, rep = plan_scene(a.run, a.task, a.replay, a.out, grounding=a.grounding)
+        objects = {}
+        for kv in a.object:
+            name, _, mark = kv.partition("=")
+            if not name or not mark.strip().isdigit():
+                ap.error(f"--object {kv!r}: want NAME=MARK, e.g. teapot=2")
+            objects[name.strip()] = int(mark)
+        code, art, rep = plan_scene(a.run, a.task, a.replay, a.out, grounding=a.grounding,
+                                    task_spec=a.task_spec, objects=objects)
     except PlanRefusal as e:
         print(f"[plan-scene] REFUSED: {e}", file=sys.stderr)
         return 2
@@ -445,14 +483,20 @@ def main(argv=None) -> int:
         for h, d in sorted(art["hardware"]["parts_dropped_reasons"].items()):
             for p, why in sorted(d.items()):
                 print(f"    dropped {h}.{p}: {why}")
-        for r, b in sorted((rep["roles"] or {}).items()):
-            print(f"    role {r:16s} -> {b['object']} @ stage {b['stage']}")
+        hw = art["hardware"]
+        print(f"    contract {art['task_spec']} ({hw['task_spec_file']}); "
+              f"handles -> names {hw['object_names'] or '(as emitted)'}")
+        for r, b in (rep["roles"] or {}).items():
+            print(f"    role {r:18s} -> {b['object']} @ stage {b['stage']}")
         if rep["blocking"]:
             print(f"[plan-scene] BLOCKED for calls #2/#3: {rep['blocking']} "
                   "(artifact written for inspection)", file=sys.stderr)
+        elif rep["refused"]:
+            print(f"[plan-scene] BLOCKED for calls #2/#3: plan_stages' reader refuses the "
+                  f"bindings: {rep['refused']}", file=sys.stderr)
         else:
             print("[plan-scene] roles bound; plan.json is ready for calls #2/#3 "
-                  "(read it with stageplan_compat.load_structural)")
+                  "(read it with stageplan_compat.load_plan)")
         return code
     if rep["grounding_blocked"]:
         print(f"[plan-scene] REFUSED for grounding: {rep['grounding_blocked']} "

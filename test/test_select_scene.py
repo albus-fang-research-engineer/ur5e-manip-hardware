@@ -94,7 +94,7 @@ def _bound_run(mods, tmp):
     doc["provenance"]["canonical"]["R_body_from_canon"] = R.tolist()
     fp.write_text(json.dumps(doc))
     code, _, _ = ps.plan_scene(run, "pick up the mug by its handle", replay=str(log),
-                               grounding=str(g))
+                               grounding=str(g), task_spec=tps.mug_contract(tmp))
     assert code == 0
     return run
 
