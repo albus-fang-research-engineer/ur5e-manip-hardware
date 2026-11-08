@@ -17,6 +17,8 @@ What select_scene uses, all GL-free (numpy/scipy):
   selection_to_json, load_selections,     the role-keyed selections artifact,
   selection_objects                       written and read back in sim format
   load_symbols                            frames.json -> Symbols
+  selected_points                         (w_point, e_point) per role: w's origin
+                                          and the feature Tw_e pins (emit_scene)
 """
 
 try:
@@ -24,8 +26,8 @@ try:
     import manip_sim.selection as _sel
     from manip_sim.frames import load_symbols
     from manip_sim.selection import (ResolutionError, load_pool, load_selections,
-                                     menu_from_pool, resolve_selection, selection_objects,
-                                     selection_to_json, vlm_subset)
+                                     menu_from_pool, resolve_selection, selected_points,
+                                     selection_objects, selection_to_json, vlm_subset)
 except ImportError as e:
     raise ImportError(
         "selection_compat: cannot import manip_sim.selection / manip_sim.frames. The sim "
@@ -39,8 +41,8 @@ from manip_bridge.sim_provenance import provenance as _provenance  # noqa: E402
 SOURCES = (_sel.__file__, _frames.__file__)
 
 __all__ = ["ResolutionError", "load_pool", "load_selections", "load_symbols", "menu_from_pool",
-           "resolve_selection", "selection_objects", "selection_to_json", "vlm_subset",
-           "provenance", "SOURCES"]
+           "resolve_selection", "selected_points", "selection_objects", "selection_to_json",
+           "vlm_subset", "provenance", "SOURCES"]
 
 
 def provenance():

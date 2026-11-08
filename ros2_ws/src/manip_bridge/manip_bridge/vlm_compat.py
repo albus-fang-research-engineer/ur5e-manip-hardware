@@ -13,6 +13,10 @@ touching sim code. The model is MANIP_VLM_MODEL (default
 claude-sonnet-4-6), read when manip_sim.vlm is imported; the key is
 ANTHROPIC_API_KEY. vlm.py is stdlib + numpy, so this import is GL-free.
 
+Call #3 (emit_scene) also uses the emission-side pieces: entry_line (the
+factual entry line), PROMPT_DELTAS / TEMPERATURE (recorded in the artifact)
+and MAX_PARSE_RETRIES (the call budget it prints).
+
 Hardware-owned touchpoints (part_phrases.py) reuse the client's ask loop --
 transport, bounded parse-rejection retry, CallLog -- with their own prompt
 and parser through `ask()` below, so the one access to the client's private
@@ -24,8 +28,9 @@ PYTHONPATH by docker-compose (SIM_DIR, default ../ur5e-manip-sim).
 
 try:
     import manip_sim.vlm as _vlm
-    from manip_sim.vlm import (MODEL, CallLog, Client, ObjectRef, ParseRejection, StagePlan,
-                               StageSpec, VLMError, Vocabulary)
+    from manip_sim.vlm import (MAX_PARSE_RETRIES, MODEL, PROMPT_DELTAS, TEMPERATURE, CallLog,
+                               Client, ObjectRef, ParseRejection, StagePlan, StageSpec, VLMError,
+                               Vocabulary, entry_line)
     from manip_sim.vlm import _urllib_transport as live_transport   # what plan_stages records
     from manip_sim.vlm import _JSON_ONLY as JSON_ONLY, _load_json as load_json
     from manip_sim.vlm import _text as text_block, image_block
@@ -42,7 +47,8 @@ from manip_bridge.sim_provenance import provenance as _provenance
 
 SOURCES = (_vlm.__file__,)
 
-__all__ = ["MODEL", "CallLog", "Client", "ObjectRef", "ParseRejection", "StagePlan", "StageSpec",
+__all__ = ["MAX_PARSE_RETRIES", "MODEL", "PROMPT_DELTAS", "TEMPERATURE", "entry_line",
+           "CallLog", "Client", "ObjectRef", "ParseRejection", "StagePlan", "StageSpec",
            "VLMError", "Vocabulary", "live_transport", "provenance", "SOURCES",
            "JSON_ONLY", "load_json", "text_block", "image_block", "ask"]
 

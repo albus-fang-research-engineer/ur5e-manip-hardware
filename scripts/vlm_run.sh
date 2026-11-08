@@ -15,7 +15,7 @@
 # command line, so it is not printed and does not show in `ps`. The model is
 # required: no silent fallback to the drivers' built-in default.
 #
-# Every invocation that is not a --replay (replays make no API call) is
+# Every invocation that is not a --replay or --dry-run (neither makes an API call) is
 # appended to outputs/vlm_calls.log: UTC time, model, script, arguments,
 # exit code -- the running count of paid calls.
 set -euo pipefail
@@ -53,9 +53,9 @@ if [[ -n "$MANIP_VLM_TEMPERATURE" ]]; then
 fi
 
 live=1
-for a in "$@"; do [[ "$a" == "--replay" || "$a" == --replay=* ]] && live=0; done
+for a in "$@"; do [[ "$a" == "--replay" || "$a" == --replay=* || "$a" == "--dry-run" ]] && live=0; done
 
-echo "[vlm_run] $SCRIPT model=$MANIP_VLM_MODEL temperature=${MANIP_VLM_TEMPERATURE:-0.0 (sim default)} $([[ $live == 1 ]] && echo LIVE || echo replay)" >&2
+echo "[vlm_run] $SCRIPT model=$MANIP_VLM_MODEL temperature=${MANIP_VLM_TEMPERATURE:-0.0 (sim default)} $([[ $live == 1 ]] && echo LIVE || echo "no API call")" >&2
 set +e
 docker exec -e ANTHROPIC_API_KEY -e MANIP_VLM_MODEL "${temp_env[@]}" "$CONTAINER" bash -lc \
   'export PYTHONPATH=/root/ros2_ws/src/manip_bridge:$PYTHONPATH; script="$1"; shift; exec python3 "/data/runs/$script" "$@"' \
