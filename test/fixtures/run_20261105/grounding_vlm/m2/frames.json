@@ -1,0 +1,282 @@
+{
+  "object": "lib_teapot",
+  "units": "meters",
+  "coordinates": "body frame of the TRACKED mesh (Any6D final_mesh; what pose_on_final's cam_T_obj maps) -- grounded on the canonical copy and mapped back by x_body = R x_c, see provenance.canonical",
+  "schema": "grounding symbol table: independent interaction POINTS and semantic AXES; frames are composed downstream as frame(origin=<point>, axis=<axis>). Axis -> frame +z. up_axis/front_axis/lateral_axis are the canonical frame.",
+  "provenance": {
+    "producer": "manip_sim.part_grounding",
+    "mask_provider": "masks",
+    "parts": {
+      "handle": {
+        "primitive": "blob",
+        "n_points": 2038,
+        "rms_m": 0.02597,
+        "sigma_deg": null,
+        "note": "outward axis only"
+      },
+      "body": {
+        "primitive": "blob",
+        "n_points": 691,
+        "rms_m": 0.04869,
+        "sigma_deg": null,
+        "note": "outward axis only"
+      },
+      "lid": {
+        "primitive": "blob",
+        "n_points": 210,
+        "rms_m": 0.01642,
+        "sigma_deg": null,
+        "note": "outward axis only"
+      },
+      "spout": {
+        "primitive": "blob",
+        "n_points": 985,
+        "rms_m": 0.01453,
+        "sigma_deg": null,
+        "note": "outward axis only"
+      },
+      "base": {
+        "primitive": "blob",
+        "n_points": 476,
+        "rms_m": 0.03116,
+        "sigma_deg": null,
+        "note": "outward axis only"
+      }
+    },
+    "depth_semantics": {
+      "method": "generalized winding number w.r.t. the grounding mesh",
+      "inside_threshold": 0.5,
+      "inconsistent_edges": 392,
+      "flipped_edges": 0,
+      "pinch_edges": 196,
+      "boundary_edges": 0,
+      "non_manifold_edges": 196,
+      "merged_vertices": 247059,
+      "vertices": 323675
+    },
+    "views": {
+      "+x": "/data/runs/20261105_035449/grounding_vlm/canon/lib_teapot/views/px.png",
+      "-x": "/data/runs/20261105_035449/grounding_vlm/canon/lib_teapot/views/nx.png",
+      "+y": "/data/runs/20261105_035449/grounding_vlm/canon/lib_teapot/views/py.png",
+      "-y": "/data/runs/20261105_035449/grounding_vlm/canon/lib_teapot/views/ny.png",
+      "top": "/data/runs/20261105_035449/grounding_vlm/canon/lib_teapot/views/top.png",
+      "bottom": "/data/runs/20261105_035449/grounding_vlm/canon/lib_teapot/views/bottom.png",
+      "iso": "/data/runs/20261105_035449/grounding_vlm/canon/lib_teapot/views/iso.png",
+      "iso-opp": "/data/runs/20261105_035449/grounding_vlm/canon/lib_teapot/views/isonopp.png"
+    },
+    "canonical": {
+      "map": "x_body = R x_c (points, axes); quantities unchanged",
+      "R_body_from_canon": [
+        [
+          0.46300399990992197,
+          0.8747016766103028,
+          -0.14326295055784072
+        ],
+        [
+          0.31251500992563586,
+          -0.009849875217762455,
+          0.9498617523247129
+        ],
+        [
+          0.8294345451201033,
+          -0.4845616131033492,
+          -0.2779179347722767
+        ]
+      ],
+      "key": "m2",
+      "asset_dir": "/data/runs/20261105_035449/assets_canon/lib_teapot",
+      "asset_obj_sha256": "8513f2dfab4a8a53e3ab10802b468bb44320c083dc0d9ff1f12cfa331ff3dcca",
+      "canonical_json": "/data/runs/20261105_035449/assets_canon/lib_teapot/canonical.json",
+      "canonical_frames": "/data/runs/20261105_035449/grounding_vlm/canon/lib_teapot/frames.json",
+      "masks_root": "/data/runs/20261105_035449/masks_vlm_476f07ea",
+      "masks_manifest": "/data/runs/20261105_035449/masks_vlm_476f07ea/lib_teapot/manifest.json",
+      "masks_manifest_sha256": "edeb5d6f9e1f345e7267c6f4dcc3d79553919e54ad8b4767e969e639bfa5c5fd",
+      "parts_requested": [
+        "handle",
+        "body",
+        "lid",
+        "spout",
+        "base"
+      ],
+      "parts_grounded": [
+        "handle",
+        "body",
+        "lid",
+        "spout",
+        "base"
+      ],
+      "parts_dropped": {},
+      "primitives": {
+        "handle": "blob",
+        "body": "blob",
+        "lid": "blob",
+        "spout": "blob",
+        "base": "blob"
+      },
+      "up_sigma": {
+        "value_deg": 1.9306026221300112,
+        "basis": "up.source table_normal (refinement rejected: axis weakly identifiable (sigma 172.3 deg > 10) \u2014 the geometry does not determine this axis; coarse direction kept); library mesh: sigma = 1.931 deg, the Any6D vs FoundationPose up disagreement measured on the mesh's reference run (/data/runs/reference/20261031_045305/summary.json objects['m2'], mesh /data/any6d/lib_teapot.obj == /data/runs/reference/20261031_045305/objects/m2/final_mesh_m2.obj) -- ANOTHER FRAME, not this scene; a lower bound if both err alike"
+      },
+      "front": {
+        "front_source": "oriany_real_crop: decision.oa_real.front_cam through pose_on_final, projected perpendicular to up = canonical +x",
+        "front_independent": true,
+        "alpha": 1,
+        "front_sign_fixed": true,
+        "sigma_deg": 20.02168506580019
+      },
+      "depth_marginal": {},
+      "sim": {
+        "root": "/opt/manip-sim",
+        "commit": "b133912bcc59fb3118a2aace0101dcaeb4f4f60c",
+        "dirty": true,
+        "dirty_sources": [],
+        "files": {
+          "scripts/ground_parts.py": "407d39f761054973391d639da43e1212157a8e2f8fa43e7e0ca3364eed2bd308",
+          "manip_sim/part_grounding.py": "b547cbbcd2cbdc54f5511344bd4d894b465144fade1eb552c22ddbf38d6c7584",
+          "manip_sim/proposal.py": "9daeaa32381b75f6c13ff1d0425ec862c516ce9afa99c13ab8bfaecaeac181f0",
+          "scripts/render_candidates.py": "61f152027ba1277b93931e6c471278c09bd7486244946df107ee597b70ac2e30"
+        }
+      }
+    }
+  },
+  "points": {
+    "handle_center": {
+      "xyz": [
+        -0.026738,
+        0.007019,
+        -0.068014
+      ],
+      "status": "grounded",
+      "comment": "blob fit, rms 26.0 mm",
+      "depth_check": "skip",
+      "winding": 0.0
+    },
+    "body_center": {
+      "xyz": [
+        0.005233,
+        0.007672,
+        0.008053
+      ],
+      "status": "grounded",
+      "comment": "blob fit, rms 48.7 mm",
+      "depth_check": "skip",
+      "winding": -0.0
+    },
+    "lid_center": {
+      "xyz": [
+        -0.000299,
+        -0.038825,
+        -0.018118
+      ],
+      "status": "grounded",
+      "comment": "blob fit, rms 16.4 mm",
+      "depth_check": "skip",
+      "winding": -0.0
+    },
+    "spout_center": {
+      "xyz": [
+        0.000787,
+        0.027441,
+        0.068553
+      ],
+      "status": "grounded",
+      "comment": "blob fit, rms 14.5 mm",
+      "depth_check": "skip",
+      "winding": 0.0
+    },
+    "base_center": {
+      "xyz": [
+        0.006724,
+        -0.034238,
+        -0.009661
+      ],
+      "status": "grounded",
+      "comment": "blob fit, rms 31.2 mm",
+      "depth_check": "skip",
+      "winding": 0.0
+    }
+  },
+  "axes": {
+    "up_axis": {
+      "xyz": [
+        -0.143263,
+        0.949862,
+        -0.277918
+      ],
+      "status": "grounded",
+      "comment": "canonical frame: rest up, supplied by the pose source",
+      "sigma_deg": 1.93
+    },
+    "front_axis": {
+      "xyz": [
+        0.463004,
+        0.312515,
+        0.829435
+      ],
+      "status": "grounded",
+      "comment": "canonical frame: front, supplied by the caller (scene facing / Orient Anything)",
+      "sigma_deg": 20.02
+    },
+    "lateral_axis": {
+      "xyz": [
+        0.874702,
+        -0.00985,
+        -0.484562
+      ],
+      "status": "grounded",
+      "comment": "canonical frame: up x front",
+      "sigma_deg": 20.11
+    },
+    "handle_axis": {
+      "xyz": [
+        -0.351471,
+        0.057222,
+        -0.934448
+      ],
+      "status": "grounded",
+      "comment": "blob fit, rms 26.0 mm",
+      "sigma_deg": null
+    },
+    "body_axis": {
+      "xyz": [
+        0.536367,
+        0.350583,
+        0.767725
+      ],
+      "status": "grounded",
+      "comment": "blob fit, rms 48.7 mm",
+      "sigma_deg": null
+    },
+    "lid_axis": {
+      "xyz": [
+        0.037131,
+        -0.934136,
+        -0.354982
+      ],
+      "status": "grounded",
+      "comment": "blob fit, rms 16.4 mm",
+      "sigma_deg": null
+    },
+    "spout_axis": {
+      "xyz": [
+        0.036051,
+        0.326723,
+        0.944432
+      ],
+      "status": "grounded",
+      "comment": "blob fit, rms 14.5 mm",
+      "sigma_deg": null
+    },
+    "base_axis": {
+      "xyz": [
+        0.223657,
+        -0.955601,
+        -0.191842
+      ],
+      "status": "grounded",
+      "comment": "blob fit, rms 31.2 mm",
+      "sigma_deg": null
+    }
+  },
+  "quantities": {}
+}

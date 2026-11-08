@@ -1,0 +1,89 @@
+{
+  "model": "STAND-IN: sim ablation-modality-v5/chained.2 emissions, stage index/name rewritten",
+  "temperature": 0.0,
+  "plan": "/data/runs/20261105_035449/stage_plan/plan.json",
+  "plan_sha": "476f07ea",
+  "selections": "/data/runs/20261105_035449/call2/selections.json",
+  "arm": "framed-chained",
+  "requests_made": 0,
+  "replayed_from": "/data/runs/20261105_035449/call3_simreplay/stand_in.log.json",
+  "client_logs": [
+    {
+      "touchpoint": "emit_constraints",
+      "attempts": 1,
+      "rejections": [],
+      "flags": [],
+      "raw": "{\"stage\": 0, \"name\": \"grasp teapot by handle\", \"active\": \"teapot\", \"passive\": null, \"goal\": \"Gripper closes on teapot at teapot.handle_center, with teapot remaining upright and at its spawn pose.\", \"path_tsr\": {\"rot\": \"free\", \"trans\": [{\"term\": \"inside\", \"anchor\": \"teapot.handle_center\", \"slack\": \"snug\"}]}, \"subgoal_tsr\": {\"rot\": \"free\", \"trans\": [{\"term\": \"inside\", \"anchor\": \"teapot.handle_center\", \"slack\": \"snug\"}]}, \"verify\": \"Gripper is positioned at teapot.handle_center within snug tolerance; teapot pose unchanged from spawn.\"}",
+      "views": 3,
+      "legend": true,
+      "entry": true
+    },
+    {
+      "touchpoint": "emit_constraints",
+      "attempts": 1,
+      "rejections": [],
+      "flags": [],
+      "raw": "{\"stage\": 1, \"name\": \"lift and move teapot above mug\", \"active\": \"teapot\", \"passive\": \"mug\", \"goal\": \"Move teapot so that teapot.spout_tip is centered above mug.opening_center at a small clearance height, with teapot.+up pointing up throughout.\", \"path_tsr\": {\"rot\": [{\"axis\": \"teapot.+up\", \"points\": \"world.z\", \"tol\": \"moderate\"}], \"trans\": [{\"term\": \"free\"}]}, \"subgoal_tsr\": {\"rot\": [{\"axis\": \"teapot.+up\", \"points\": \"world.z\", \"tol\": \"moderate\"}], \"trans\": [{\"term\": \"centered\", \"anchor\": \"mug.opening_center\", \"tol\": \"snug\"}, {\"term\": \"above\", \"anchor\": \"mug.opening_center\", \"clearance\": \"small\", \"slack\": \"moderate\"}]}, \"verify\": \"teapot.+up is vertical; teapot.spout_tip is horizontally centered over mug.opening_center and elevated above it by a small clearance.\"}",
+      "views": 3,
+      "legend": true,
+      "entry": true
+    },
+    {
+      "touchpoint": "emit_constraints",
+      "attempts": 1,
+      "rejections": [],
+      "flags": [],
+      "raw": "{\"stage\": 2, \"name\": \"tilt teapot to pour tea into mug\", \"active\": \"teapot\", \"passive\": \"mug\", \"goal\": \"Tilt the teapot about its +left axis until teapot.+front points toward mug.-up, with teapot.spout_tip positioned above mug.opening_center to pour into the mug.\", \"path_tsr\": {\"rot\": [{\"axis\": \"teapot.+left\", \"perpendicular_to\": \"world.z\", \"tol\": \"moderate\"}], \"trans\": [{\"term\": \"centered\", \"anchor\": \"mug.opening_center\", \"tol\": \"moderate\"}, {\"term\": \"above\", \"anchor\": \"mug.opening_center\", \"clearance\": \"small\", \"slack\": \"moderate\"}]}, \"subgoal_tsr\": {\"rot\": [{\"axis\": \"teapot.+front\", \"points\": \"mug.-up\", \"tol\": \"moderate\"}], \"trans\": [{\"term\": \"centered\", \"anchor\": \"mug.opening_center\", \"tol\": \"moderate\"}, {\"term\": \"above\", \"anchor\": \"mug.opening_center\", \"clearance\": \"contact\", \"slack\": \"snug\"}]}, \"verify\": \"teapot.spout_tip is directly above mug.opening_center and teapot.+front points downward toward mug.-up, confirming the teapot is tilted sufficiently to pour liquid into the mug.\"}",
+      "views": 3,
+      "legend": true,
+      "entry": true
+    },
+    {
+      "touchpoint": "emit_constraints",
+      "attempts": 1,
+      "rejections": [],
+      "flags": [],
+      "raw": "",
+      "views": 0,
+      "legend": false,
+      "entry": false
+    }
+  ],
+  "raw_responses": [
+    "{\"stage\": 0, \"name\": \"grasp teapot by handle\", \"active\": \"teapot\", \"passive\": null, \"goal\": \"Gripper closes on teapot at teapot.handle_center, with teapot remaining upright and at its spawn pose.\", \"path_tsr\": {\"rot\": \"free\", \"trans\": [{\"term\": \"inside\", \"anchor\": \"teapot.handle_center\", \"slack\": \"snug\"}]}, \"subgoal_tsr\": {\"rot\": \"free\", \"trans\": [{\"term\": \"inside\", \"anchor\": \"teapot.handle_center\", \"slack\": \"snug\"}]}, \"verify\": \"Gripper is positioned at teapot.handle_center within snug tolerance; teapot pose unchanged from spawn.\"}",
+    "{\"stage\": 1, \"name\": \"lift and move teapot above mug\", \"active\": \"teapot\", \"passive\": \"mug\", \"goal\": \"Move teapot so that teapot.spout_tip is centered above mug.opening_center at a small clearance height, with teapot.+up pointing up throughout.\", \"path_tsr\": {\"rot\": [{\"axis\": \"teapot.+up\", \"points\": \"world.z\", \"tol\": \"moderate\"}], \"trans\": [{\"term\": \"free\"}]}, \"subgoal_tsr\": {\"rot\": [{\"axis\": \"teapot.+up\", \"points\": \"world.z\", \"tol\": \"moderate\"}], \"trans\": [{\"term\": \"centered\", \"anchor\": \"mug.opening_center\", \"tol\": \"snug\"}, {\"term\": \"above\", \"anchor\": \"mug.opening_center\", \"clearance\": \"small\", \"slack\": \"moderate\"}]}, \"verify\": \"teapot.+up is vertical; teapot.spout_tip is horizontally centered over mug.opening_center and elevated above it by a small clearance.\"}",
+    "{\"stage\": 2, \"name\": \"tilt teapot to pour tea into mug\", \"active\": \"teapot\", \"passive\": \"mug\", \"goal\": \"Tilt the teapot about its +left axis until teapot.+front points toward mug.-up, with teapot.spout_tip positioned above mug.opening_center to pour into the mug.\", \"path_tsr\": {\"rot\": [{\"axis\": \"teapot.+left\", \"perpendicular_to\": \"world.z\", \"tol\": \"moderate\"}], \"trans\": [{\"term\": \"centered\", \"anchor\": \"mug.opening_center\", \"tol\": \"moderate\"}, {\"term\": \"above\", \"anchor\": \"mug.opening_center\", \"clearance\": \"small\", \"slack\": \"moderate\"}]}, \"subgoal_tsr\": {\"rot\": [{\"axis\": \"teapot.+front\", \"points\": \"mug.-up\", \"tol\": \"moderate\"}], \"trans\": [{\"term\": \"centered\", \"anchor\": \"mug.opening_center\", \"tol\": \"moderate\"}, {\"term\": \"above\", \"anchor\": \"mug.opening_center\", \"clearance\": \"contact\", \"slack\": \"snug\"}]}, \"verify\": \"teapot.spout_tip is directly above mug.opening_center and teapot.+front points downward toward mug.-up, confirming the teapot is tilted sufficiently to pour liquid into the mug.\"}"
+  ],
+  "sim": {
+    "emit": {
+      "root": "/opt/manip-sim",
+      "commit": "b133912bcc59fb3118a2aace0101dcaeb4f4f60c",
+      "dirty": true,
+      "dirty_sources": [],
+      "files": {
+        "manip_sim/compile_tsr.py": "77087bc84aa423753f91cf714490e89e365af874077d90e4f64be754f26e9a01",
+        "scripts/emit_constraints.py": "90c991ff472ab722e24d99bdba337fd4bbc72ab005f1b79aadc2714536236607",
+        "scripts/render_stage_frames.py": "be4084c5194c5a3fa8eeca987f3fdad29fe9ef9fb6524790db1ff3f7f0380309"
+      }
+    },
+    "vlm": {
+      "root": "/opt/manip-sim",
+      "commit": "b133912bcc59fb3118a2aace0101dcaeb4f4f60c",
+      "dirty": true,
+      "dirty_sources": [],
+      "files": {
+        "manip_sim/vlm.py": "59951f2259e9c2820a5171336689524100351fa1be5a4d0ffea3a93becd983ad"
+      }
+    },
+    "selection": {
+      "root": "/opt/manip-sim",
+      "commit": "b133912bcc59fb3118a2aace0101dcaeb4f4f60c",
+      "dirty": true,
+      "dirty_sources": [],
+      "files": {
+        "manip_sim/selection.py": "d6947edaafafbbe5ebc4db0a081c31c6371d6575ccc497556577734128d4ecff",
+        "manip_sim/frames.py": "df53cbdf4fe173b299049d3b1c1b737e6610248f2a27f488df401721f5f0ae4a"
+      }
+    }
+  }
+}

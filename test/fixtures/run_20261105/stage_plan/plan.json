@@ -1,0 +1,397 @@
+{
+  "plan": {
+    "task": "pour tea into the mug",
+    "stages": [
+      {
+        "index": 0,
+        "name": "grasp teapot by handle",
+        "active": "teal_teapot",
+        "passive": null,
+        "parts": {
+          "teal_teapot": [
+            "handle",
+            "body",
+            "lid"
+          ]
+        }
+      },
+      {
+        "index": 1,
+        "name": "lift and move teapot above mug",
+        "active": "teal_teapot",
+        "passive": "red_mug",
+        "parts": {
+          "teal_teapot": [
+            "spout",
+            "body",
+            "handle"
+          ],
+          "red_mug": [
+            "rim",
+            "opening"
+          ]
+        }
+      },
+      {
+        "index": 2,
+        "name": "tilt teapot to pour tea into mug",
+        "active": "teal_teapot",
+        "passive": "red_mug",
+        "parts": {
+          "teal_teapot": [
+            "spout",
+            "handle",
+            "body"
+          ],
+          "red_mug": [
+            "rim",
+            "opening",
+            "interior"
+          ]
+        }
+      },
+      {
+        "index": 3,
+        "name": "upright teapot and place back on table",
+        "active": "teal_teapot",
+        "passive": null,
+        "parts": {
+          "teal_teapot": [
+            "body",
+            "base",
+            "handle"
+          ]
+        }
+      }
+    ],
+    "objects": {
+      "red_mug": {
+        "handle": "red_mug",
+        "label": "red mug",
+        "mark": 1
+      },
+      "teal_teapot": {
+        "handle": "teal_teapot",
+        "label": "teal teapot",
+        "mark": 2
+      }
+    }
+  },
+  "plan_grounded": {
+    "task": "pour tea into the mug",
+    "stages": [
+      {
+        "index": 0,
+        "name": "grasp teapot by handle",
+        "active": "teapot",
+        "passive": null,
+        "parts": {
+          "teapot": [
+            "handle",
+            "body",
+            "lid"
+          ]
+        }
+      },
+      {
+        "index": 1,
+        "name": "lift and move teapot above mug",
+        "active": "teapot",
+        "passive": "mug",
+        "parts": {
+          "teapot": [
+            "spout",
+            "body",
+            "handle"
+          ],
+          "mug": [
+            "rim",
+            "opening"
+          ]
+        }
+      },
+      {
+        "index": 2,
+        "name": "tilt teapot to pour tea into mug",
+        "active": "teapot",
+        "passive": "mug",
+        "parts": {
+          "teapot": [
+            "spout",
+            "handle",
+            "body"
+          ],
+          "mug": [
+            "rim",
+            "opening",
+            "interior"
+          ]
+        }
+      },
+      {
+        "index": 3,
+        "name": "upright teapot and place back on table",
+        "active": "teapot",
+        "passive": null,
+        "parts": {
+          "teapot": [
+            "body",
+            "base",
+            "handle"
+          ]
+        }
+      }
+    ],
+    "objects": {
+      "mug": {
+        "handle": "mug",
+        "label": "red mug",
+        "mark": 1
+      },
+      "teapot": {
+        "handle": "teapot",
+        "label": "teal teapot",
+        "mark": 2
+      }
+    }
+  },
+  "parts_dropped": {},
+  "mode": "marks",
+  "model": "claude-opus-5",
+  "views": [
+    "/data/runs/20261105_035449/marks/marked.png"
+  ],
+  "task_spec": "pour_tea",
+  "object_parts": {
+    "mug": [
+      "rim",
+      "opening",
+      "interior"
+    ],
+    "teapot": [
+      "handle",
+      "body",
+      "lid",
+      "spout",
+      "base"
+    ]
+  },
+  "object_parts_requested": {
+    "red_mug": [
+      "rim",
+      "opening",
+      "interior"
+    ],
+    "teal_teapot": [
+      "handle",
+      "body",
+      "lid",
+      "spout",
+      "base"
+    ]
+  },
+  "roles": {
+    "grasp": {
+      "object": "teapot",
+      "stage": 0
+    },
+    "transport_active": {
+      "object": "teapot",
+      "stage": 1
+    },
+    "pour": {
+      "object": "teapot",
+      "stage": 2
+    },
+    "transport_passive": {
+      "object": "mug",
+      "stage": 1
+    }
+  },
+  "checks": [
+    {
+      "check": "registered[red_mug]",
+      "pass": true,
+      "detail": "mark 1 ('red mug') -> m1"
+    },
+    {
+      "check": "registered[teal_teapot]",
+      "pass": true,
+      "detail": "mark 2 ('teal teapot') -> m2"
+    },
+    {
+      "check": "parts[red_mug]",
+      "pass": true,
+      "detail": "['rim', 'opening', 'interior']"
+    },
+    {
+      "check": "parts[teal_teapot]",
+      "pass": true,
+      "detail": "['handle', 'body', 'lid', 'spout', 'base']"
+    },
+    {
+      "check": "structure[grasp<interaction]",
+      "pass": true,
+      "detail": "active-only stages [0, 3], active+passive stages [1, 2]"
+    },
+    {
+      "check": "identity[mug]",
+      "pass": true,
+      "detail": "mark 1 labelled 'red mug' -> mug"
+    },
+    {
+      "check": "identity[teapot]",
+      "pass": true,
+      "detail": "mark 2 labelled 'teal teapot' -> teapot"
+    },
+    {
+      "check": "grounds[stage0]",
+      "pass": true,
+      "detail": "grasp teapot by handle: parts {\"teapot\": [\"handle\", \"body\", \"lid\"]}"
+    },
+    {
+      "check": "grounds[stage1]",
+      "pass": true,
+      "detail": "lift and move teapot above mug: parts {\"teapot\": [\"spout\", \"body\", \"handle\"], \"mug\": [\"rim\", \"opening\"]}"
+    },
+    {
+      "check": "grounds[stage2]",
+      "pass": true,
+      "detail": "tilt teapot to pour tea into mug: parts {\"teapot\": [\"spout\", \"handle\", \"body\"], \"mug\": [\"rim\", \"opening\", \"interior\"]}"
+    },
+    {
+      "check": "grounds[stage3]",
+      "pass": true,
+      "detail": "upright teapot and place back on table: parts {\"teapot\": [\"body\", \"base\", \"handle\"]}"
+    },
+    {
+      "check": "menu[mug]",
+      "pass": true,
+      "detail": "parts ['rim', 'opening', 'interior'] -> 8-mark menu"
+    },
+    {
+      "check": "menu[teapot]",
+      "pass": true,
+      "detail": "parts ['handle', 'body', 'lid', 'spout', 'base'] -> 8-mark menu"
+    },
+    {
+      "check": "coverage[teapot]",
+      "pass": true,
+      "detail": "needs tags ['handle', 'spout'], attributed ['handle', 'body', 'lid', 'spout', 'base']"
+    },
+    {
+      "check": "coverage[mug]",
+      "pass": true,
+      "detail": "needs tags ['rim|opening|lip'], attributed ['rim', 'opening', 'interior']"
+    },
+    {
+      "check": "role[grasp]",
+      "pass": true,
+      "detail": "matched ['0:grasp teapot by handle', '3:upright teapot and place back on table']"
+    },
+    {
+      "check": "role[transport_active]",
+      "pass": true,
+      "detail": "matched ['1:lift and move teapot above mug', '2:tilt teapot to pour tea into mug']"
+    },
+    {
+      "check": "role[pour]",
+      "pass": true,
+      "detail": "matched ['1:lift and move teapot above mug', '2:tilt teapot to pour tea into mug']"
+    },
+    {
+      "check": "role[transport_passive]",
+      "pass": true,
+      "detail": "matched ['1:lift and move teapot above mug', '2:tilt teapot to pour tea into mug']"
+    },
+    {
+      "check": "ordering[grasp<transport_active,pour]",
+      "pass": true,
+      "detail": "grasp at [0, 3], transport_active at [1, 2], pour at [1, 2]"
+    }
+  ],
+  "gate": {
+    "defer_grounding": false,
+    "blocking": []
+  },
+  "hardware": {
+    "run": "/data/runs/20261105_035449",
+    "task": "pour tea into the mug",
+    "mark_key": {
+      "red_mug": "m1",
+      "teal_teapot": "m2"
+    },
+    "registered": [
+      "m1",
+      "m2"
+    ],
+    "plan_sha": "476f07ea",
+    "blocking_policy": {
+      "registered[red_mug]": true,
+      "registered[teal_teapot]": true,
+      "parts[red_mug]": true,
+      "parts[teal_teapot]": true,
+      "structure[grasp<interaction]": false,
+      "identity[mug]": true,
+      "identity[teapot]": true,
+      "grounds[stage0]": true,
+      "grounds[stage1]": true,
+      "grounds[stage2]": true,
+      "grounds[stage3]": true,
+      "menu[mug]": true,
+      "menu[teapot]": true,
+      "coverage[teapot]": true,
+      "coverage[mug]": true,
+      "role[grasp]": true,
+      "role[transport_active]": true,
+      "role[pour]": true,
+      "role[transport_passive]": true,
+      "ordering[grasp<transport_active,pour]": true
+    },
+    "replayed_from": "/data/runs/20261105_035449/stage_plan/plan.log.json",
+    "parts_dropped_reasons": {},
+    "grounding": {
+      "dir": "/data/runs/20261105_035449/grounding_vlm",
+      "spec": "pour_tea",
+      "objects": {
+        "mug": {
+          "key": "m1",
+          "frames": "/data/runs/20261105_035449/grounding_vlm/m1/frames.json",
+          "frames_sha256": "3807e26c51cd5ac70bcea5fdd0f7f58282ffb5f33adcdab100e68f8d6903e1d8",
+          "canon_dir": "/data/runs/20261105_035449/grounding_vlm/canon/lib_mug"
+        },
+        "teapot": {
+          "key": "m2",
+          "frames": "/data/runs/20261105_035449/grounding_vlm/m2/frames.json",
+          "frames_sha256": "cbdce83c4fe86097d218b38d8e2ad5349df5e9f2436dd147a82cc6cd12f6a185",
+          "canon_dir": "/data/runs/20261105_035449/grounding_vlm/canon/lib_teapot"
+        }
+      },
+      "stageplan": {
+        "root": "/opt/manip-sim",
+        "commit": "b133912bcc59fb3118a2aace0101dcaeb4f4f60c",
+        "dirty": true,
+        "dirty_sources": [],
+        "files": {
+          "scripts/plan_stages.py": "e9cfd75dfb8fe54b685796b5aa39f17abe57e9f3cfdcbee0201c19a1ac28a228",
+          "manip_sim/selection.py": "d6947edaafafbbe5ebc4db0a081c31c6371d6575ccc497556577734128d4ecff"
+        }
+      }
+    },
+    "task_spec_file": "/opt/manip-sim/tasks/pour_tea.json",
+    "task_spec_sha256": "66eb29915a6357da6aab6ed00fa7ea9cb70d15ad3a216bd55a7be0acb72fdd55",
+    "object_names": {
+      "red_mug": "mug",
+      "teal_teapot": "teapot"
+    }
+  },
+  "sim": {
+    "root": "/opt/manip-sim",
+    "commit": "b133912bcc59fb3118a2aace0101dcaeb4f4f60c",
+    "dirty": true,
+    "dirty_sources": [],
+    "files": {
+      "manip_sim/vlm.py": "59951f2259e9c2820a5171336689524100351fa1be5a4d0ffea3a93becd983ad"
+    }
+  }
+}

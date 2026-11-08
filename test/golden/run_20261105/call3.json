@@ -1,0 +1,1553 @@
+{
+ "arm": "framed-chained",
+ "client_logs": [
+  {
+   "attempts": 1,
+   "entry": true,
+   "legend": true,
+   "rejections": [],
+   "touchpoint": "emit_constraints",
+   "views": 3
+  },
+  {
+   "attempts": 1,
+   "entry": true,
+   "legend": true,
+   "rejections": [],
+   "touchpoint": "emit_constraints",
+   "views": 3
+  },
+  {
+   "attempts": 1,
+   "entry": true,
+   "legend": true,
+   "rejections": [],
+   "touchpoint": "emit_constraints",
+   "views": 3
+  },
+  {
+   "attempts": 1,
+   "entry": false,
+   "legend": false,
+   "rejections": [],
+   "touchpoint": "emit_constraints",
+   "views": 0
+  }
+ ],
+ "compiled": [
+  {
+   "Bw": {
+    "path": [
+     [
+      -0.005,
+      0.005
+     ],
+     [
+      -0.005,
+      0.005
+     ],
+     [
+      -0.005,
+      0.005
+     ],
+     [
+      -3.1416,
+      3.1416
+     ],
+     [
+      -3.1416,
+      3.1416
+     ],
+     [
+      -3.1416,
+      3.1416
+     ]
+    ],
+    "subgoal": [
+     [
+      -0.005,
+      0.005
+     ],
+     [
+      -0.005,
+      0.005
+     ],
+     [
+      -0.005,
+      0.005
+     ],
+     [
+      -3.1416,
+      3.1416
+     ],
+     [
+      -3.1416,
+      3.1416
+     ],
+     [
+      -3.1416,
+      3.1416
+     ]
+    ]
+   },
+   "attempts": 1,
+   "entry_poses": {
+    "mug": [
+     [
+      0.214199,
+      -0.976327,
+      -0.030067,
+      0.381673
+     ],
+     [
+      0.976046,
+      0.212733,
+      0.045589,
+      -0.330863
+     ],
+     [
+      -0.038113,
+      -0.039111,
+      0.998508,
+      0.027194
+     ],
+     [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+     ]
+    ],
+    "teapot": [
+     [
+      0.096256,
+      0.994847,
+      -0.031842,
+      0.403164
+     ],
+     [
+      -0.995168,
+      0.096811,
+      0.016376,
+      0.046408
+     ],
+     [
+      0.019374,
+      0.030112,
+      0.999359,
+      0.021098
+     ],
+     [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+     ]
+    ]
+   },
+   "error": null,
+   "grounded": true,
+   "notes": [
+    "w = teapot canonical frame at [-0.0666, 0.0095, 0.0294]: z = up_axis, x = teapot.front_axis; rooted on body_poses['teapot']"
+   ],
+   "rejection_slots": [],
+   "stage": "grasp teapot by handle",
+   "x_source": "teapot.front_axis"
+  },
+  {
+   "Bw": {
+    "path": [
+     [
+      -Infinity,
+      Infinity
+     ],
+     [
+      -Infinity,
+      Infinity
+     ],
+     [
+      -Infinity,
+      Infinity
+     ],
+     [
+      -0.2618,
+      0.2618
+     ],
+     [
+      -0.2618,
+      0.2618
+     ],
+     [
+      -3.1416,
+      3.1416
+     ]
+    ],
+    "subgoal": [
+     [
+      -0.0091,
+      0.0009
+     ],
+     [
+      -0.0055,
+      0.0045
+     ],
+     [
+      0.0059,
+      0.0559
+     ],
+     [
+      -0.2618,
+      0.2618
+     ],
+     [
+      -0.2618,
+      0.2618
+     ],
+     [
+      -3.1416,
+      3.1416
+     ]
+    ]
+   },
+   "attempts": 1,
+   "entry_poses": {
+    "mug": [
+     [
+      0.214199,
+      -0.976327,
+      -0.030067,
+      0.381673
+     ],
+     [
+      0.976046,
+      0.212733,
+      0.045589,
+      -0.330863
+     ],
+     [
+      -0.038113,
+      -0.039111,
+      0.998508,
+      0.027194
+     ],
+     [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+     ]
+    ],
+    "teapot": [
+     [
+      0.096256,
+      0.994847,
+      -0.031842,
+      0.403164
+     ],
+     [
+      -0.995168,
+      0.096811,
+      0.016376,
+      0.046408
+     ],
+     [
+      0.019374,
+      0.030112,
+      0.999359,
+      0.021098
+     ],
+     [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+     ]
+    ]
+   },
+   "error": null,
+   "free_rows": {
+    "path": [
+     "yaw"
+    ],
+    "subgoal": [
+     "yaw"
+    ]
+   },
+   "goal_class": {
+    "+front": "level",
+    "+left": "level",
+    "+up": "up"
+   },
+   "goal_dirs": {
+    "+front": [
+     0.0966,
+     -0.9953,
+     0.0
+    ],
+    "+left": [
+     0.9953,
+     0.0966,
+     0.0
+    ],
+    "+up": [
+     -0.0,
+     0.0,
+     1.0
+    ]
+   },
+   "grounded": true,
+   "notes": [
+    "w = mug canonical frame at [-0.0131, -0.0011, 0.041]: z = up_axis, x = mug.front_axis; rooted on body_poses['mug']",
+    "lift and move teapot above mug.path: goal attitude from 1 relation row(s); fixed ['roll', 'pitch'], rest free",
+    "lift and move teapot above mug.subgoal: goal attitude from 1 relation row(s); fixed ['roll', 'pitch'], rest free"
+   ],
+   "rejection_slots": [],
+   "stage": "lift and move teapot above mug",
+   "sweep": {
+    "angle_deg": 2.1,
+    "axis": "off-axis"
+   },
+   "x_source": "mug.front_axis"
+  },
+  {
+   "Bw": null,
+   "attempts": 1,
+   "entry_poses": {
+    "mug": [
+     [
+      0.214199,
+      -0.976327,
+      -0.030067,
+      0.381673
+     ],
+     [
+      0.976046,
+      0.212733,
+      0.045589,
+      -0.330863
+     ],
+     [
+      -0.038113,
+      -0.039111,
+      0.998508,
+      0.027194
+     ],
+     [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+     ]
+    ],
+    "teapot": [
+     [
+      0.096564,
+      0.995327,
+      -0.0,
+      0.374364
+     ],
+     [
+      -0.995327,
+      0.096564,
+      0.0,
+      -0.411919
+     ],
+     [
+      0.0,
+      0.0,
+      1.0,
+      0.070305
+     ],
+     [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+     ]
+    ]
+   },
+   "error": {
+    "others": [],
+    "reason": "replay exhausted: the log holds 3 response(s) and the client asked for another -- the prompt or parser changed since recording",
+    "rejections": [
+     "tilt teapot to pour tea into mug.path.rot[0]: the constrained tilt axis does not lie along a w basis vector (components in w: [0.951, 0.306, 0.048]); the bound would not diagonalize \u2014 relate a canonical axis (up/front/lateral) or free the row"
+    ],
+    "slot": "vlm"
+   },
+   "grounded": false,
+   "rejection_slots": [
+    "tilt teapot to pour tea into mug.path.rot[0]"
+   ],
+   "stage": "tilt teapot to pour tea into mug"
+  }
+ ],
+ "compiled_full": [
+  {
+   "attempt": 0,
+   "error": null,
+   "outcome": "accepted",
+   "path_Bw": [
+    [
+     -0.005,
+     0.005
+    ],
+    [
+     -0.005,
+     0.005
+    ],
+    [
+     -0.005,
+     0.005
+    ],
+    [
+     -3.141592653589793,
+     3.141592653589793
+    ],
+    [
+     -3.141592653589793,
+     3.141592653589793
+    ],
+    [
+     -3.141592653589793,
+     3.141592653589793
+    ]
+   ],
+   "path_T0_w": [
+    [
+     0.09625578552634631,
+     0.9948471638330814,
+     -0.031842493086775406,
+     0.4052680799823038
+    ],
+    [
+     -0.9951680621254897,
+     0.09681097708007885,
+     0.016375678373678523,
+     0.11408777265792175
+    ],
+    [
+     0.019374000054293124,
+     0.030112378353025368,
+     0.9993587407892228,
+     0.049474826527273905
+    ],
+    [
+     0.0,
+     0.0,
+     0.0,
+     1.0
+    ]
+   ],
+   "path_Tw_e": [
+    [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    [
+     0.0,
+     1.0,
+     0.0,
+     0.0
+    ],
+    [
+     0.0,
+     0.0,
+     1.0,
+     0.0
+    ],
+    [
+     0.0,
+     0.0,
+     0.0,
+     1.0
+    ]
+   ],
+   "stage": "grasp teapot by handle",
+   "subgoal_Bw": [
+    [
+     -0.005,
+     0.005
+    ],
+    [
+     -0.005,
+     0.005
+    ],
+    [
+     -0.005,
+     0.005
+    ],
+    [
+     -3.141592653589793,
+     3.141592653589793
+    ],
+    [
+     -3.141592653589793,
+     3.141592653589793
+    ],
+    [
+     -3.141592653589793,
+     3.141592653589793
+    ]
+   ],
+   "subgoal_T0_w": [
+    [
+     0.09625578552634631,
+     0.9948471638330814,
+     -0.031842493086775406,
+     0.4052680799823038
+    ],
+    [
+     -0.9951680621254897,
+     0.09681097708007885,
+     0.016375678373678523,
+     0.11408777265792175
+    ],
+    [
+     0.019374000054293124,
+     0.030112378353025368,
+     0.9993587407892228,
+     0.049474826527273905
+    ],
+    [
+     0.0,
+     0.0,
+     0.0,
+     1.0
+    ]
+   ],
+   "subgoal_Tw_e": [
+    [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    [
+     0.0,
+     1.0,
+     0.0,
+     0.0
+    ],
+    [
+     0.0,
+     0.0,
+     1.0,
+     0.0
+    ],
+    [
+     0.0,
+     0.0,
+     0.0,
+     1.0
+    ]
+   ],
+   "subgoal_nominal": [
+    [
+     0.09625578552634631,
+     0.9948471638330814,
+     -0.031842493086775406,
+     0.4052680799823038
+    ],
+    [
+     -0.9951680621254897,
+     0.09681097708007885,
+     0.016375678373678523,
+     0.11408777265792175
+    ],
+    [
+     0.019374000054293124,
+     0.030112378353025368,
+     0.9993587407892228,
+     0.049474826527273905
+    ],
+    [
+     0.0,
+     0.0,
+     0.0,
+     1.0
+    ]
+   ],
+   "w_point": [
+    -0.0666,
+    0.0095,
+    0.0294
+   ],
+   "x_source": "teapot.front_axis"
+  },
+  {
+   "attempt": 0,
+   "error": null,
+   "outcome": "accepted",
+   "path_Bw": [
+    [
+     -Infinity,
+     Infinity
+    ],
+    [
+     -Infinity,
+     Infinity
+    ],
+    [
+     -Infinity,
+     Infinity
+    ],
+    [
+     -0.2617993877991494,
+     0.2617993877991494
+    ],
+    [
+     -0.2617993877991494,
+     0.2617993877991494
+    ],
+    [
+     -3.141592653589793,
+     3.141592653589793
+    ]
+   ],
+   "path_T0_w": [
+    [
+     0.2141988120731594,
+     -0.9763272346080382,
+     -0.03006659057938876,
+     0.3787079615497255
+    ],
+    [
+     0.9760462259917283,
+     0.21273322588571686,
+     0.04558880708640212,
+     -0.34201360812108844
+    ],
+    [
+     -0.03811343114640777,
+     -0.03911145058519059,
+     0.9985077169453277,
+     0.0686748784688586
+    ],
+    [
+     0.0,
+     0.0,
+     0.0,
+     1.0
+    ]
+   ],
+   "path_Tw_e": [
+    [
+     -0.9508009448126542,
+     0.30744906848063747,
+     -0.03811343114640589,
+     -0.0651235741993845
+    ],
+    [
+     -0.3060174667646698,
+     -0.9512221635706642,
+     -0.03911145058518315,
+     -0.010194276085401317
+    ],
+    [
+     -0.048279119485526725,
+     -0.025523828520252787,
+     0.9985077169453275,
+     -0.03232903986498631
+    ],
+    [
+     0.0,
+     0.0,
+     0.0,
+     1.0
+    ]
+   ],
+   "stage": "lift and move teapot above mug",
+   "subgoal_Bw": [
+    [
+     -0.0091,
+     0.0009000000000000006
+    ],
+    [
+     -0.0055,
+     0.0045000000000000005
+    ],
+    [
+     0.005900000000000001,
+     0.055900000000000005
+    ],
+    [
+     -0.2617993877991494,
+     0.2617993877991494
+    ],
+    [
+     -0.2617993877991494,
+     0.2617993877991494
+    ],
+    [
+     -3.141592653589793,
+     3.141592653589793
+    ]
+   ],
+   "subgoal_T0_w": [
+    [
+     0.2141988120731594,
+     -0.9763272346080382,
+     -0.03006659057938876,
+     0.3787079615497255
+    ],
+    [
+     0.9760462259917283,
+     0.21273322588571686,
+     0.04558880708640212,
+     -0.34201360812108844
+    ],
+    [
+     -0.03811343114640777,
+     -0.03911145058519059,
+     0.9985077169453277,
+     0.0686748784688586
+    ],
+    [
+     0.0,
+     0.0,
+     0.0,
+     1.0
+    ]
+   ],
+   "subgoal_Tw_e": [
+    [
+     -0.9508009448126542,
+     0.30744906848063747,
+     -0.03811343114640589,
+     -0.0651235741993845
+    ],
+    [
+     -0.3060174667646698,
+     -0.9512221635706642,
+     -0.03911145058518315,
+     -0.010194276085401317
+    ],
+    [
+     -0.048279119485526725,
+     -0.025523828520252787,
+     0.9985077169453275,
+     -0.03232903986498631
+    ],
+    [
+     0.0,
+     0.0,
+     0.0,
+     1.0
+    ]
+   ],
+   "subgoal_nominal": [
+    [
+     0.09656434269030387,
+     0.9953267442005106,
+     -6.855085573638066e-15,
+     0.3743644335418961
+    ],
+    [
+     -0.995326744200511,
+     0.09656434269030398,
+     3.4687228892940164e-15,
+     -0.41191919254093956
+    ],
+    [
+     4.157263224837385e-15,
+     6.478884007246091e-15,
+     0.9999999999999999,
+     0.0703045877154623
+    ],
+    [
+     0.0,
+     0.0,
+     0.0,
+     1.0
+    ]
+   ],
+   "w_point": [
+    -0.0131,
+    -0.0011,
+    0.041
+   ],
+   "x_source": "mug.front_axis"
+  },
+  {
+   "attempt": 0,
+   "error": "tilt teapot to pour tea into mug.path.rot[0]: the constrained tilt axis does not lie along a w basis vector (components in w: [0.951, 0.306, 0.048]); the bound would not diagonalize \u2014 relate a canonical axis (up/front/lateral) or free the row",
+   "outcome": "compile_stage",
+   "stage": "tilt teapot to pour tea into mug"
+  }
+ ],
+ "emissions": [
+  {
+   "active": "teapot",
+   "goal": "Gripper closes on teapot at teapot.handle_center, with teapot remaining upright and at its spawn pose.",
+   "name": "grasp teapot by handle",
+   "passive": null,
+   "path_tsr": {
+    "rot": [
+     {
+      "axis": null,
+      "reference": null,
+      "relation": "free",
+      "row": "roll",
+      "tol": null
+     },
+     {
+      "axis": null,
+      "reference": null,
+      "relation": "free",
+      "row": "pitch",
+      "tol": null
+     },
+     {
+      "axis": null,
+      "reference": null,
+      "relation": "free",
+      "row": "yaw",
+      "tol": null
+     }
+    ],
+    "trans": [
+     {
+      "anchor": "teapot.handle_center",
+      "axis": null,
+      "clearance": null,
+      "expr_hi": null,
+      "expr_lo": null,
+      "flags": [],
+      "row": null,
+      "sign": null,
+      "slack": "snug",
+      "term": "inside",
+      "tol": null
+     }
+    ]
+   },
+   "stage": 0,
+   "subgoal_tsr": {
+    "rot": [
+     {
+      "axis": null,
+      "reference": null,
+      "relation": "free",
+      "row": "roll",
+      "tol": null
+     },
+     {
+      "axis": null,
+      "reference": null,
+      "relation": "free",
+      "row": "pitch",
+      "tol": null
+     },
+     {
+      "axis": null,
+      "reference": null,
+      "relation": "free",
+      "row": "yaw",
+      "tol": null
+     }
+    ],
+    "trans": [
+     {
+      "anchor": "teapot.handle_center",
+      "axis": null,
+      "clearance": null,
+      "expr_hi": null,
+      "expr_lo": null,
+      "flags": [],
+      "row": null,
+      "sign": null,
+      "slack": "snug",
+      "term": "inside",
+      "tol": null
+     }
+    ]
+   },
+   "verify": "Gripper is positioned at teapot.handle_center within snug tolerance; teapot pose unchanged from spawn."
+  },
+  {
+   "active": "teapot",
+   "goal": "Move teapot so that teapot.spout_tip is centered above mug.opening_center at a small clearance height, with teapot.+up pointing up throughout.",
+   "name": "lift and move teapot above mug",
+   "passive": "mug",
+   "path_tsr": {
+    "rot": [
+     {
+      "axis": "teapot.up_axis",
+      "reference": "world.z",
+      "relation": "parallel",
+      "row": null,
+      "tol": "moderate"
+     }
+    ],
+    "trans": [
+     {
+      "anchor": null,
+      "axis": null,
+      "clearance": null,
+      "expr_hi": null,
+      "expr_lo": null,
+      "flags": [],
+      "row": null,
+      "sign": null,
+      "slack": null,
+      "term": "free",
+      "tol": null
+     }
+    ]
+   },
+   "stage": 1,
+   "subgoal_tsr": {
+    "rot": [
+     {
+      "axis": "teapot.up_axis",
+      "reference": "world.z",
+      "relation": "parallel",
+      "row": null,
+      "tol": "moderate"
+     }
+    ],
+    "trans": [
+     {
+      "anchor": "mug.opening_center",
+      "axis": null,
+      "clearance": null,
+      "expr_hi": null,
+      "expr_lo": null,
+      "flags": [],
+      "row": null,
+      "sign": null,
+      "slack": null,
+      "term": "centered",
+      "tol": "snug"
+     },
+     {
+      "anchor": "mug.opening_center",
+      "axis": null,
+      "clearance": "small",
+      "expr_hi": null,
+      "expr_lo": null,
+      "flags": [],
+      "row": null,
+      "sign": null,
+      "slack": "moderate",
+      "term": "above",
+      "tol": null
+     }
+    ]
+   },
+   "verify": "teapot.+up is vertical; teapot.spout_tip is horizontally centered over mug.opening_center and elevated above it by a small clearance."
+  },
+  {
+   "active": "teapot",
+   "goal": "Tilt the teapot about its +left axis until teapot.+front points toward mug.-up, with teapot.spout_tip positioned above mug.opening_center to pour into the mug.",
+   "name": "tilt teapot to pour tea into mug",
+   "passive": "mug",
+   "path_tsr": {
+    "rot": [
+     {
+      "axis": "teapot.lateral_axis",
+      "reference": "world.z",
+      "relation": "perpendicular",
+      "row": null,
+      "tol": "moderate"
+     }
+    ],
+    "trans": [
+     {
+      "anchor": "mug.opening_center",
+      "axis": null,
+      "clearance": null,
+      "expr_hi": null,
+      "expr_lo": null,
+      "flags": [],
+      "row": null,
+      "sign": null,
+      "slack": null,
+      "term": "centered",
+      "tol": "moderate"
+     },
+     {
+      "anchor": "mug.opening_center",
+      "axis": null,
+      "clearance": "small",
+      "expr_hi": null,
+      "expr_lo": null,
+      "flags": [],
+      "row": null,
+      "sign": null,
+      "slack": "moderate",
+      "term": "above",
+      "tol": null
+     }
+    ]
+   },
+   "stage": 2,
+   "subgoal_tsr": {
+    "rot": [
+     {
+      "axis": "teapot.front_axis",
+      "reference": "mug.up_axis",
+      "relation": "antiparallel",
+      "row": null,
+      "tol": "moderate"
+     }
+    ],
+    "trans": [
+     {
+      "anchor": "mug.opening_center",
+      "axis": null,
+      "clearance": null,
+      "expr_hi": null,
+      "expr_lo": null,
+      "flags": [],
+      "row": null,
+      "sign": null,
+      "slack": null,
+      "term": "centered",
+      "tol": "moderate"
+     },
+     {
+      "anchor": "mug.opening_center",
+      "axis": null,
+      "clearance": "contact",
+      "expr_hi": null,
+      "expr_lo": null,
+      "flags": [],
+      "row": null,
+      "sign": null,
+      "slack": "snug",
+      "term": "above",
+      "tol": null
+     }
+    ]
+   },
+   "verify": "teapot.spout_tip is directly above mug.opening_center and teapot.+front points downward toward mug.-up, confirming the teapot is tilted sufficiently to pour liquid into the mug."
+  }
+ ],
+ "exit": 1,
+ "failed": [
+  "tilt teapot to pour tea into mug"
+ ],
+ "flags": [],
+ "frames": {
+  "grasp": {
+   "active": "teapot",
+   "entry_from": "measured",
+   "name": "grasp teapot by handle",
+   "passive": null,
+   "poses": {
+    "mug": [
+     [
+      0.214199,
+      -0.976327,
+      -0.030067,
+      0.381673
+     ],
+     [
+      0.976046,
+      0.212733,
+      0.045589,
+      -0.330863
+     ],
+     [
+      -0.038113,
+      -0.039111,
+      0.998508,
+      0.027194
+     ],
+     [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+     ]
+    ],
+    "teapot": [
+     [
+      0.096256,
+      0.994847,
+      -0.031842,
+      0.403164
+     ],
+     [
+      -0.995168,
+      0.096811,
+      0.016376,
+      0.046408
+     ],
+     [
+      0.019374,
+      0.030112,
+      0.999359,
+      0.021098
+     ],
+     [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+     ]
+    ]
+   },
+   "stage": 0,
+   "triads": [
+    {
+     "axes_drawn": [
+      "front_axis",
+      "lateral_axis",
+      "up_axis"
+     ],
+     "directions": [
+      "+front",
+      "-front",
+      "+left",
+      "-left",
+      "+up",
+      "-up"
+     ],
+     "object": "teapot",
+     "point": "teapot.handle_center",
+     "point_body": [
+      -0.0666,
+      0.0095,
+      0.0294
+     ],
+     "role_in_stage": "w_owner"
+    }
+   ],
+   "w": {
+    "candidate_id": 2,
+    "fallback": false,
+    "merged": {
+     "x": "teapot.front_axis",
+     "y": "teapot.lateral_axis",
+     "z": "teapot.up_axis"
+    },
+    "object": "teapot",
+    "point": "teapot.handle_center",
+    "point_body": [
+     -0.0666,
+     0.0095,
+     0.0294
+    ],
+    "x_route": "teapot.front_axis"
+   },
+   "w_axes_world": {
+    "x": [
+     0.09625578552634631,
+     -0.9951680621254897,
+     0.019374000054293124
+    ],
+    "y": [
+     0.9948471638330814,
+     0.09681097708007885,
+     0.030112378353025368
+    ],
+    "z": [
+     -0.031842493086775406,
+     0.016375678373678523,
+     0.9993587407892228
+    ]
+   },
+   "w_origin_world": [
+    0.4052680799823038,
+    0.11408777265792175,
+    0.049474826527273905
+   ]
+  },
+  "pour": {
+   "active": "teapot",
+   "entry_from": "lift and move teapot above mug.subgoal.nominal",
+   "name": "tilt teapot to pour tea into mug",
+   "passive": "mug",
+   "poses": {
+    "mug": [
+     [
+      0.214199,
+      -0.976327,
+      -0.030067,
+      0.381673
+     ],
+     [
+      0.976046,
+      0.212733,
+      0.045589,
+      -0.330863
+     ],
+     [
+      -0.038113,
+      -0.039111,
+      0.998508,
+      0.027194
+     ],
+     [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+     ]
+    ],
+    "teapot": [
+     [
+      0.096564,
+      0.995327,
+      -0.0,
+      0.374364
+     ],
+     [
+      -0.995327,
+      0.096564,
+      0.0,
+      -0.411919
+     ],
+     [
+      0.0,
+      0.0,
+      1.0,
+      0.070305
+     ],
+     [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+     ]
+    ]
+   },
+   "stage": 2,
+   "triads": [
+    {
+     "axes_drawn": [
+      "front_axis",
+      "lateral_axis",
+      "up_axis"
+     ],
+     "directions": [
+      "+front",
+      "-front",
+      "+left",
+      "-left",
+      "+up",
+      "-up"
+     ],
+     "object": "mug",
+     "point": "mug.rim_center",
+     "point_body": [
+      -0.0131,
+      -0.0011,
+      0.041
+     ],
+     "role_in_stage": "w_owner"
+    },
+    {
+     "axes_drawn": [
+      "front_axis",
+      "lateral_axis",
+      "up_axis"
+     ],
+     "directions": [
+      "+front",
+      "-front",
+      "+left",
+      "-left",
+      "+up",
+      "-up"
+     ],
+     "object": "teapot",
+     "point": "teapot.spout_center",
+     "point_body": [
+      0.0658,
+      -0.0328,
+      0.0069
+     ],
+     "role_in_stage": "active"
+    }
+   ],
+   "w": {
+    "candidate_id": 1,
+    "fallback": false,
+    "merged": {
+     "x": "mug.front_axis",
+     "y": "mug.lateral_axis",
+     "z": "mug.up_axis"
+    },
+    "object": "mug",
+    "point": "mug.rim_center",
+    "point_body": [
+     -0.0131,
+     -0.0011,
+     0.041
+    ],
+    "x_route": "mug.front_axis"
+   },
+   "w_axes_world": {
+    "x": [
+     0.2141988120731594,
+     0.9760462259917283,
+     -0.03811343114640777
+    ],
+    "y": [
+     -0.9763272346080382,
+     0.21273322588571686,
+     -0.03911145058519059
+    ],
+    "z": [
+     -0.03006659057938876,
+     0.04558880708640212,
+     0.9985077169453277
+    ]
+   },
+   "w_origin_world": [
+    0.3787079615497255,
+    -0.34201360812108844,
+    0.0686748784688586
+   ]
+  },
+  "transport_active": {
+   "active": "teapot",
+   "entry_from": "measured",
+   "name": "lift and move teapot above mug",
+   "passive": "mug",
+   "poses": {
+    "mug": [
+     [
+      0.214199,
+      -0.976327,
+      -0.030067,
+      0.381673
+     ],
+     [
+      0.976046,
+      0.212733,
+      0.045589,
+      -0.330863
+     ],
+     [
+      -0.038113,
+      -0.039111,
+      0.998508,
+      0.027194
+     ],
+     [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+     ]
+    ],
+    "teapot": [
+     [
+      0.096256,
+      0.994847,
+      -0.031842,
+      0.403164
+     ],
+     [
+      -0.995168,
+      0.096811,
+      0.016376,
+      0.046408
+     ],
+     [
+      0.019374,
+      0.030112,
+      0.999359,
+      0.021098
+     ],
+     [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+     ]
+    ]
+   },
+   "stage": 1,
+   "triads": [
+    {
+     "axes_drawn": [
+      "front_axis",
+      "lateral_axis",
+      "up_axis"
+     ],
+     "directions": [
+      "+front",
+      "-front",
+      "+left",
+      "-left",
+      "+up",
+      "-up"
+     ],
+     "object": "mug",
+     "point": "mug.rim_center",
+     "point_body": [
+      -0.0131,
+      -0.0011,
+      0.041
+     ],
+     "role_in_stage": "w_owner"
+    },
+    {
+     "axes_drawn": [
+      "front_axis",
+      "lateral_axis",
+      "up_axis"
+     ],
+     "directions": [
+      "+front",
+      "-front",
+      "+left",
+      "-left",
+      "+up",
+      "-up"
+     ],
+     "object": "teapot",
+     "point": "teapot.handle_center",
+     "point_body": [
+      -0.0666,
+      0.0095,
+      0.0294
+     ],
+     "role_in_stage": "active"
+    }
+   ],
+   "w": {
+    "candidate_id": 1,
+    "fallback": false,
+    "merged": {
+     "x": "mug.front_axis",
+     "y": "mug.lateral_axis",
+     "z": "mug.up_axis"
+    },
+    "object": "mug",
+    "point": "mug.rim_center",
+    "point_body": [
+     -0.0131,
+     -0.0011,
+     0.041
+    ],
+    "x_route": "mug.front_axis"
+   },
+   "w_axes_world": {
+    "x": [
+     0.2141988120731594,
+     0.9760462259917283,
+     -0.03811343114640777
+    ],
+    "y": [
+     -0.9763272346080382,
+     0.21273322588571686,
+     -0.03911145058519059
+    ],
+    "z": [
+     -0.03006659057938876,
+     0.04558880708640212,
+     0.9985077169453277
+    ]
+   },
+   "w_origin_world": [
+    0.3787079615497255,
+    -0.34201360812108844,
+    0.0686748784688586
+   ]
+  }
+ },
+ "geometry": {
+  "transport_active": {
+   "at": "subgoal center (TSR.nominal)",
+   "pinned": "teapot.handle_center",
+   "points": {
+    "base_center": {
+     "height_m": -0.0292,
+     "horizontal_m": 0.0536
+    },
+    "body_center": {
+     "height_m": 0.0059,
+     "horizontal_m": 0.0813
+    },
+    "handle_center": {
+     "height_m": 0.031,
+     "horizontal_m": 0.003
+    },
+    "lid_center": {
+     "height_m": -0.0302,
+     "horizontal_m": 0.0419
+    },
+    "spout_center": {
+     "height_m": 0.0085,
+     "horizontal_m": 0.1419
+    }
+   },
+   "w_origin_base": [
+    0.3787,
+    -0.342,
+    0.0687
+   ]
+  }
+ },
+ "measured_poses": {
+  "mug": [
+   [
+    0.214199,
+    -0.976327,
+    -0.030067,
+    0.381673
+   ],
+   [
+    0.976046,
+    0.212733,
+    0.045589,
+    -0.330863
+   ],
+   [
+    -0.038113,
+    -0.039111,
+    0.998508,
+    0.027194
+   ],
+   [
+    0.0,
+    0.0,
+    0.0,
+    1.0
+   ]
+  ],
+  "teapot": [
+   [
+    0.096256,
+    0.994847,
+    -0.031842,
+    0.403164
+   ],
+   [
+    -0.995168,
+    0.096811,
+    0.016376,
+    0.046408
+   ],
+   [
+    0.019374,
+    0.030112,
+    0.999359,
+    0.021098
+   ],
+   [
+    0.0,
+    0.0,
+    0.0,
+    1.0
+   ]
+  ]
+ },
+ "plan_sha": "476f07ea",
+ "requests": 0,
+ "roles": [
+  "grasp",
+  "transport_active",
+  "pour"
+ ],
+ "stages_reached": 3,
+ "stages_total": 3
+}

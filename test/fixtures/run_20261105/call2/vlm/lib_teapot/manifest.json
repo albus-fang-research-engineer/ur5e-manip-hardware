@@ -1,0 +1,91 @@
+{
+  "object": "lib_teapot",
+  "source": "/data/runs/20261105_035449/grounding_vlm/canon/lib_teapot/candidates.json",
+  "parts_filter": [
+    "handle",
+    "body",
+    "lid",
+    "spout",
+    "base"
+  ],
+  "ids": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    13
+  ],
+  "menu": {
+    "0": "constructed base_center (base)",
+    "1": "constructed body_center (body)",
+    "2": "constructed handle_center (handle)",
+    "3": "constructed lid_center (lid)",
+    "4": "constructed spout_center (spout)",
+    "5": "part:base",
+    "6": "part:base",
+    "13": "part:body"
+  },
+  "views": {
+    "+x": {
+      "path": "/data/runs/20261105_035449/call2/vlm/lib_teapot/px.png",
+      "visible_ids": [
+        6
+      ]
+    },
+    "-x": {
+      "path": "/data/runs/20261105_035449/call2/vlm/lib_teapot/nx.png",
+      "visible_ids": [
+        5,
+        13
+      ]
+    },
+    "+y": {
+      "path": "/data/runs/20261105_035449/call2/vlm/lib_teapot/py.png",
+      "visible_ids": [
+        2,
+        13
+      ]
+    },
+    "-y": {
+      "path": "/data/runs/20261105_035449/call2/vlm/lib_teapot/ny.png",
+      "visible_ids": [
+        2
+      ]
+    },
+    "top": {
+      "path": "/data/runs/20261105_035449/call2/vlm/lib_teapot/top.png",
+      "visible_ids": [
+        0,
+        1,
+        6,
+        13
+      ]
+    },
+    "bottom": {
+      "path": "/data/runs/20261105_035449/call2/vlm/lib_teapot/bottom.png",
+      "visible_ids": [
+        0,
+        3,
+        5,
+        6
+      ]
+    },
+    "iso": {
+      "path": "/data/runs/20261105_035449/call2/vlm/lib_teapot/iso.png",
+      "visible_ids": [
+        2,
+        6
+      ]
+    },
+    "iso-opp": {
+      "path": "/data/runs/20261105_035449/call2/vlm/lib_teapot/isonopp.png",
+      "visible_ids": [
+        2,
+        5
+      ]
+    }
+  }
+}

@@ -1,0 +1,158 @@
+{
+  "object": "lib_mug",
+  "units": "meters",
+  "coordinates": "body frame of mjcf body 'object' (what PoseReader returns)",
+  "schema": "grounding symbol table: independent interaction POINTS and semantic AXES; frames are composed downstream as frame(origin=<point>, axis=<axis>). Axis -> frame +z. up_axis/front_axis/lateral_axis are the canonical frame.",
+  "provenance": {
+    "producer": "manip_sim.part_grounding",
+    "mask_provider": "masks",
+    "parts": {
+      "rim": {
+        "primitive": "ring",
+        "n_points": 619,
+        "rms_m": 0.00187,
+        "sigma_deg": 0.09,
+        "note": "arc 100%"
+      },
+      "opening": {
+        "primitive": "blob",
+        "n_points": 1636,
+        "rms_m": 0.04095,
+        "sigma_deg": null,
+        "note": "outward axis only"
+      },
+      "interior": {
+        "primitive": "blob",
+        "n_points": 417,
+        "rms_m": 0.03949,
+        "sigma_deg": null,
+        "note": "outward axis only"
+      }
+    },
+    "depth_semantics": {
+      "method": "generalized winding number w.r.t. the grounding mesh",
+      "inside_threshold": 0.5,
+      "inconsistent_edges": 544,
+      "flipped_edges": 0,
+      "pinch_edges": 272,
+      "boundary_edges": 9,
+      "non_manifold_edges": 272,
+      "merged_vertices": 232112,
+      "vertices": 305658
+    },
+    "views": {
+      "+x": "/data/runs/20261105_035449/grounding_vlm/canon/lib_mug/views/px.png",
+      "-x": "/data/runs/20261105_035449/grounding_vlm/canon/lib_mug/views/nx.png",
+      "+y": "/data/runs/20261105_035449/grounding_vlm/canon/lib_mug/views/py.png",
+      "-y": "/data/runs/20261105_035449/grounding_vlm/canon/lib_mug/views/ny.png",
+      "top": "/data/runs/20261105_035449/grounding_vlm/canon/lib_mug/views/top.png",
+      "bottom": "/data/runs/20261105_035449/grounding_vlm/canon/lib_mug/views/bottom.png",
+      "iso": "/data/runs/20261105_035449/grounding_vlm/canon/lib_mug/views/iso.png",
+      "iso-opp": "/data/runs/20261105_035449/grounding_vlm/canon/lib_mug/views/isonopp.png"
+    }
+  },
+  "points": {
+    "rim_center": {
+      "xyz": [
+        -0.0131,
+        -0.0011,
+        0.041
+      ],
+      "status": "grounded",
+      "comment": "ring fit, rms 1.9 mm",
+      "depth_check": "skip",
+      "winding": -0.0
+    },
+    "opening_center": {
+      "xyz": [
+        -0.0172,
+        -0.0016,
+        0.0369
+      ],
+      "status": "grounded",
+      "comment": "blob fit, rms 40.9 mm",
+      "depth_check": "skip",
+      "winding": -0.0
+    },
+    "interior_center": {
+      "xyz": [
+        0.0005,
+        -0.0044,
+        0.0265
+      ],
+      "status": "grounded",
+      "comment": "blob fit, rms 39.5 mm",
+      "depth_check": "skip",
+      "winding": -0.0
+    }
+  },
+  "axes": {
+    "up_axis": {
+      "xyz": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "status": "grounded",
+      "comment": "canonical frame: rest up, supplied by the pose source",
+      "sigma_deg": 1.68
+    },
+    "front_axis": {
+      "xyz": [
+        1.0,
+        0.0,
+        0.0
+      ],
+      "status": "grounded",
+      "comment": "canonical frame: front, supplied by the caller (scene facing / Orient Anything)",
+      "sigma_deg": 20.06
+    },
+    "lateral_axis": {
+      "xyz": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "status": "grounded",
+      "comment": "canonical frame: up x front",
+      "sigma_deg": 20.13
+    },
+    "rim_axis": {
+      "xyz": [
+        0.026,
+        -0.0072,
+        0.9996
+      ],
+      "status": "grounded",
+      "comment": "ring fit, rms 1.9 mm, sigma 0.1 deg",
+      "sigma_deg": 0.09
+    },
+    "opening_axis": {
+      "xyz": [
+        -0.3619,
+        -0.0332,
+        0.9316
+      ],
+      "status": "grounded",
+      "comment": "blob fit, rms 40.9 mm",
+      "sigma_deg": null
+    },
+    "interior_axis": {
+      "xyz": [
+        0.0957,
+        -0.1477,
+        0.9844
+      ],
+      "status": "grounded",
+      "comment": "blob fit, rms 39.5 mm",
+      "sigma_deg": null
+    }
+  },
+  "quantities": {
+    "rim_radius": {
+      "value": 0.0445,
+      "status": "grounded",
+      "comment": "ring fit, rms 1.9 mm"
+    }
+  }
+}

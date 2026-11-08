@@ -1,0 +1,19 @@
+{
+  "model": "claude-opus-5",
+  "task": "pour tea into the mug",
+  "client_logs": [
+    {
+      "touchpoint": "plan_stages",
+      "attempts": 1,
+      "rejections": [],
+      "flags": [],
+      "raw": "{\"objects\": {\"1\": \"red mug\", \"2\": \"teal teapot\"}, \"stages\": [{\"name\": \"grasp teapot by handle\", \"active\": 2, \"passive\": null, \"parts\": {\"2\": [\"handle\", \"body\", \"lid\"]}}, {\"name\": \"lift and move teapot above mug\", \"active\": 2, \"passive\": 1, \"parts\": {\"2\": [\"spout\", \"body\", \"handle\"], \"1\": [\"rim\", \"opening\"]}}, {\"name\": \"tilt teapot to pour tea into mug\", \"active\": 2, \"passive\": 1, \"parts\": {\"2\": [\"spout\", \"handle\", \"body\"], \"1\": [\"rim\", \"opening\", \"interior\"]}}, {\"name\": \"upright teapot and place back on table\", \"active\": 2, \"passive\": null, \"parts\": {\"2\": [\"body\", \"base\", \"handle\"]}}]}",
+      "views": 0,
+      "legend": false,
+      "entry": false
+    }
+  ],
+  "raw_responses": [
+    "{\"objects\": {\"1\": \"red mug\", \"2\": \"teal teapot\"}, \"stages\": [{\"name\": \"grasp teapot by handle\", \"active\": 2, \"passive\": null, \"parts\": {\"2\": [\"handle\", \"body\", \"lid\"]}}, {\"name\": \"lift and move teapot above mug\", \"active\": 2, \"passive\": 1, \"parts\": {\"2\": [\"spout\", \"body\", \"handle\"], \"1\": [\"rim\", \"opening\"]}}, {\"name\": \"tilt teapot to pour tea into mug\", \"active\": 2, \"passive\": 1, \"parts\": {\"2\": [\"spout\", \"handle\", \"body\"], \"1\": [\"rim\", \"opening\", \"interior\"]}}, {\"name\": \"upright teapot and place back on table\", \"active\": 2, \"passive\": null, \"parts\": {\"2\": [\"body\", \"base\", \"handle\"]}}]}"
+  ]
+}

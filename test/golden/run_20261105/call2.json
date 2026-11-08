@@ -1,0 +1,253 @@
+{
+ "client_logs": [
+  {
+   "attempts": 1,
+   "rejections": [],
+   "touchpoint": "select_point_axis"
+  },
+  {
+   "attempts": 1,
+   "rejections": [],
+   "touchpoint": "select_point_axis"
+  },
+  {
+   "attempts": 1,
+   "rejections": [],
+   "touchpoint": "select_point_axis"
+  },
+  {
+   "attempts": 1,
+   "rejections": [],
+   "touchpoint": "select_point_axis"
+  }
+ ],
+ "exit": 0,
+ "failure": null,
+ "menus": {
+  "mug": {
+   "0": "constructed interior_center (interior)",
+   "1": "constructed rim_center (rim)",
+   "10": "part:opening",
+   "13": "part:opening",
+   "17": "part:rim",
+   "18": "part:rim",
+   "2": "part:interior",
+   "3": "part:interior"
+  },
+  "teapot": {
+   "0": "constructed base_center (base)",
+   "1": "constructed body_center (body)",
+   "13": "part:body",
+   "2": "constructed handle_center (handle)",
+   "3": "constructed lid_center (lid)",
+   "4": "constructed spout_center (spout)",
+   "5": "part:base",
+   "6": "part:base"
+  }
+ },
+ "model": "claude-opus-5",
+ "parts": {
+  "mug": [
+   "rim",
+   "opening",
+   "interior"
+  ],
+  "teapot": [
+   "handle",
+   "body",
+   "lid",
+   "spout",
+   "base"
+  ]
+ },
+ "plan_sha": "476f07ea",
+ "resolved": {
+  "grasp": {
+   "axis_source": "frames.json; point-only default, not VLM-selected",
+   "candidate_id": 2,
+   "frame_comment": "selection: mark 2 [constructed handle_center (handle)], axis +lib_teapot.up_axis (frames.json; point-only default, not VLM-selected), secondary default",
+   "in_image": true,
+   "in_outline": null,
+   "key": "m2",
+   "menu_tag": "constructed handle_center (handle)",
+   "object": "teapot",
+   "pixel": [
+    574,
+    232
+   ],
+   "point": "handle_center",
+   "xyz_body": [
+    -0.026738,
+    0.007019,
+    -0.068014
+   ],
+   "xyz_canonical": [
+    -0.0666,
+    0.0095,
+    0.0294
+   ]
+  },
+  "pour": {
+   "axis_source": "frames.json; point-only default, not VLM-selected",
+   "candidate_id": 4,
+   "frame_comment": "selection: mark 4 [constructed spout_center (spout)], axis +lib_teapot.up_axis (frames.json; point-only default, not VLM-selected), secondary default",
+   "in_image": true,
+   "in_outline": null,
+   "key": "m2",
+   "menu_tag": "constructed spout_center (spout)",
+   "object": "teapot",
+   "pixel": [
+    420,
+    235
+   ],
+   "point": "spout_center",
+   "xyz_body": [
+    0.000787,
+    0.027441,
+    0.068553
+   ],
+   "xyz_canonical": [
+    0.0658,
+    -0.0328,
+    0.0069
+   ]
+  },
+  "transport_active": {
+   "axis_source": "frames.json; point-only default, not VLM-selected",
+   "candidate_id": 2,
+   "frame_comment": "selection: mark 2 [constructed handle_center (handle)], axis +lib_teapot.up_axis (frames.json; point-only default, not VLM-selected), secondary default",
+   "in_image": true,
+   "in_outline": null,
+   "key": "m2",
+   "menu_tag": "constructed handle_center (handle)",
+   "object": "teapot",
+   "pixel": [
+    574,
+    232
+   ],
+   "point": "handle_center",
+   "xyz_body": [
+    -0.026738,
+    0.007019,
+    -0.068014
+   ],
+   "xyz_canonical": [
+    -0.0666,
+    0.0095,
+    0.0294
+   ]
+  },
+  "transport_passive": {
+   "axis_source": "frames.json; point-only default, not VLM-selected",
+   "candidate_id": 1,
+   "frame_comment": "selection: mark 1 [constructed rim_center (rim)], axis +lib_mug.up_axis (frames.json; point-only default, not VLM-selected), secondary default",
+   "in_image": true,
+   "in_outline": null,
+   "key": "m1",
+   "menu_tag": "constructed rim_center (rim)",
+   "object": "mug",
+   "pixel": [
+    77,
+    200
+   ],
+   "point": "rim_center",
+   "xyz_body": [
+    -0.011916,
+    0.041374,
+    -0.000193
+   ],
+   "xyz_canonical": [
+    -0.0131,
+    -0.0011,
+    0.041
+   ]
+  }
+ },
+ "selections": {
+  "grasp": {
+   "axis": null,
+   "candidate_id": 2,
+   "object": "teapot",
+   "rationale": "The grasp is anchored on the handle; candidate 2 is the handle center, located in the handle loop where fingers would wrap.",
+   "secondary": null,
+   "sign": "+"
+  },
+  "pour": {
+   "axis": null,
+   "candidate_id": 4,
+   "object": "teapot",
+   "rationale": "Pouring is anchored at the spout tip, where the tea exits and must be aimed over the mug; candidate 4 marks the spout.",
+   "secondary": null,
+   "sign": "+"
+  },
+  "transport_active": {
+   "axis": null,
+   "candidate_id": 2,
+   "object": "teapot",
+   "rationale": "Lifting the teapot is anchored at the handle, the intended grasp affordance; candidate 2 is the handle center.",
+   "secondary": null,
+   "sign": "+"
+  },
+  "transport_passive": {
+   "axis": null,
+   "candidate_id": 1,
+   "object": "mug",
+   "rationale": "Positioning the teapot above the mug targets the mug's opening; the constructed rim center (1) is the axis point at the plane of the rim, the natural anchor for hovering the spout over the cup.",
+   "secondary": null,
+   "sign": "+"
+  }
+ },
+ "stages": {
+  "grasp": {
+   "active": "teapot",
+   "index": 0,
+   "name": "grasp teapot by handle",
+   "parts": {
+    "teapot": [
+     "handle",
+     "body",
+     "lid"
+    ]
+   },
+   "passive": null
+  },
+  "pour": {
+   "active": "teapot",
+   "index": 2,
+   "name": "tilt teapot to pour tea into mug",
+   "parts": {
+    "teapot": [
+     "spout",
+     "handle",
+     "body"
+    ]
+   },
+   "passive": "mug"
+  },
+  "transport_active": {
+   "active": "teapot",
+   "index": 1,
+   "name": "lift and move teapot above mug",
+   "parts": {
+    "teapot": [
+     "spout",
+     "body",
+     "handle"
+    ]
+   },
+   "passive": "mug"
+  },
+  "transport_passive": {
+   "active": "teapot",
+   "index": 1,
+   "name": "lift and move teapot above mug",
+   "parts": {
+    "mug": [
+     "rim",
+     "opening"
+    ]
+   },
+   "passive": "mug"
+  }
+ }
+}

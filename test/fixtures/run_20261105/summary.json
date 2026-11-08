@@ -1,0 +1,1517 @@
+{
+  "out": "/data/runs/20261105_035449",
+  "objects": {
+    "m1": {
+      "mark": 1,
+      "final_mesh_override": "/data/any6d/lib_mug.obj",
+      "oriany": {
+        "role": "diagnostic (square-padded framing; not read by the decider)",
+        "azimuth": 284.0,
+        "elevation": 27.0,
+        "rotation": 0.0,
+        "alpha": 2,
+        "matting": false,
+        "bbox_xyxy": [
+          19,
+          178,
+          159,
+          295
+        ],
+        "R_cam": [
+          [
+            0.9702957143321205,
+            0.24192194350393323,
+            -9.60818744011327e-10
+          ],
+          [
+            0.10983026735388865,
+            -0.4405050531176486,
+            -0.891006515436779
+          ],
+          [
+            -0.21555402831237835,
+            0.864539803264776,
+            -0.4539905169155069
+          ]
+        ]
+      },
+      "pose_on_final": {
+        "cam_T_obj": [
+          [
+            0.9953531139314896,
+            0.0347944654289079,
+            0.08978598867531656,
+            -0.21394342184066772
+          ],
+          [
+            -0.012436427619980027,
+            -0.8781719930006681,
+            0.4781833183803968,
+            -0.002465646481141448
+          ],
+          [
+            0.09548567355860532,
+            -0.47707787192946965,
+            -0.8736585089497545,
+            0.573218822479248
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "mesh": "/data/any6d/lib_mug.obj",
+        "decide": true
+      },
+      "decision": {
+        "version": 1,
+        "rerank": {
+          "enabled": true,
+          "changed": true,
+          "reason": "re-ranked",
+          "from_rank": 0,
+          "to_rank": 1,
+          "rotation_deg": 128.78318811868718,
+          "expl_from": 0.0,
+          "expl_to": 0.852112676056338,
+          "n_survivors": 8,
+          "mask_px": 2772,
+          "u_px_raw": 225,
+          "u_px": 142,
+          "u_frac": 0.051226551226551224,
+          "u_depth_dropped": 17,
+          "dilate_px": 1,
+          "depth_band_m": 0.06386036476611569,
+          "max_expl": 0.9577464788732394,
+          "scorer_from": 97.16015625,
+          "scorer_to": 97.1015625,
+          "depth_bad_from": 0.048525214081826834,
+          "depth_bad_to": 0.059113300492610835,
+          "n_gated": 29,
+          "max_expl_gated": 0.8873239436619719,
+          "survivors": [
+            1,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9
+          ]
+        },
+        "sidecar_rank": 1,
+        "crop_box": [
+          139,
+          333,
+          0,
+          185
+        ],
+        "crop_box_source": "sidecar",
+        "crop_box_match": true,
+        "oa_real": {
+          "alpha": 2,
+          "front_cam": [
+            0.9848076701164246,
+            0.07883483171463013,
+            -0.15472206473350525
+          ],
+          "up_cam": [
+            0.0,
+            -0.8910065293312073,
+            -0.45399051904678345
+          ],
+          "R_cam": [
+            [
+              0.9848076701164246,
+              0.1736486256122589,
+              0.0
+            ],
+            [
+              0.07883483171463013,
+              -0.44709333777427673,
+              -0.8910065293312073
+            ],
+            [
+              -0.15472206473350525,
+              0.877470076084137,
+              -0.45399051904678345
+            ]
+          ]
+        },
+        "rows": [
+          {
+            "rank": 1,
+            "geo": 64.02794206925029,
+            "up": 1.9999646476167285,
+            "yaw": 63.983415950081906,
+            "yaw_abs": 63.983415950081906,
+            "alpha": 4
+          },
+          {
+            "rank": 3,
+            "geo": 64.02794206925029,
+            "up": 1.9999646476167285,
+            "yaw": 63.983415950081906,
+            "yaw_abs": 63.983415950081906,
+            "alpha": 4
+          },
+          {
+            "rank": 4,
+            "geo": 64.02794206925029,
+            "up": 1.9999646476167285,
+            "yaw": 63.983415950081906,
+            "yaw_abs": 63.983415950081906,
+            "alpha": 4
+          },
+          {
+            "rank": 5,
+            "geo": 64.02794206925029,
+            "up": 1.9999646476167285,
+            "yaw": 63.983415950081906,
+            "yaw_abs": 63.983415950081906,
+            "alpha": 4
+          },
+          {
+            "rank": 6,
+            "geo": 64.02794206925029,
+            "up": 1.9999646476167285,
+            "yaw": 63.983415950081906,
+            "yaw_abs": 63.983415950081906,
+            "alpha": 0
+          },
+          {
+            "rank": 7,
+            "geo": 64.02794206925029,
+            "up": 1.9999646476167285,
+            "yaw": 63.983415950081906,
+            "yaw_abs": 63.983415950081906,
+            "alpha": 0
+          },
+          {
+            "rank": 8,
+            "geo": 64.02794206925029,
+            "up": 1.9999646476167285,
+            "yaw": 63.983415950081906,
+            "yaw_abs": 63.983415950081906,
+            "alpha": 4
+          },
+          {
+            "rank": 9,
+            "geo": 155.00389103464457,
+            "up": 1.9999646476167285,
+            "yaw": 155.0164255942093,
+            "yaw_abs": 155.0164255942093,
+            "alpha": 4
+          }
+        ],
+        "decider": "scorer",
+        "note": "no survivor reads within 30 deg of the real crop (best: rank 1 at 64)",
+        "chosen_rank": 1,
+        "decider_fired": false,
+        "hard_stop": false,
+        "reason": "oa_no_agreement",
+        "agreement_deg": null,
+        "corroboration": null,
+        "params": {
+          "fire_yaw_deg": {
+            "value": 30.0,
+            "basis": "n=1 (mug, 20260926_234500): correct pose 13 deg, wrong 72-108 deg"
+          },
+          "ambig_yaw_deg": {
+            "value": 20.0,
+            "basis": "provisional: no flipped survivor observed yet"
+          },
+          "family_deg": {
+            "value": 30.0,
+            "basis": "n=1: one family's survivors read -13/-9 deg; wrong poses were >= 59 deg away"
+          }
+        },
+        "front": {
+          "source": "oriany_real_crop",
+          "alpha_reported": 2,
+          "front_body": [
+            0.9644772663185319,
+            0.03884980231487378,
+            0.26129368791760355
+          ],
+          "up_body": [
+            -0.03226863790515727,
+            0.9990459186771616,
+            -0.02943180243532595
+          ],
+          "independent": true,
+          "note": "independent of the yaw choice; Orient Anything reports alpha 2 (front up to 180 deg) -- self-reported folds were unreliable on the mug, whose correct front read alpha 2"
+        }
+      },
+      "copied": {
+        "final_mesh": "/data/runs/20261105_035449/objects/m1/lib_mug.obj"
+      }
+    },
+    "m2": {
+      "mark": 2,
+      "final_mesh_override": "/data/any6d/lib_teapot.obj",
+      "oriany": {
+        "role": "diagnostic (square-padded framing; not read by the decider)",
+        "azimuth": 81.0,
+        "elevation": 26.0,
+        "rotation": 0.0,
+        "alpha": 1,
+        "matting": false,
+        "bbox_xyxy": [
+          405,
+          205,
+          596,
+          306
+        ],
+        "R_cam": [
+          [
+            -0.9876883369651952,
+            0.15643448795878415,
+            -1.1067995825397858e-09
+          ],
+          [
+            0.06857636906807443,
+            0.43297408269088594,
+            -0.8987940394347446
+          ],
+          [
+            -0.14060238486016596,
+            -0.8877283901594332,
+            -0.43837116086322897
+          ]
+        ]
+      },
+      "pose_on_final": {
+        "cam_T_obj": [
+          [
+            -0.3439792299704335,
+            -0.2776694129138291,
+            -0.8969827124761309,
+            0.1636875718832016
+          ],
+          [
+            0.5955154104853175,
+            -0.8030890584791462,
+            0.02023264751787629,
+            0.01249095518141985
+          ],
+          [
+            -0.7259749893925078,
+            -0.5272074177049944,
+            0.4416023703439331,
+            0.5751008987426758
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "mesh": "/data/any6d/lib_teapot.obj",
+        "decide": true
+      },
+      "decision": {
+        "version": 1,
+        "rerank": {
+          "enabled": true,
+          "changed": true,
+          "reason": "re-ranked",
+          "from_rank": 0,
+          "to_rank": 26,
+          "rotation_deg": 18.013528747761043,
+          "expl_from": 0.0,
+          "expl_to": 0.4065934065934066,
+          "n_survivors": 3,
+          "mask_px": 2842,
+          "u_px_raw": 238,
+          "u_px": 91,
+          "u_frac": 0.03201970443349754,
+          "u_depth_dropped": 16,
+          "dilate_px": 1,
+          "depth_band_m": 0.09280432681048414,
+          "max_expl": 0.7142857142857143,
+          "scorer_from": 108.9453125,
+          "scorer_to": 108.7265625,
+          "depth_bad_from": 0.02549800796812749,
+          "depth_bad_to": 0.05369928400954654,
+          "n_gated": 29,
+          "max_expl_gated": 0.6593406593406593,
+          "survivors": [
+            26,
+            27,
+            28
+          ]
+        },
+        "sidecar_rank": 26,
+        "crop_box": [
+          122,
+          388,
+          367,
+          633
+        ],
+        "crop_box_source": "sidecar",
+        "crop_box_match": true,
+        "oa_real": {
+          "alpha": 1,
+          "front_cam": [
+            -0.9873356819152832,
+            0.0017602816224098206,
+            -0.1586354374885559
+          ],
+          "up_cam": [
+            0.06372570246458054,
+            -0.9113200306892395,
+            -0.4067366421222687
+          ],
+          "R_cam": [
+            [
+              -0.9873356819152832,
+              0.14528363943099976,
+              0.06372570246458054
+            ],
+            [
+              0.0017602816224098206,
+              0.41169473528862,
+              -0.9113200306892395
+            ],
+            [
+              -0.1586354374885559,
+              -0.8996666669845581,
+              -0.4067366421222687
+            ]
+          ]
+        },
+        "rows": [
+          {
+            "rank": 26,
+            "geo": 9.512929826773973,
+            "up": 4.693545897274182,
+            "yaw": -8.37084224486423,
+            "yaw_abs": 8.37084224486423,
+            "alpha": 1
+          },
+          {
+            "rank": 27,
+            "geo": 9.609940458424111,
+            "up": 2.7183663576383768,
+            "yaw": -9.186248815991075,
+            "yaw_abs": 9.186248815991075,
+            "alpha": 1
+          },
+          {
+            "rank": 28,
+            "geo": 13.140177838249164,
+            "up": 4.693499374485084,
+            "yaw": -12.372764146360604,
+            "yaw_abs": 12.372764146360604,
+            "alpha": 1
+          }
+        ],
+        "decider": "oriany",
+        "note": "",
+        "chosen_rank": 26,
+        "decider_fired": true,
+        "hard_stop": false,
+        "reason": "oriany_agrees",
+        "agreement_deg": 8.37084224486423,
+        "corroboration": null,
+        "params": {
+          "fire_yaw_deg": {
+            "value": 30.0,
+            "basis": "n=1 (mug, 20260926_234500): correct pose 13 deg, wrong 72-108 deg"
+          },
+          "ambig_yaw_deg": {
+            "value": 20.0,
+            "basis": "provisional: no flipped survivor observed yet"
+          },
+          "family_deg": {
+            "value": 30.0,
+            "basis": "n=1: one family's survivors read -13/-9 deg; wrong poses were >= 59 deg away"
+          }
+        },
+        "front": {
+          "source": "oriany_real_crop",
+          "alpha_reported": 1,
+          "front_body": [
+            0.45583658994320286,
+            0.35637305481325265,
+            0.8156048244865768
+          ],
+          "up_body": [
+            -0.2693448080284935,
+            0.928611069087717,
+            -0.2552151094797823
+          ],
+          "independent": true,
+          "note": "independent of the yaw choice"
+        }
+      },
+      "copied": {
+        "final_mesh": "/data/runs/20261105_035449/objects/m2/lib_teapot.obj"
+      }
+    }
+  },
+  "packet": {
+    "version": 1,
+    "source": {
+      "from_run": "/data/runs/20261105_033951"
+    },
+    "params": {
+      "n_frames": {
+        "value": 10,
+        "basis": "provisional: ~0.33 s at 30 Hz; static scene assumed and checked"
+      },
+      "min_valid_frac": {
+        "value": 0.5,
+        "basis": "provisional: a pixel valid in fewer than half the frames is a hole"
+      },
+      "unstable_m": {
+        "value": 0.02,
+        "basis": "provisional: per-pixel depth range across N that counts as motion"
+      },
+      "still_tol_rad": {
+        "value": 0.005,
+        "basis": "provisional: ~0.3 deg total joint displacement over the frame span"
+      },
+      "plane_up_warn_deg": {
+        "value": 5.0,
+        "basis": "provisional: table normal vs base +z; warn only"
+      },
+      "sync_warn_s": {
+        "value": 0.02,
+        "basis": "provisional: RGB->depth pair delta worth a warning"
+      },
+      "joint_dt_warn_s": {
+        "value": 0.05,
+        "basis": "provisional: RGB->joint_states delta worth a warning"
+      },
+      "tf_dt_warn_s": {
+        "value": 0.1,
+        "basis": "provisional: RGB->TF delta worth a warning (static TF: n/a)"
+      }
+    },
+    "depth": {
+      "rgb_topic": "/camera/camera/color/image_raw",
+      "depth_topic": "/camera/camera/aligned_depth_to_color/image_raw",
+      "info_topic": "/camera/camera/color/camera_info",
+      "rgb_frame_id": "camera_color_optical_frame",
+      "depth_frame_id": "camera_color_optical_frame",
+      "info_frame_id": "camera_color_optical_frame",
+      "size": [
+        640,
+        480
+      ],
+      "encoding": "16UC1",
+      "scale_m_per_unit": 0.001,
+      "distortion_model": "plumb_bob",
+      "D": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "distortion_nonzero": false,
+      "aligned": true,
+      "note": "recorded by the source run (live)",
+      "median": {
+        "n": 1,
+        "min_valid_samples": 1,
+        "valid_frac": 0.8272200520833334,
+        "any_sample_valid_frac": 0.8272200520833334,
+        "unstable_frac": 0.0,
+        "unstable_m": 0.02
+      }
+    },
+    "degrades": [],
+    "warnings": [],
+    "K": [
+      [
+        606.1411743164062,
+        0.0,
+        323.0082702636719
+      ],
+      [
+        0.0,
+        605.7540283203125,
+        242.89822387695312
+      ],
+      [
+        0.0,
+        0.0,
+        1.0
+      ]
+    ],
+    "frames": {
+      "n": 1,
+      "ref_stamp": null,
+      "span_s": null,
+      "rgb_depth_dt_max_s": null
+    },
+    "joints": {
+      "status": "from_source",
+      "names": [
+        "shoulder_pan_joint",
+        "shoulder_lift_joint",
+        "elbow_joint",
+        "wrist_1_joint",
+        "wrist_2_joint",
+        "wrist_3_joint"
+      ],
+      "q": [
+        -0.04527789751161748,
+        -1.7657796345152796,
+        1.7970402876483362,
+        4.131541414851807,
+        -1.3616870085345667,
+        1.7514171600341797
+      ]
+    },
+    "t_base_cam": {
+      "source": "source run (tf)",
+      "base_frame": "base_link",
+      "camera_frame": "camera_color_optical_frame",
+      "dt_s": 0.0,
+      "T": [
+        [
+          0.039391162832567356,
+          0.5475137822277278,
+          -0.8358690056231219,
+          0.8705860389909645
+        ],
+        [
+          0.999029125690202,
+          -0.005065195912056494,
+          0.043762424670521605,
+          -0.14222476195496275
+        ],
+        [
+          0.019726690380516387,
+          -0.8367813346753504,
+          -0.5471817391192533,
+          0.3430058143987959
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ]
+    },
+    "robot_mask": {
+      "status": "ok",
+      "n_masked": 24384
+    },
+    "plane": {
+      "n": [
+        0.03481950727667559,
+        -0.8537618907817394,
+        -0.5194980613648129
+      ],
+      "d": 0.34228872829740603,
+      "inlier_frac": 0.61435,
+      "n_points": 20000,
+      "n_inliers": 12287,
+      "rms_m": 0.00164771639567495,
+      "basis": [
+        [
+          0.0,
+          -0.999393617106398
+        ],
+        [
+          -0.5198132672379334,
+          -0.029745605595015736
+        ],
+        [
+          0.8542799115064247,
+          -0.018099641841103735
+        ]
+      ],
+      "extent_lo": [
+        0.26570342659172125,
+        -0.36834632733052014
+      ],
+      "extent_hi": [
+        0.7323518084633145,
+        0.21210717376636826
+      ],
+      "angle_to_up_deg": 2.052001382360728,
+      "fit_excludes_robot": true
+    }
+  },
+  "frame": {
+    "stamp": "1793849991.501057861",
+    "frame_id": "camera_color_optical_frame",
+    "K": [
+      [
+        606.1411743164062,
+        0.0,
+        323.0082702636719
+      ],
+      [
+        0.0,
+        605.7540283203125,
+        242.89822387695312
+      ],
+      [
+        0.0,
+        0.0,
+        1.0
+      ]
+    ],
+    "depth_valid_frac": 0.8272200520833334
+  },
+  "marks": {
+    "reused_from": "/data/runs/20261105_033951/marks",
+    "source_record": {
+      "params": {
+        "score_min": {
+          "value": 0.2,
+          "basis": "n=1 (20260903_203531): generic 'object' scores 0.10-0.43, real objects 0.29-0.37; set in the widest gap (0.166-0.285) because a missing mark is unrecoverable and depth rejects background"
+        },
+        "bg_score_min": {
+          "value": 0.4,
+          "basis": "n=1 (20260903_203531): 'robot arm' scored 0.527; a specific noun scores high, so the fallback arm mask needs no permissive threshold"
+        },
+        "min_area_frac": {
+          "value": 0.00048828125,
+          "basis": "sim MIN_AREA_PX 150 at 640x480 as a fraction (450 px at 1280x720); n=1, nothing near it on 20260903_203531"
+        },
+        "truncation_px": {
+          "value": 2,
+          "basis": "n=1 (20260903_203531): three instances touch x=0 or y=0"
+        },
+        "arm_frac": {
+          "value": 0.5,
+          "basis": "n=1 (20260903_203531): the arm instance is 0.854 inside the 'robot arm' mask"
+        },
+        "dup_iou": {
+          "value": 0.8,
+          "basis": "partly measured (20260903_203531): cross-prompt duplicates were IoU >= 0.995; generic 'object' produced none"
+        },
+        "part_of": {
+          "value": 0.9,
+          "basis": "provisional, untested: needs the multi-object frame (lid, handle)"
+        },
+        "plane_tol_m": {
+          "value": 0.008,
+          "basis": "provisional: ~3 sigma of D435 depth noise near 0.5 m; flat objects (a marker lying down) untested"
+        },
+        "plane_min_inlier_frac": {
+          "value": 0.15,
+          "basis": "provisional: below this the dominant plane is not trusted and geometric tests are skipped (recorded)"
+        },
+        "table_frac": {
+          "value": 0.8,
+          "basis": "provisional, untested"
+        },
+        "ws_max_height_m": {
+          "value": 0.5,
+          "basis": "provisional: workspace ceiling above the table"
+        },
+        "ws_margin_m": {
+          "value": 0.02,
+          "basis": "provisional: lateral slack beyond the table's inlier extent"
+        },
+        "min_depth_px": {
+          "value": 100,
+          "basis": "provisional"
+        },
+        "min_depth_frac": {
+          "value": 0.2,
+          "basis": "provisional"
+        },
+        "ransac_iters": {
+          "value": 300,
+          "basis": "fixed; seeded, so the fit is deterministic per frame"
+        }
+      },
+      "geometry_used": true,
+      "geometry_note": "ok",
+      "arm_source": "robot_mask",
+      "instances": [
+        {
+          "idx": 1,
+          "prompt": "object",
+          "score": 0.6875,
+          "area": 11397,
+          "bbox": [
+            405,
+            205,
+            595,
+            305
+          ],
+          "reasons": [],
+          "geometry": {
+            "n_valid": 10896,
+            "valid_frac": 0.956,
+            "median_h": 0.0539,
+            "in_band_frac": 0.0458,
+            "median_uv": [
+              0.4606,
+              -0.1717
+            ]
+          }
+        },
+        {
+          "idx": 2,
+          "prompt": "object",
+          "score": 0.6328,
+          "area": 11070,
+          "bbox": [
+            19,
+            178,
+            158,
+            294
+          ],
+          "reasons": [],
+          "geometry": {
+            "n_valid": 4919,
+            "valid_frac": 0.4444,
+            "median_h": 0.0496,
+            "in_band_frac": 0.0773,
+            "median_uv": [
+              0.4789,
+              0.1864
+            ]
+          }
+        },
+        {
+          "idx": 3,
+          "prompt": "object",
+          "score": 0.459,
+          "area": 22271,
+          "bbox": [
+            314,
+            0,
+            561,
+            170
+          ],
+          "reasons": [
+            "truncated",
+            "arm",
+            "out_of_workspace"
+          ],
+          "geometry": {
+            "n_valid": 22230,
+            "valid_frac": 0.9982,
+            "median_h": 0.1202,
+            "in_band_frac": 0.0305,
+            "median_uv": [
+              0.8331,
+              -0.13
+            ]
+          }
+        },
+        {
+          "idx": 4,
+          "prompt": "object",
+          "score": 0.459,
+          "area": 5001,
+          "bbox": [
+            47,
+            0,
+            214,
+            111
+          ],
+          "reasons": [
+            "truncated",
+            "out_of_workspace"
+          ],
+          "geometry": {
+            "n_valid": 5000,
+            "valid_frac": 0.9998,
+            "median_h": -0.6274,
+            "in_band_frac": 0.0,
+            "median_uv": [
+              3.3738,
+              1.137
+            ]
+          }
+        },
+        {
+          "idx": 5,
+          "prompt": "object",
+          "score": 0.3906,
+          "area": 1676,
+          "bbox": [
+            218,
+            0,
+            286,
+            36
+          ],
+          "reasons": [
+            "truncated",
+            "out_of_workspace"
+          ],
+          "geometry": {
+            "n_valid": 1676,
+            "valid_frac": 1.0,
+            "median_h": -0.6088,
+            "in_band_frac": 0.0,
+            "median_uv": [
+              4.8325,
+              0.4739
+            ]
+          }
+        },
+        {
+          "idx": 6,
+          "prompt": "object",
+          "score": 0.3516,
+          "area": 646,
+          "bbox": [
+            191,
+            0,
+            220,
+            24
+          ],
+          "reasons": [
+            "truncated",
+            "out_of_workspace"
+          ],
+          "geometry": {
+            "n_valid": 646,
+            "valid_frac": 1.0,
+            "median_h": -0.5926,
+            "in_band_frac": 0.0,
+            "median_uv": [
+              4.9568,
+              0.8779
+            ]
+          }
+        },
+        {
+          "idx": 7,
+          "prompt": "object",
+          "score": 0.3125,
+          "area": 3194,
+          "bbox": [
+            271,
+            42,
+            485,
+            117
+          ],
+          "reasons": [
+            "out_of_workspace"
+          ],
+          "geometry": {
+            "n_valid": 2628,
+            "valid_frac": 0.8228,
+            "median_h": -0.6103,
+            "in_band_frac": 0.0,
+            "median_uv": [
+              3.275,
+              0.0862
+            ]
+          }
+        },
+        {
+          "idx": 8,
+          "prompt": "object",
+          "score": 0.3047,
+          "area": 252,
+          "bbox": [
+            4,
+            40,
+            38,
+            53
+          ],
+          "reasons": [
+            "out_of_workspace"
+          ],
+          "geometry": {
+            "n_valid": 154,
+            "valid_frac": 0.6111,
+            "median_h": -0.67,
+            "in_band_frac": 0.0,
+            "median_uv": [
+              3.9759,
+              1.8471
+            ]
+          }
+        },
+        {
+          "idx": 9,
+          "prompt": "object",
+          "score": 0.3027,
+          "area": 766,
+          "bbox": [
+            563,
+            0,
+            617,
+            24
+          ],
+          "reasons": [
+            "truncated",
+            "out_of_workspace"
+          ],
+          "geometry": {
+            "n_valid": 515,
+            "valid_frac": 0.6723,
+            "median_h": -0.0082,
+            "in_band_frac": 0.1437,
+            "median_uv": [
+              1.9937,
+              -0.91
+            ]
+          }
+        },
+        {
+          "idx": 10,
+          "prompt": "object",
+          "score": 0.293,
+          "area": 472,
+          "bbox": [
+            0,
+            40,
+            38,
+            64
+          ],
+          "reasons": [
+            "truncated",
+            "out_of_workspace"
+          ],
+          "geometry": {
+            "n_valid": 172,
+            "valid_frac": 0.3644,
+            "median_h": -0.6755,
+            "in_band_frac": 0.0,
+            "median_uv": [
+              3.9749,
+              1.8553
+            ]
+          }
+        },
+        {
+          "idx": 11,
+          "prompt": "object",
+          "score": 0.2832,
+          "area": 188,
+          "bbox": [
+            0,
+            52,
+            22,
+            65
+          ],
+          "reasons": [
+            "truncated",
+            "no_depth"
+          ],
+          "geometry": {
+            "n_valid": 17,
+            "valid_frac": 0.0904,
+            "median_h": -0.729,
+            "in_band_frac": 0.0,
+            "median_uv": [
+              3.8378,
+              1.8611
+            ]
+          }
+        },
+        {
+          "idx": 12,
+          "prompt": "object",
+          "score": 0.2832,
+          "area": 735,
+          "bbox": [
+            0,
+            54,
+            65,
+            117
+          ],
+          "reasons": [
+            "truncated",
+            "out_of_workspace"
+          ],
+          "geometry": {
+            "n_valid": 521,
+            "valid_frac": 0.7088,
+            "median_h": -0.7076,
+            "in_band_frac": 0.0,
+            "median_uv": [
+              2.9925,
+              1.385
+            ]
+          }
+        },
+        {
+          "idx": 13,
+          "prompt": "object",
+          "score": 0.2812,
+          "area": 918,
+          "bbox": [
+            0,
+            69,
+            19,
+            152
+          ],
+          "reasons": [
+            "truncated",
+            "no_depth"
+          ],
+          "geometry": {
+            "n_valid": 0,
+            "valid_frac": 0.0
+          }
+        },
+        {
+          "idx": 14,
+          "prompt": "object",
+          "score": 0.2197,
+          "area": 593,
+          "bbox": [
+            606,
+            0,
+            639,
+            25
+          ],
+          "reasons": [
+            "truncated",
+            "out_of_workspace"
+          ],
+          "geometry": {
+            "n_valid": 593,
+            "valid_frac": 1.0,
+            "median_h": 0.0431,
+            "in_band_frac": 0.0034,
+            "median_uv": [
+              1.8374,
+              -0.8792
+            ]
+          }
+        },
+        {
+          "idx": 15,
+          "prompt": "object",
+          "score": 0.21,
+          "area": 228,
+          "bbox": [
+            337,
+            0,
+            357,
+            17
+          ],
+          "reasons": [
+            "truncated",
+            "no_depth"
+          ],
+          "geometry": {
+            "n_valid": 0,
+            "valid_frac": 0.0
+          }
+        },
+        {
+          "idx": 16,
+          "prompt": "object",
+          "score": 0.1953,
+          "area": 650,
+          "bbox": [
+            287,
+            0,
+            357,
+            17
+          ],
+          "reasons": [
+            "below_score",
+            "truncated",
+            "out_of_workspace"
+          ],
+          "geometry": {
+            "n_valid": 213,
+            "valid_frac": 0.3277,
+            "median_h": -0.6046,
+            "in_band_frac": 0.0,
+            "median_uv": [
+              5.4967,
+              0.1586
+            ]
+          }
+        },
+        {
+          "idx": 17,
+          "prompt": "object",
+          "score": 0.1865,
+          "area": 272,
+          "bbox": [
+            304,
+            0,
+            337,
+            8
+          ],
+          "reasons": [
+            "below_score",
+            "truncated",
+            "no_depth"
+          ],
+          "geometry": {
+            "n_valid": 77,
+            "valid_frac": 0.2831,
+            "median_h": -0.5814,
+            "in_band_frac": 0.0,
+            "median_uv": [
+              5.3483,
+              0.0839
+            ]
+          }
+        },
+        {
+          "idx": 18,
+          "prompt": "object",
+          "score": 0.1797,
+          "area": 588,
+          "bbox": [
+            11,
+            98,
+            65,
+            117
+          ],
+          "reasons": [
+            "below_score",
+            "out_of_workspace"
+          ],
+          "geometry": {
+            "n_valid": 439,
+            "valid_frac": 0.7466,
+            "median_h": -0.706,
+            "in_band_frac": 0.0,
+            "median_uv": [
+              2.9828,
+              1.3686
+            ]
+          }
+        },
+        {
+          "idx": 19,
+          "prompt": "object",
+          "score": 0.1729,
+          "area": 2075,
+          "bbox": [
+            271,
+            42,
+            355,
+            115
+          ],
+          "reasons": [
+            "below_score",
+            "out_of_workspace"
+          ],
+          "geometry": {
+            "n_valid": 1505,
+            "valid_frac": 0.7253,
+            "median_h": -0.6015,
+            "in_band_frac": 0.0,
+            "median_uv": [
+              3.4021,
+              0.1802
+            ]
+          }
+        },
+        {
+          "idx": 20,
+          "prompt": "object",
+          "score": 0.1494,
+          "area": 3449,
+          "bbox": [
+            271,
+            0,
+            485,
+            118
+          ],
+          "reasons": [
+            "below_score",
+            "truncated",
+            "out_of_workspace"
+          ],
+          "geometry": {
+            "n_valid": 2694,
+            "valid_frac": 0.7811,
+            "median_h": -0.6104,
+            "in_band_frac": 0.0,
+            "median_uv": [
+              3.2772,
+              0.0881
+            ]
+          }
+        },
+        {
+          "idx": 21,
+          "prompt": "object",
+          "score": 0.1445,
+          "area": 168303,
+          "bbox": [
+            0,
+            7,
+            639,
+            479
+          ],
+          "reasons": [
+            "below_score",
+            "truncated",
+            "table"
+          ],
+          "geometry": {
+            "n_valid": 137742,
+            "valid_frac": 0.8184,
+            "median_h": -0.0001,
+            "in_band_frac": 0.9801,
+            "median_uv": [
+              0.4012,
+              -0.0429
+            ]
+          }
+        },
+        {
+          "idx": 22,
+          "prompt": "object",
+          "score": 0.1426,
+          "area": 2571,
+          "bbox": [
+            271,
+            0,
+            356,
+            115
+          ],
+          "reasons": [
+            "below_score",
+            "truncated",
+            "out_of_workspace"
+          ],
+          "geometry": {
+            "n_valid": 1653,
+            "valid_frac": 0.6429,
+            "median_h": -0.6038,
+            "in_band_frac": 0.0,
+            "median_uv": [
+              3.6163,
+              0.1795
+            ]
+          }
+        },
+        {
+          "idx": 23,
+          "prompt": "object",
+          "score": 0.1406,
+          "area": 131,
+          "bbox": [
+            184,
+            0,
+            221,
+            18
+          ],
+          "reasons": [
+            "below_score",
+            "below_min_area",
+            "truncated",
+            "out_of_workspace"
+          ],
+          "geometry": {
+            "n_valid": 131,
+            "valid_frac": 1.0,
+            "median_h": -0.5859,
+            "in_band_frac": 0.0,
+            "median_uv": [
+              5.015,
+              1.0168
+            ]
+          }
+        },
+        {
+          "idx": 24,
+          "prompt": "object",
+          "score": 0.126,
+          "area": 3438,
+          "bbox": [
+            271,
+            0,
+            485,
+            162
+          ],
+          "reasons": [
+            "below_score",
+            "truncated",
+            "out_of_workspace"
+          ],
+          "geometry": {
+            "n_valid": 2705,
+            "valid_frac": 0.7868,
+            "median_h": -0.6103,
+            "in_band_frac": 0.0,
+            "median_uv": [
+              3.2751,
+              0.0892
+            ]
+          }
+        },
+        {
+          "idx": 25,
+          "prompt": "object",
+          "score": 0.1147,
+          "area": 167,
+          "bbox": [
+            186,
+            0,
+            234,
+            12
+          ],
+          "reasons": [
+            "below_score",
+            "truncated",
+            "out_of_workspace"
+          ],
+          "geometry": {
+            "n_valid": 167,
+            "valid_frac": 1.0,
+            "median_h": -0.5509,
+            "in_band_frac": 0.0,
+            "median_uv": [
+              4.984,
+              0.7226
+            ]
+          }
+        },
+        {
+          "idx": 26,
+          "prompt": "object",
+          "score": 0.1118,
+          "area": 133,
+          "bbox": [
+            287,
+            0,
+            306,
+            7
+          ],
+          "reasons": [
+            "below_score",
+            "below_min_area",
+            "truncated",
+            "out_of_workspace"
+          ],
+          "geometry": {
+            "n_valid": 133,
+            "valid_frac": 1.0,
+            "median_h": -0.6161,
+            "in_band_frac": 0.0,
+            "median_uv": [
+              5.5748,
+              0.2048
+            ]
+          }
+        },
+        {
+          "idx": 27,
+          "prompt": "object",
+          "score": 0.1118,
+          "area": 1201,
+          "bbox": [
+            0,
+            40,
+            65,
+            116
+          ],
+          "reasons": [
+            "below_score",
+            "truncated",
+            "out_of_workspace"
+          ],
+          "geometry": {
+            "n_valid": 682,
+            "valid_frac": 0.5679,
+            "median_h": -0.7039,
+            "in_band_frac": 0.0,
+            "median_uv": [
+              3.0181,
+              1.4294
+            ]
+          }
+        },
+        {
+          "idx": 28,
+          "prompt": "object",
+          "score": 0.1104,
+          "area": 1234,
+          "bbox": [
+            438,
+            52,
+            485,
+            118
+          ],
+          "reasons": [
+            "below_score",
+            "out_of_workspace"
+          ],
+          "geometry": {
+            "n_valid": 1234,
+            "valid_frac": 1.0,
+            "median_h": -0.613,
+            "in_band_frac": 0.0,
+            "median_uv": [
+              3.2319,
+              -0.8096
+            ]
+          }
+        },
+        {
+          "idx": 29,
+          "prompt": "object",
+          "score": 0.104,
+          "area": 2486,
+          "bbox": [
+            271,
+            0,
+            356,
+            115
+          ],
+          "reasons": [
+            "below_score",
+            "truncated",
+            "out_of_workspace"
+          ],
+          "geometry": {
+            "n_valid": 1644,
+            "valid_frac": 0.6613,
+            "median_h": -0.6042,
+            "in_band_frac": 0.0,
+            "median_uv": [
+              3.6163,
+              0.1799
+            ]
+          }
+        }
+      ],
+      "sam3": {
+        "prompts": [
+          "object"
+        ],
+        "threshold": 0.1,
+        "instances": 29
+      },
+      "id_map": {
+        "1": 2,
+        "2": 1
+      },
+      "sim": {
+        "root": "/opt/manip-sim",
+        "commit": "b133912bcc59fb3118a2aace0101dcaeb4f4f60c",
+        "dirty": true,
+        "dirty_sources": [],
+        "files": {
+          "manip_sim/perception/marks.py": "0041899a43bee65209746a23007b9cd69b6eab44cb51c7fb9b5d8dd3d58c6b10"
+        }
+      }
+    }
+  },
+  "arm": {
+    "source": "robot_mask",
+    "pixels": 24384
+  },
+  "registered": [
+    "m1",
+    "m2"
+  ]
+}

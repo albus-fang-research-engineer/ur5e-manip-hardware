@@ -1,0 +1,108 @@
+{
+  "object": "lib_mug",
+  "source": "/data/runs/20261105_035449/grounding_vlm/canon/lib_mug/candidates.json",
+  "parts_filter": [
+    "rim",
+    "opening",
+    "interior"
+  ],
+  "ids": [
+    0,
+    1,
+    2,
+    3,
+    10,
+    13,
+    17,
+    18
+  ],
+  "menu": {
+    "0": "constructed interior_center (interior)",
+    "1": "constructed rim_center (rim)",
+    "2": "part:interior",
+    "3": "part:interior",
+    "10": "part:opening",
+    "13": "part:opening",
+    "17": "part:rim",
+    "18": "part:rim"
+  },
+  "views": {
+    "+x": {
+      "path": "/data/runs/20261105_035449/call2/vlm/lib_mug/px.png",
+      "visible_ids": [
+        1,
+        2,
+        3
+      ]
+    },
+    "-x": {
+      "path": "/data/runs/20261105_035449/call2/vlm/lib_mug/nx.png",
+      "visible_ids": [
+        1,
+        2,
+        10,
+        18
+      ]
+    },
+    "+y": {
+      "path": "/data/runs/20261105_035449/call2/vlm/lib_mug/py.png",
+      "visible_ids": [
+        1,
+        2,
+        17,
+        18
+      ]
+    },
+    "-y": {
+      "path": "/data/runs/20261105_035449/call2/vlm/lib_mug/ny.png",
+      "visible_ids": [
+        1,
+        2,
+        10,
+        13,
+        17,
+        18
+      ]
+    },
+    "top": {
+      "path": "/data/runs/20261105_035449/call2/vlm/lib_mug/top.png",
+      "visible_ids": [
+        0,
+        1,
+        2,
+        10,
+        17,
+        18
+      ]
+    },
+    "bottom": {
+      "path": "/data/runs/20261105_035449/call2/vlm/lib_mug/bottom.png",
+      "visible_ids": [
+        3
+      ]
+    },
+    "iso": {
+      "path": "/data/runs/20261105_035449/call2/vlm/lib_mug/iso.png",
+      "visible_ids": [
+        0,
+        1,
+        2,
+        3,
+        13,
+        17,
+        18
+      ]
+    },
+    "iso-opp": {
+      "path": "/data/runs/20261105_035449/call2/vlm/lib_mug/isonopp.png",
+      "visible_ids": [
+        0,
+        1,
+        2,
+        10,
+        17,
+        18
+      ]
+    }
+  }
+}

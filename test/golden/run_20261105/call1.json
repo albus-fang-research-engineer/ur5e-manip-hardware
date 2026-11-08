@@ -1,0 +1,375 @@
+{
+ "blocking_policy": {
+  "bound[grasp]": true,
+  "bound[pour]": true,
+  "bound[transport_active]": true,
+  "bound[transport_passive]": true,
+  "coverage[mug]": true,
+  "coverage[teapot]": true,
+  "grounds[stage0]": true,
+  "grounds[stage1]": true,
+  "grounds[stage2]": true,
+  "grounds[stage3]": true,
+  "identity[mug]": true,
+  "identity[teapot]": true,
+  "menu[mug]": true,
+  "menu[teapot]": true,
+  "ordering[grasp<transport_active,pour]": true,
+  "parts[red_mug]": true,
+  "parts[teal_teapot]": true,
+  "registered[red_mug]": true,
+  "registered[teal_teapot]": true,
+  "role[grasp]": true,
+  "role[pour]": true,
+  "role[transport_active]": true,
+  "role[transport_passive]": true,
+  "structure[grasp<interaction]": false
+ },
+ "checks": [
+  {
+   "check": "registered[red_mug]",
+   "detail": "mark 1 ('red mug') -> m1",
+   "pass": true
+  },
+  {
+   "check": "registered[teal_teapot]",
+   "detail": "mark 2 ('teal teapot') -> m2",
+   "pass": true
+  },
+  {
+   "check": "parts[red_mug]",
+   "detail": "['rim', 'opening', 'interior']",
+   "pass": true
+  },
+  {
+   "check": "parts[teal_teapot]",
+   "detail": "['handle', 'body', 'lid', 'spout', 'base']",
+   "pass": true
+  },
+  {
+   "check": "structure[grasp<interaction]",
+   "detail": "active-only stages [0, 3], active+passive stages [1, 2]",
+   "pass": true
+  },
+  {
+   "check": "identity[mug]",
+   "detail": "mark 1 labelled 'red mug' -> mug",
+   "pass": true
+  },
+  {
+   "check": "identity[teapot]",
+   "detail": "mark 2 labelled 'teal teapot' -> teapot",
+   "pass": true
+  },
+  {
+   "check": "grounds[stage0]",
+   "detail": "grasp teapot by handle: parts {\"teapot\": [\"handle\", \"body\", \"lid\"]}",
+   "pass": true
+  },
+  {
+   "check": "grounds[stage1]",
+   "detail": "lift and move teapot above mug: parts {\"teapot\": [\"spout\", \"body\", \"handle\"], \"mug\": [\"rim\", \"opening\"]}",
+   "pass": true
+  },
+  {
+   "check": "grounds[stage2]",
+   "detail": "tilt teapot to pour tea into mug: parts {\"teapot\": [\"spout\", \"handle\", \"body\"], \"mug\": [\"rim\", \"opening\", \"interior\"]}",
+   "pass": true
+  },
+  {
+   "check": "grounds[stage3]",
+   "detail": "upright teapot and place back on table: parts {\"teapot\": [\"body\", \"base\", \"handle\"]}",
+   "pass": true
+  },
+  {
+   "check": "menu[mug]",
+   "detail": "parts ['rim', 'opening', 'interior'] -> 8-mark menu",
+   "pass": true
+  },
+  {
+   "check": "menu[teapot]",
+   "detail": "parts ['handle', 'body', 'lid', 'spout', 'base'] -> 8-mark menu",
+   "pass": true
+  },
+  {
+   "check": "coverage[teapot]",
+   "detail": "needs tags ['handle', 'spout'], attributed ['handle', 'body', 'lid', 'spout', 'base']",
+   "pass": true
+  },
+  {
+   "check": "coverage[mug]",
+   "detail": "needs tags ['rim|opening|lip'], attributed ['rim', 'opening', 'interior']",
+   "pass": true
+  },
+  {
+   "check": "role[grasp]",
+   "detail": "matched ['0:grasp teapot by handle', '3:upright teapot and place back on table']",
+   "pass": true
+  },
+  {
+   "check": "role[transport_active]",
+   "detail": "matched ['1:lift and move teapot above mug', '2:tilt teapot to pour tea into mug']",
+   "pass": true
+  },
+  {
+   "check": "role[pour]",
+   "detail": "matched ['1:lift and move teapot above mug', '2:tilt teapot to pour tea into mug']",
+   "pass": true
+  },
+  {
+   "check": "role[transport_passive]",
+   "detail": "matched ['1:lift and move teapot above mug', '2:tilt teapot to pour tea into mug']",
+   "pass": true
+  },
+  {
+   "check": "ordering[grasp<transport_active,pour]",
+   "detail": "grasp at [0, 3], transport_active at [1, 2], pour at [1, 2]",
+   "pass": true
+  },
+  {
+   "check": "bound[grasp]",
+   "detail": "grasp -> teapot @ stage 0",
+   "pass": true
+  },
+  {
+   "check": "bound[transport_active]",
+   "detail": "transport_active -> teapot @ stage 1",
+   "pass": true
+  },
+  {
+   "check": "bound[pour]",
+   "detail": "pour -> teapot @ stage 2",
+   "pass": true
+  },
+  {
+   "check": "bound[transport_passive]",
+   "detail": "transport_passive -> mug @ stage 1",
+   "pass": true
+  }
+ ],
+ "exit": 0,
+ "gate": {
+  "blocking": [],
+  "defer_grounding": false
+ },
+ "mark_key": {
+  "red_mug": "m1",
+  "teal_teapot": "m2"
+ },
+ "model": "claude-opus-5",
+ "object_names": {
+  "red_mug": "mug",
+  "teal_teapot": "teapot"
+ },
+ "object_parts": {
+  "mug": [
+   "rim",
+   "opening",
+   "interior"
+  ],
+  "teapot": [
+   "handle",
+   "body",
+   "lid",
+   "spout",
+   "base"
+  ]
+ },
+ "object_parts_requested": {
+  "mug": [
+   "rim",
+   "opening",
+   "interior"
+  ],
+  "teapot": [
+   "handle",
+   "body",
+   "lid",
+   "spout",
+   "base"
+  ]
+ },
+ "parts_dropped": {},
+ "plan": {
+  "objects": {
+   "red_mug": {
+    "handle": "red_mug",
+    "label": "red mug",
+    "mark": 1
+   },
+   "teal_teapot": {
+    "handle": "teal_teapot",
+    "label": "teal teapot",
+    "mark": 2
+   }
+  },
+  "stages": [
+   {
+    "active": "teal_teapot",
+    "index": 0,
+    "name": "grasp teapot by handle",
+    "parts": {
+     "teal_teapot": [
+      "handle",
+      "body",
+      "lid"
+     ]
+    },
+    "passive": null
+   },
+   {
+    "active": "teal_teapot",
+    "index": 1,
+    "name": "lift and move teapot above mug",
+    "parts": {
+     "red_mug": [
+      "rim",
+      "opening"
+     ],
+     "teal_teapot": [
+      "spout",
+      "body",
+      "handle"
+     ]
+    },
+    "passive": "red_mug"
+   },
+   {
+    "active": "teal_teapot",
+    "index": 2,
+    "name": "tilt teapot to pour tea into mug",
+    "parts": {
+     "red_mug": [
+      "rim",
+      "opening",
+      "interior"
+     ],
+     "teal_teapot": [
+      "spout",
+      "handle",
+      "body"
+     ]
+    },
+    "passive": "red_mug"
+   },
+   {
+    "active": "teal_teapot",
+    "index": 3,
+    "name": "upright teapot and place back on table",
+    "parts": {
+     "teal_teapot": [
+      "body",
+      "base",
+      "handle"
+     ]
+    },
+    "passive": null
+   }
+  ],
+  "task": "pour tea into the mug"
+ },
+ "plan_grounded": {
+  "objects": {
+   "mug": {
+    "handle": "mug",
+    "label": "red mug",
+    "mark": 1
+   },
+   "teapot": {
+    "handle": "teapot",
+    "label": "teal teapot",
+    "mark": 2
+   }
+  },
+  "stages": [
+   {
+    "active": "teapot",
+    "index": 0,
+    "name": "grasp teapot by handle",
+    "parts": {
+     "teapot": [
+      "handle",
+      "body",
+      "lid"
+     ]
+    },
+    "passive": null
+   },
+   {
+    "active": "teapot",
+    "index": 1,
+    "name": "lift and move teapot above mug",
+    "parts": {
+     "mug": [
+      "rim",
+      "opening"
+     ],
+     "teapot": [
+      "spout",
+      "body",
+      "handle"
+     ]
+    },
+    "passive": "mug"
+   },
+   {
+    "active": "teapot",
+    "index": 2,
+    "name": "tilt teapot to pour tea into mug",
+    "parts": {
+     "mug": [
+      "rim",
+      "opening",
+      "interior"
+     ],
+     "teapot": [
+      "spout",
+      "handle",
+      "body"
+     ]
+    },
+    "passive": "mug"
+   },
+   {
+    "active": "teapot",
+    "index": 3,
+    "name": "upright teapot and place back on table",
+    "parts": {
+     "teapot": [
+      "body",
+      "base",
+      "handle"
+     ]
+    },
+    "passive": null
+   }
+  ],
+  "task": "pour tea into the mug"
+ },
+ "plan_sha": "476f07ea",
+ "refused": null,
+ "registered": [
+  "m1",
+  "m2"
+ ],
+ "roles": {
+  "grasp": {
+   "object": "teapot",
+   "stage": 0
+  },
+  "pour": {
+   "object": "teapot",
+   "stage": 2
+  },
+  "transport_active": {
+   "object": "teapot",
+   "stage": 1
+  },
+  "transport_passive": {
+   "object": "mug",
+   "stage": 1
+  }
+ },
+ "task": "pour tea into the mug",
+ "task_spec": "pour_tea"
+}
