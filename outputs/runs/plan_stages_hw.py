@@ -46,6 +46,13 @@ In the ros2 container (cuRobo sidecar up):
     export PYTHONPATH=/root/ros2_ws/src/manip_bridge:$PYTHONPATH
     python3 /data/runs/plan_stages_hw.py --run /data/runs/<stamp>
     python3 /data/runs/exec_plan.py /data/runs/<stamp>/m4/plan.json --dry   # rviz
+
+--method vlm plans the same two stages on call #3's regions (emit_scene's
+artifact) instead, compiled at each stage's actual entry; see "VLM method"
+below. It writes to <run>/m4_vlm:
+
+    python3 /data/runs/plan_stages_hw.py --run /data/runs/<stamp> --method vlm \\
+        --emissions /data/runs/<stamp>/call3/emissions.json
 """
 import argparse
 import hashlib
@@ -287,8 +294,9 @@ def _traj_step(name, Q, gate=True, note="", min_duration_s=0.0):
     return {"name": name, "gate": gate, "note": note, "traj": traj}
 
 
-def exec_plan_doc(reach_plan, segs, Q_tr, Q_pour, line_speed) -> dict:
-    """The blind lines keep grasp_exec's line-speed floor (length / line_speed)."""
+def exec_plan_doc(reach_plan, segs, Q_tr, Q_pour, line_speed, source="hand arm") -> dict:
+    """The blind lines keep grasp_exec's line-speed floor (length / line_speed).
+    `source` names where the transport and pour regions came from."""
     by = {s.name: s for s in segs}
     md = {k: by[k].info["length_m"] / line_speed for k in ("approach", "lift")}
     steps = [{"name": "open", "gate": False, "gripper": {"gap_m": by["open"].gap_m}},
@@ -300,8 +308,8 @@ def exec_plan_doc(reach_plan, segs, Q_tr, Q_pour, line_speed) -> dict:
              {"name": "close", "gripper": {"gap_m": 0.0, "effort_n": by["close"].effort_n,
                                            "expect_object": True}},
              _traj_step("lift", by["lift"].Q, note="BLIND", min_duration_s=md["lift"]),
-             _traj_step("transport", Q_tr, note="CBiRRT, hand arm"),
-             _traj_step("pour", Q_pour, note="CBiRRT, hand arm"),
+             _traj_step("transport", Q_tr, note=f"CBiRRT, {source}"),
+             _traj_step("pour", Q_pour, note=f"CBiRRT, {source}"),
              _traj_step("unpour", Q_pour[::-1], note="the pour reversed"),
              _traj_step("return", Q_tr[::-1], note="the transport reversed"),
              _traj_step("lower", by["lift"].Q[::-1], note="the lift reversed",
@@ -426,6 +434,290 @@ def run(a) -> int:
     return 0
 
 
+# ---------------------------------------------------------------- VLM method
+#
+# --method vlm plans the same carry and pour on call #3's regions instead of
+# pour_stages' hand-written ones, the way the sim's plan_task does:
+#
+#   <run>/stage_plan/plan.json + <run>/call2/selections.json   (calls 1, 2)
+#   <emissions>  emit_scene.py's artifact (call 3), read back per role
+#        |
+#   per mover stage, in bound order after the taught grasp (pour tea:
+#   transport_active, then pour): compile_stage at the ACTUAL entry --
+#   FK(q at the previous stage's end) . T_ee_canon -- then the sidecar's
+#   plan_constrained (goal sampling, IK, collision, containment, CBiRRT).
+#   A failed pour re-plans the carry with the next seed, as the hand method.
+#
+# Frames: everything is in the GROUNDING canonical frame emit_scene compiled
+# in (summary pose x R_body_from_canon, emit_scene.measured_poses), so
+# T_ee_canon = inv(FK(q_grasp)) . T_base_canon. hand_symbols' fixtures are
+# not used. Every failure is recorded as a typed record (FAILURE_TYPES, the
+# names call #5 will consume) in report.json; nothing new is gated.
+
+VLM_ROLES = ("transport_active", "pour")      # exec_plan's transport and pour segments
+# compile_stage's and check_pair_consistency's texts for a path and subgoal
+# that do not intersect (call #5's empty_goal_intersection). A row that two
+# terms of ONE TSR narrow to nothing ("row k intersection empty") is an
+# emission defect and stays with call #3's compile retry.
+_EMPTY_MARKERS = ("does not meet the subgoal", "excludes every subgoal", "do not overlap",
+                  "excludes the subgoal")
+
+
+def _tsr_record(t) -> dict:
+    return {"name": t.name, "T0_w": np.round(np.asarray(t.T0_w, float), 6).tolist(),
+            "Tw_e": np.round(np.asarray(t.Tw_e, float), 6).tolist(),
+            "Bw": np.asarray(t.Bw, float).tolist()}
+
+
+def compile_failure(role: str, name: str, seed: int, e) -> dict:
+    """A CompileError as a typed record. A box intersection the compiler
+    proved empty is call #5's empty_goal_intersection; any other rejection
+    is call #3's (its compile-retry path), so it carries no failure type."""
+    errs = [{"slot": x.slot, "reason": x.reason} for x in e.all()]
+    empty = any(m in x["reason"] for x in errs for m in _EMPTY_MARKERS)
+    return {"type": "empty_goal_intersection" if empty else None,
+            "routes_to": "call5" if empty else "call3_compile_retry",
+            "stage": role, "stage_name": name, "seed": seed, "phase": "compile",
+            "slots": [x["slot"] for x in errs], "errors": errs, "funnel": None}
+
+
+def plan_failure(role: str, name: str, seed: int, out: dict, pair) -> dict:
+    """A sidecar failure as a typed record: the goal funnel decides between
+    an empty intersection and no feasible IK; after goals exist, the CBiRRT
+    reason decides between projection divergence and timeout."""
+    f, why = out.get("funnel") or {}, str(out.get("reason", ""))
+    if why.startswith("q_start in collision") or not f:
+        kind = None                      # the stage never reached its goal funnel
+    elif f.get("stopped") == "thin_intersection":
+        kind = "empty_goal_intersection"
+    elif not f.get("n_contained"):
+        kind = "no_feasible_ik"          # zero IK, or IK with nothing free / contained
+    elif "projection failed" in why:   # manip_cbirrt: "start/goal projection failed"
+        kind = "projection_divergence"
+    elif "no path in" in why or "time budget" in why:
+        kind = "planner_timeout"
+    else:
+        kind = None
+    return {"type": kind, "routes_to": "call5" if kind else None, "stage": role,
+            "stage_name": name, "seed": seed, "phase": "plan", "reason": why,
+            "atoms": {"path": pair.path.name, "subgoal": pair.subgoal.name},
+            "funnel": out.get("funnel"),
+            "per_constraint_rejections": f.get("per_constraint_rejections")}
+
+
+def compile_at_entry(ec, em, symbols, poses, T_entry, mover, w_pt, e_pt, synth):
+    """compile_stage at the actual entry, then the emit gate's joint
+    path-and-subgoal intersection check (check_pair_consistency), so an
+    empty intersection is reported here, not as a starved goal funnel."""
+    cs = ec.compile_stage(em, symbols, {**poses, mover: T_entry},
+                          w_point=w_pt, e_point=e_pt, entry_synthesized=synth)
+    ec.check_pair_consistency(cs)
+    return cs
+
+
+def load_vlm_inputs(a, run_dir: Path, out: Path):
+    """(binding, objs, symbols, summary, poses, movers, emissions artifact).
+    `movers`: [(role, stage, emission, w_point, e_point, synthesized)] for
+    the bound stages with a passive object, in order."""
+    es = _load("emit_scene")
+    plan_path = Path(a.plan) if a.plan else run_dir / "stage_plan" / "plan.json"
+    sel_path = Path(a.selections) if a.selections else run_dir / "call2" / "selections.json"
+    em_path = Path(a.emissions)
+    for p in (plan_path, sel_path, em_path, run_dir / "summary.json"):
+        if not p.is_file():
+            raise PlanRefusal(f"{p} not found")
+    try:
+        b, doc, objs = es.ss.load_inputs(run_dir, plan_path)
+    except es.ss.SelectRefusal as e:
+        raise PlanRefusal(str(e)) from None
+    em_doc = json.loads(em_path.read_text())
+    hw_rec = em_doc.get("hardware") or {}
+    plan_sha = (doc.get("hardware") or {}).get("plan_sha")
+    if not plan_sha or hw_rec.get("plan_sha") != plan_sha:
+        raise PlanRefusal(f"{em_path} was emitted for plan {hw_rec.get('plan_sha')!r}, the plan is "
+                          f"{plan_sha!r} -- re-run emit_scene.py")
+    if hw_rec.get("selections_sha256") != _sha(sel_path):
+        raise PlanRefusal(f"{em_path} was emitted on other selections than {sel_path} -- "
+                          "re-run emit_scene.py")
+    roles = em_doc.get("roles") or []
+    ems = {r: es.vlm_compat.emission_from_json(e) for r, e in zip(roles, em_doc.get("emissions", []))}
+
+    asset_dirs = es.alias_assets(objs, out / "assets")
+    symbols = {n: es.sc.load_symbols(d) for n, d in asset_dirs.items()}
+    summary = json.loads((run_dir / "summary.json").read_text())
+    try:
+        poses = es.measured_poses(summary, objs)
+    except es.EmitRefusal as e:
+        raise PlanRefusal(str(e)) from e
+    sels = es.sc.load_selections(sel_path)
+    sel_objects = es.sc.selection_objects(sel_path, sels)
+    by_idx = {s.index: s for s in b.plan.stages}
+    role_index = {r: st.index for r, (_, st) in b.roles.items()}
+    movers = []
+    for stage, role in es.ec.bound_stages(b, by_idx):
+        if stage.passive is None:
+            continue                       # the grasp: taught, not planned from its emission
+        if role not in ems:
+            raise PlanRefusal(f"{em_path} has no emission for {role!r} (has {sorted(ems)}): "
+                              "call #3 stopped before it -- see the artifact's 'compiled'")
+        try:
+            w_pt, e_pt = es.sc.selected_points(role, stage, sels, sel_objects, role_index,
+                                               asset_dirs, symbols)
+        except (SystemExit, es.sc.ResolutionError) as e:
+            raise PlanRefusal(f"{sel_path}: anchor points do not resolve ({e})") from None
+        movers.append((role, stage, ems[role], w_pt, e_pt, role in b.entry_synthesized))
+    if tuple(m[0] for m in movers) != VLM_ROLES:
+        raise PlanRefusal(f"--method vlm plans pour tea only (mover roles {list(VLM_ROLES)}); "
+                          f"this plan binds {[m[0] for m in movers]}")
+    if any(m[5] for m in movers):
+        raise PlanRefusal(f"synthesized entries {[m[0] for m in movers if m[5]]} are not "
+                          "supported on hardware yet (plan_task's synthesized start)")
+    return b, objs, symbols, summary, poses, movers, em_doc
+
+
+def run_vlm(a) -> int:
+    from manip_bridge import emit_compat as es_ec      # loaded only for this method
+    from manip_bridge.zmq_client import SidecarClient
+    run_dir = Path(a.run)
+    out = Path(a.out) if a.out else run_dir / "m4_vlm"
+    out.mkdir(parents=True, exist_ok=True)
+    b, objs, symbols, summary, poses, movers, em_doc = load_vlm_inputs(a, run_dir, out)
+    mover = movers[0][1].active
+    passive = movers[0][1].passive
+    if any(m[1].active != mover for m in movers):
+        raise PlanRefusal(f"every mover stage must carry {mover!r}: "
+                          f"{[(m[0], m[1].active) for m in movers]}")
+    try:
+        mesh_mv = Path(so.mesh_path(summary, objs[mover]["key"]))
+        T_mv_body = so.T_base_obj(summary, objs[mover]["key"])
+        T_ps_body = so.T_base_obj(summary, objs[passive]["key"])
+        mesh_ps = Path(so.mesh_path(summary, objs[passive]["key"]))
+    except ValueError as e:
+        raise PlanRefusal(f"{run_dir / 'summary.json'}: {e}") from e
+    up_dev = {k: round(float(np.degrees(np.arccos(np.clip(T[2, 2], -1, 1)))), 2)
+              for k, T in poses.items()}
+
+    ch = um.chain()
+    ge = _load("grasp_exec")
+    reach = json.loads(Path(a.reach or run_dir / "m3" / "reach.json").read_text())
+    segs = ge.build(reach["plan"], ch, deeper=a.deeper)
+    by = {s.name: s for s in segs}
+    q_grasp, q_lift = by["approach"].Q[-1], by["lift"].Q[-1]
+    T_tool0_grasp = ch.fk(q_grasp)
+    T_ee_canon = np.linalg.inv(T_tool0_grasp) @ poses[mover]
+    T_ee_body = so.T_ee_body(T_tool0_grasp, T_mv_body)
+
+    cli = SidecarClient(CUROBO_ADDR, timeout_ms=CALL_TIMEOUT_MS)
+    S_body = so.object_spheres(mesh_mv, run_dir / "objects" / objs[mover]["key"] / "spheres_body.json",
+                               cli.call)
+    spheres = so.spheres_tool0(S_body, T_ee_body)
+    scene = (registered_scene(summary, T_ps_body, mesh_ps, 0.5 * (T_mv_body[:2, 3] + T_ps_body[:2, 3]))
+             if a.scene == "registered" else None)
+
+    gate_failed = [c["stage"] for c in em_doc.get("compiled", []) if not c.get("grounded")]
+    report = {"run": str(run_dir), "method": "vlm (call #3 emissions)", "scene": a.scene,
+              "inputs": {"reach": reach["plan"].get("grasp"), "emissions": str(a.emissions),
+                         "plan_sha": (em_doc.get("hardware") or {}).get("plan_sha"),
+                         "emit_gate_failed": gate_failed, "deeper_m": a.deeper,
+                         "sim": es_ec.provenance()},
+              "frames": "grounding canonical (summary pose x R_body_from_canon)",
+              "poses": {"T_base_canon": {k: T.tolist() for k, T in poses.items()},
+                        "canonical_up_vs_base_z_deg": up_dev},
+              "grasp": {"q_grasp": q_grasp.tolist(), "q_lift": q_lift.tolist(),
+                        "T_ee_body": T_ee_body.tolist(), "T_ee_canon": T_ee_canon.tolist(),
+                        "n_spheres": int(len(spheres))},
+              "attempts": [], "failures": [], "status": "failed"}
+    if gate_failed:
+        print(f"[plan] note: call #3's gate failed {gate_failed}; compiling at the actual entry anyway")
+
+    def save_report():
+        (out / "report.json").write_text(json.dumps(report, indent=1, default=float) + "\n")
+
+    def compile_rec(role, stage, em, w_pt, e_pt, synth, T_entry, seed, rec):
+        """-> the compiled stage, or None with the typed failure recorded."""
+        try:
+            cs = compile_at_entry(es_ec, em, symbols, poses, T_entry, mover, w_pt, e_pt, synth)
+        except es_ec.CompileError as e:
+            fail = compile_failure(role, stage.name, seed, e)
+            rec.update(outcome="compile_rejected", failure=fail)
+            report["failures"].append(fail)
+            print(f"[{role}] seed {seed}: compile rejected ({fail['type']}): {e.text()}")
+            return None
+        rec.update(compiled={"path": _tsr_record(cs.path), "subgoal": _tsr_record(cs.subgoal)},
+                   notes=list(cs.notes))
+        return cs
+
+    # the first stage starts at q_lift on every seed: compile it once
+    first = movers[0]
+    T_first = ch.fk(q_lift) @ T_ee_canon
+    first_rec = {"role": first[0], "name": first[1].name,
+                 "entry_T_base_canon": np.round(T_first, 6).tolist()}
+    cs_first = compile_rec(*first, T_first, 0, first_rec)
+    report["first_stage_compile"] = first_rec
+    done = None
+    try:
+        for k in range(a.tries if cs_first is not None else 0):
+            att = {"seed": k, "stages": []}
+            report["attempts"].append(att)
+            q_cur, paths = q_lift, {}
+            for i, (role, stage, em, w_pt, e_pt, synth) in enumerate(movers):
+                T_entry = ch.fk(q_cur) @ T_ee_canon
+                rec = {"role": role, "name": stage.name,
+                       "entry_T_base_canon": np.round(T_entry, 6).tolist()}
+                att["stages"].append(rec)
+                if i == 0:
+                    cs = cs_first
+                    rec.update(compiled=first_rec["compiled"], notes=first_rec["notes"])
+                else:
+                    cs = compile_rec(role, stage, em, w_pt, e_pt, synth, T_entry, k, rec)
+                    if cs is None:
+                        break
+                res = plan_stage(cli, role, q_cur, T_ee_canon, cs, spheres, scene, a, k,
+                                 TRANSPORT_EPS if role == VLM_ROLES[0] else POUR_EPS)
+                rec["plan"] = {kk: v for kk, v in res.items() if kk != "Q"}
+                if not res["success"]:
+                    fail = plan_failure(role, stage.name, k, res, cs)
+                    rec.update(outcome="plan_failed", failure=fail)
+                    report["failures"].append(fail)
+                    break
+                rec["outcome"] = "planned"
+                paths[role] = (res["Q"], cs)
+                q_cur = res["Q"][-1]
+            if len(paths) == len(movers):
+                done = paths
+                break
+    except PlanRefusal as e:                 # keep the attempts that did run
+        report["status"], report["error"] = "refused", str(e)
+        save_report()
+        raise
+    if done is None:
+        save_report()
+        print(f"[plan] FAILED after {len(report['attempts'])} attempt(s); typed failures "
+              f"{[f['type'] for f in report['failures']]} -> {out / 'report.json'}")
+        return 2
+
+    (Q_tr, cs_tr), (Q_pour, cs_p) = done[VLM_ROLES[0]], done[VLM_ROLES[1]]
+    report["metrics"] = {"transport": excess_metrics(ch, Q_tr, T_ee_canon, cs_tr.path, a.speed),
+                         "pour": excess_metrics(ch, Q_pour, T_ee_canon, cs_p.path, a.speed)}
+    report["joint_travel_deg"] = {"transport": joint_travel(Q_tr), "pour": joint_travel(Q_pour)}
+    for name, m in report["metrics"].items():
+        print(f"[metrics] {name}: {_fmt_metrics(m)}")
+    (out / "stages.json").write_text(json.dumps({
+        "joint_names": list(um.DH_ORDER), "q_lift": q_lift.tolist(), "T_ee_canon": T_ee_canon.tolist(),
+        "stages": [{"name": "transport", "role": VLM_ROLES[0], "positions": Q_tr.tolist()},
+                   {"name": "pour", "role": VLM_ROLES[1], "positions": Q_pour.tolist()}]},
+        indent=1) + "\n")
+    (out / "plan.json").write_text(json.dumps(
+        exec_plan_doc(reach["plan"], segs, Q_tr, Q_pour, ge.LINE_SPEED_M_S,
+                      source="call #3 regions")) + "\n")
+    report["status"] = "planned"
+    report["outputs"] = {"stages": str(out / "stages.json"), "plan": str(out / "plan.json")}
+    save_report()
+    print(f"[plan] OK -> {out}/{{report,stages,plan}}.json\n"
+          f"       rviz: python3 /data/runs/exec_plan.py {out / 'plan.json'} --dry")
+    return 0
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--run", required=True)
@@ -440,12 +732,26 @@ def main(argv=None) -> int:
     ap.add_argument("--n-goal-samples", type=int, default=60)
     ap.add_argument("--deeper", type=float, default=0.0, help="as grasp_exec --deeper")
     ap.add_argument("--speed", type=float, default=0.1, help="timing used for the dense metrics")
-    ap.add_argument("--out", default=None, help="default <run>/m4")
+    ap.add_argument("--out", default=None, help="default <run>/m4 (hand) or <run>/m4_vlm (vlm)")
+    ap.add_argument("--method", choices=("hand", "vlm"), default="hand",
+                    help="hand: pour_stages' hand-written regions; vlm: call #3's emissions")
+    ap.add_argument("--plan", default=None, help="vlm: default <run>/stage_plan/plan.json")
+    ap.add_argument("--selections", default=None, help="vlm: default <run>/call2/selections.json")
+    ap.add_argument("--emissions", default=None,
+                    help="vlm (required): emit_scene's artifact, e.g. <run>/call3/emissions.json")
     a = ap.parse_args(argv)
     if bool(a.teapot_key) != bool(a.mug_key):
         ap.error("--teapot-key and --mug-key go together")
+    if a.method == "vlm" and not a.emissions:
+        ap.error("--method vlm needs --emissions")
+    if a.method == "hand" and (a.plan or a.selections or a.emissions):
+        ap.error("--plan/--selections/--emissions are for --method vlm")
+    if a.method == "vlm" and (a.teapot_key or a.library != str(HERE / "library")
+                              or a.tilt_deg != TILT_DEG):
+        ap.error("--teapot-key/--mug-key/--library/--tilt-deg are for --method hand: the vlm "
+                 "method takes objects from the plan's bindings and the pour from call #3")
     try:
-        return run(a)
+        return run_vlm(a) if a.method == "vlm" else run(a)
     except PlanRefusal as e:
         print(f"[plan] REFUSED: {e}")
         return 2
