@@ -15,9 +15,10 @@
 # command line, so it is not printed and does not show in `ps`. The model is
 # required: no silent fallback to the drivers' built-in default.
 #
-# Every invocation that is not a --replay or --dry-run (neither makes an API call) is
-# appended to outputs/vlm_calls.log: UTC time, model, script, arguments,
-# exit code -- the running count of paid calls.
+# Every invocation is appended to outputs/vlm_calls.log: UTC time, model,
+# script, arguments, exit code and calls=N, the API calls the driver itself
+# counted (0 for a replay or dry run; "unknown" if it died before reporting).
+# Sum the calls= column for the running count of paid calls.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -52,20 +53,31 @@ if [[ -n "$MANIP_VLM_TEMPERATURE" ]]; then
   temp_env=(-e MANIP_VLM_TEMPERATURE)
 fi
 
-live=1
-for a in "$@"; do [[ "$a" == "--replay" || "$a" == --replay=* || "$a" == "--dry-run" ]] && live=0; done
+# The driver counts its own API calls (vlm_record.RecordingTransport) and
+# writes them at exit to $VLM_CALLS_FILE, a file under the run mount; this
+# wrapper reads it back and logs the count.
+CALLS_DIR="$REPO/outputs/runs/.vlm_calls"         # /data/runs/.vlm_calls in the container
+mkdir -p "$CALLS_DIR"
+CALLS_NAME="$(date -u +%Y%m%dT%H%M%SZ)_$$.json"
+rm -f "$CALLS_DIR/$CALLS_NAME"
 
-echo "[vlm_run] $SCRIPT model=$MANIP_VLM_MODEL temperature=${MANIP_VLM_TEMPERATURE:-0.0 (sim default)} $([[ $live == 1 ]] && echo LIVE || echo "no API call")" >&2
+echo "[vlm_run] $SCRIPT model=$MANIP_VLM_MODEL temperature=${MANIP_VLM_TEMPERATURE:-0.0 (sim default)}; the driver counts the API calls it makes" >&2
 set +e
-docker exec -e ANTHROPIC_API_KEY -e MANIP_VLM_MODEL "${temp_env[@]}" "$CONTAINER" bash -lc \
+docker exec -e ANTHROPIC_API_KEY -e MANIP_VLM_MODEL "${temp_env[@]}" \
+  -e VLM_CALLS_FILE="/data/runs/.vlm_calls/$CALLS_NAME" "$CONTAINER" bash -lc \
   'export PYTHONPATH=/root/ros2_ws/src/manip_bridge:$PYTHONPATH; script="$1"; shift; exec python3 "/data/runs/$script" "$@"' \
   _ "$SCRIPT" "$@"
 code=$?
 set -e
 
-if [[ $live == 1 ]]; then
-  mkdir -p "$(dirname "$LOG")"
-  printf '%s\t%s\ttemp=%s\t%s\t%s\texit=%s\n' "$(date -u +%FT%TZ)" "$MANIP_VLM_MODEL" \
-    "${MANIP_VLM_TEMPERATURE:-0.0}" "$SCRIPT" "$*" "$code" >> "$LOG"
+calls="unknown"                                   # the driver died before writing it
+if [[ -f "$CALLS_DIR/$CALLS_NAME" ]]; then
+  calls="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["calls"])' \
+           "$CALLS_DIR/$CALLS_NAME" 2>/dev/null || echo unknown)"
+  rm -f "$CALLS_DIR/$CALLS_NAME" 2>/dev/null || true
 fi
+echo "[vlm_run] $SCRIPT made $calls API call(s); exit $code" >&2
+mkdir -p "$(dirname "$LOG")"
+printf '%s\t%s\ttemp=%s\t%s\t%s\texit=%s\tcalls=%s\n' "$(date -u +%FT%TZ)" "$MANIP_VLM_MODEL" \
+  "${MANIP_VLM_TEMPERATURE:-0.0}" "$SCRIPT" "$*" "$code" "$calls" >> "$LOG"
 exit $code

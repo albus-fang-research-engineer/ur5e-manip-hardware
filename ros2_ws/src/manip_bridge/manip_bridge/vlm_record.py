@@ -7,8 +7,45 @@ Shared here so both drivers replay the same way.
 
 This module imports no sim code itself (vlm_compat is the import site), so
 it is not a compat module.
+
+Paid-call accounting: every RecordingTransport counts the requests it sends
+to the live API. At interpreter exit the process's total is written as JSON
+to $VLM_CALLS_FILE when that is set (scripts/vlm_run.sh sets it and appends
+the count to outputs/vlm_calls.log), so the log records the calls a driver
+actually made, not a guess from its flags. Replay and dry-run transports
+never reach the API and count nothing.
 """
+from __future__ import annotations
+
+import atexit
+import json
+import os
+import sys
+
 from manip_bridge import vlm_compat
+
+_RECORDERS: list = []
+
+
+def calls_made() -> int:
+    """Requests sent to the live API by this process (all recorders)."""
+    return sum(r.sent for r in _RECORDERS)
+
+
+def write_calls_file(path: str | None = None) -> str | None:
+    """Write {"calls", "responses", "argv"} to `path` (default
+    $VLM_CALLS_FILE); called at exit. Returns the path written, or None."""
+    path = path or os.environ.get("VLM_CALLS_FILE")
+    if not path:
+        return None
+    with open(path, "w") as f:
+        json.dump({"calls": calls_made(), "responses": sum(len(r.raw) for r in _RECORDERS),
+                   "argv": sys.argv}, f)
+        f.write("\n")
+    return path
+
+
+atexit.register(write_calls_file)
 
 
 class RecordingTransport:
@@ -20,8 +57,11 @@ class RecordingTransport:
     def __init__(self, inner=None):
         self.inner = inner
         self.raw: list[str] = []
+        self.sent = 0                     # requests sent, answered or not
+        _RECORDERS.append(self)
 
     def __call__(self, payload: dict) -> str:
+        self.sent += 1
         text = (self.inner or vlm_compat.live_transport)(payload)
         self.raw.append(text)
         return text

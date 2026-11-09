@@ -53,8 +53,19 @@ below. It writes to <run>/m4_vlm:
 
     python3 /data/runs/plan_stages_hw.py --run /data/runs/<stamp> --method vlm \\
         --emissions /data/runs/<stamp>/call3/emissions.json
+
+--critic preview (vlm only; default off, which plans exactly as before) runs
+VLM call #4 first (critic_scene.py): preview the specification, let the
+critic accept it or amend it with typed edits (2 rounds), then plan the
+accepted specification. No-spend modes: --critic-dry-run writes round 1's
+prompt and images and stops; --critic-responses DIR replays canned
+responses. A paid run goes through scripts/vlm_run.sh:
+
+    scripts/vlm_run.sh plan_stages_hw.py --run /data/runs/<stamp> --method vlm \\
+        --emissions /data/runs/<stamp>/call3/emissions.json --critic preview
 """
 import argparse
+from dataclasses import dataclass
 import hashlib
 import importlib.util
 import json
@@ -74,6 +85,7 @@ except ImportError as e:
              "    export PYTHONPATH=/root/ros2_ws/src/manip_bridge:$PYTHONPATH")
 
 HERE = Path(__file__).resolve().parent
+REPO = HERE.parents[1]          # outputs/runs -> the repo (host); "/" in the ros2 container
 CUROBO_ADDR = os.environ.get("CUROBO_ADDR", "tcp://127.0.0.1:5671")
 CALL_TIMEOUT_MS = 300_000
 
@@ -448,6 +460,11 @@ def run(a) -> int:
 #   plan_constrained (goal sampling, IK, collision, containment, CBiRRT).
 #   A failed pour re-plans the carry with the next seed, as the hand method.
 #
+# --critic preview runs critic_scene.run_critic before any sidecar call: the
+# accepted specification (edited emissions, re-picked points) replaces call
+# #3's and call #2's for planning; a reject at the cap is the typed failure
+# preview_rejected (exit 2). The summary goes into report.json["critic"].
+#
 # Frames: everything is in the GROUNDING canonical frame emit_scene compiled
 # in (summary pose x R_body_from_canon, emit_scene.measured_poses), so
 # T_ee_canon = inv(FK(q_grasp)) . T_base_canon. hand_symbols' fixtures are
@@ -515,10 +532,41 @@ def compile_at_entry(ec, em, symbols, poses, T_entry, mover, w_pt, e_pt, synth):
     return cs
 
 
-def load_vlm_inputs(a, run_dir: Path, out: Path):
-    """(binding, objs, symbols, summary, poses, movers, emissions artifact).
-    `movers`: [(role, stage, emission, w_point, e_point, synthesized)] for
-    the bound stages with a passive object, in order."""
+@dataclass
+class VlmInputs:
+    """What --method vlm reads, loaded once (load_vlm_inputs). `movers`:
+    [(role, stage, emission, w_point, e_point, synthesized)] for the bound
+    stages with a passive object, in order; the rest is what the critic
+    also needs (every bound stage, every role's emission, call #2's
+    selections and where the inputs live)."""
+    b: object
+    objs: dict
+    symbols: dict
+    summary: dict
+    poses: dict
+    movers: list
+    em_doc: dict
+    es: object                         # the emit_scene module
+    plan_path: Path
+    sel_path: Path
+    em_path: Path
+    asset_dirs: dict
+    sels: dict
+    sel_objects: dict
+    role_index: dict
+    ems: dict
+    stages: list                       # [(StageSpec, role)], ec.bound_stages
+    synthesized: frozenset
+
+
+def write_report(out: Path, report: dict) -> None:
+    """The one writer of <out>/report.json (every exit path of --method vlm)."""
+    (out / "report.json").write_text(json.dumps(report, indent=1, default=float) + "\n")
+
+
+def load_vlm_inputs(a, run_dir: Path, out: Path) -> VlmInputs:
+    """Load and cross-check the plan, call #2's selections, call #3's
+    emissions and the run's measured poses (see VlmInputs)."""
     es = _load("emit_scene")
     plan_path = Path(a.plan) if a.plan else run_dir / "stage_plan" / "plan.json"
     sel_path = Path(a.selections) if a.selections else run_dir / "call2" / "selections.json"
@@ -572,7 +620,11 @@ def load_vlm_inputs(a, run_dir: Path, out: Path):
     if any(m[5] for m in movers):
         raise PlanRefusal(f"synthesized entries {[m[0] for m in movers if m[5]]} are not "
                           "supported on hardware yet (plan_task's synthesized start)")
-    return b, objs, symbols, summary, poses, movers, em_doc
+    return VlmInputs(b=b, objs=objs, symbols=symbols, summary=summary, poses=poses,
+                     movers=movers, em_doc=em_doc, es=es, plan_path=plan_path, sel_path=sel_path,
+                     em_path=em_path, asset_dirs=asset_dirs, sels=sels, sel_objects=sel_objects,
+                     role_index=role_index, ems=ems, stages=list(es.ec.bound_stages(b, by_idx)),
+                     synthesized=frozenset(b.entry_synthesized))
 
 
 def run_vlm(a) -> int:
@@ -581,7 +633,9 @@ def run_vlm(a) -> int:
     run_dir = Path(a.run)
     out = Path(a.out) if a.out else run_dir / "m4_vlm"
     out.mkdir(parents=True, exist_ok=True)
-    b, objs, symbols, summary, poses, movers, em_doc = load_vlm_inputs(a, run_dir, out)
+    vin = load_vlm_inputs(a, run_dir, out)
+    objs, symbols, summary, poses = vin.objs, vin.symbols, vin.summary, vin.poses
+    movers, em_doc = vin.movers, vin.em_doc
     mover = movers[0][1].active
     passive = movers[0][1].passive
     if any(m[1].active != mover for m in movers):
@@ -607,13 +661,6 @@ def run_vlm(a) -> int:
     T_ee_canon = np.linalg.inv(T_tool0_grasp) @ poses[mover]
     T_ee_body = so.T_ee_body(T_tool0_grasp, T_mv_body)
 
-    cli = SidecarClient(CUROBO_ADDR, timeout_ms=CALL_TIMEOUT_MS)
-    S_body = so.object_spheres(mesh_mv, run_dir / "objects" / objs[mover]["key"] / "spheres_body.json",
-                               cli.call)
-    spheres = so.spheres_tool0(S_body, T_ee_body)
-    scene = (registered_scene(summary, T_ps_body, mesh_ps, 0.5 * (T_mv_body[:2, 3] + T_ps_body[:2, 3]))
-             if a.scene == "registered" else None)
-
     gate_failed = [c["stage"] for c in em_doc.get("compiled", []) if not c.get("grounded")]
     report = {"run": str(run_dir), "method": "vlm (call #3 emissions)", "scene": a.scene,
               "inputs": {"reach": reach["plan"].get("grasp"), "emissions": str(a.emissions),
@@ -624,14 +671,48 @@ def run_vlm(a) -> int:
               "poses": {"T_base_canon": {k: T.tolist() for k, T in poses.items()},
                         "canonical_up_vs_base_z_deg": up_dev},
               "grasp": {"q_grasp": q_grasp.tolist(), "q_lift": q_lift.tolist(),
-                        "T_ee_body": T_ee_body.tolist(), "T_ee_canon": T_ee_canon.tolist(),
-                        "n_spheres": int(len(spheres))},
+                        "T_ee_body": T_ee_body.tolist(), "T_ee_canon": T_ee_canon.tolist()},
               "attempts": [], "failures": [], "status": "failed"}
+
+    critic = None
+    if a.critic == "preview":
+        critic = run_critic_preview(a, run_dir, out, vin, ch.fk(q_lift) @ T_ee_canon, mover,
+                                    T_tool0_grasp)
+        if critic["status"] == "dry_run":
+            return 0
+        report["method"] = "vlm (call #3 emissions) + critic"
+        report["critic"] = critic_summary(critic)
+        if critic["status"] == "verdict":         # --critic-verdict-only: no edit, no planning
+            report["status"] = "verdict_only"
+            write_report(out, report)
+            print(f"[plan] critic verdict: {critic['verdict']['verdict']}; not planned "
+                  f"(--critic-verdict-only) -> {out / 'report.json'}")
+            return 0
+        if critic["status"] != "accepted":
+            report["failures"].append(critic["failure"] or {"type": None, "phase": "critic"})
+            write_report(out, report)
+            print(f"[plan] critic: {critic['status']}; not planned -> {out / 'report.json'}")
+            return 2
+        movers, failures = accepted_movers(critic, movers)
+        if failures:
+            report["failures"] += failures
+            write_report(out, report)
+            print(f"[plan] the accepted specification cannot be planned as accepted: "
+                  f"{[(f['stage'], f['phase']) for f in failures]} -> {out / 'report.json'}")
+            return 2
+
+    cli = SidecarClient(CUROBO_ADDR, timeout_ms=CALL_TIMEOUT_MS)
+    S_body = so.object_spheres(mesh_mv, run_dir / "objects" / objs[mover]["key"] / "spheres_body.json",
+                               cli.call)
+    spheres = so.spheres_tool0(S_body, T_ee_body)
+    scene = (registered_scene(summary, T_ps_body, mesh_ps, 0.5 * (T_mv_body[:2, 3] + T_ps_body[:2, 3]))
+             if a.scene == "registered" else None)
+    report["grasp"]["n_spheres"] = int(len(spheres))
     if gate_failed:
         print(f"[plan] note: call #3's gate failed {gate_failed}; compiling at the actual entry anyway")
 
     def save_report():
-        (out / "report.json").write_text(json.dumps(report, indent=1, default=float) + "\n")
+        write_report(out, report)
 
     def compile_rec(role, stage, em, w_pt, e_pt, synth, T_entry, seed, rec):
         """-> the compiled stage, or None with the typed failure recorded."""
@@ -718,6 +799,69 @@ def run_vlm(a) -> int:
     return 0
 
 
+def run_critic_preview(a, run_dir, out, vin: VlmInputs, T_entry, mover, T_tool0_grasp) -> dict:
+    """critic_scene.run_critic on this run (see critic_scene.py). On
+    'accepted' the result also carries 'accepted_spec' (critic_scene.
+    accepted_spec over the mover roles). A sim without the critic, or an
+    input the critic refuses, is a PlanRefusal."""
+    cs_mod = _load("critic_scene")
+    try:
+        cs_mod.require_critic()
+        gu = Path(a.gripper_urdf) if a.gripper_urdf else None
+        gm = Path(a.gripper_meshes) if a.gripper_meshes else None
+        mesh = Path(a.gripper_mesh) if a.gripper_mesh else cs_mod.find_gripper_mesh(run_dir)
+        notes = []
+        if mesh is not None:
+            if not mesh.is_file():
+                raise PlanRefusal(f"--gripper-mesh {mesh}: not found")
+            gu = None                      # the exported mesh wins: the same 2F-85
+            notes.append(f"gripper: mesh {mesh}")
+        elif gu is not None and not gu.is_file():
+            notes.append(f"gripper not drawn: {gu} not found (pass --gripper-urdf/"
+                         f"--gripper-meshes, or run critic_scene.py export-gripper --run "
+                         f"{run_dir} on the host)")
+            print(f"[critic] note: {notes[-1]}")
+            gu = None
+        ctx = cs_mod.CriticContext(
+            run_dir=run_dir, out=out, plan_path=vin.plan_path, stages=vin.stages, objs=vin.objs,
+            asset_dirs=vin.asset_dirs, symbols=vin.symbols, summary=vin.summary,
+            poses=vin.poses, selections=vin.sels, sel_objects=vin.sel_objects,
+            role_index=vin.role_index, synthesized=vin.synthesized, emissions=vin.ems,
+            raw_emissions=cs_mod.raw_by_stage_name(vin.em_path.with_name("emissions.log.json")),
+            offered=cs_mod.offered_from_log(vin.sel_path.with_name("selections.log.json"),
+                                            vin.sel_objects),
+            T_entry=T_entry, grasp_obj=mover, T_tcp_grasp=T_tool0_grasp, es=vin.es,
+            arm=vin.em_doc.get("arm") or "framed-chained",
+            gripper_mesh=mesh, gripper_urdf=gu, gripper_meshes=gm, notes=notes)
+        mode = ("dry_run" if a.critic_dry_run else "replay" if a.critic_responses else "live")
+        critic = cs_mod.run_critic(ctx, mode=mode, responses=(Path(a.critic_responses)
+                                                              if a.critic_responses else None),
+                                   verdict_only=a.critic_verdict_only)
+    except cs_mod.CriticRefusal as e:
+        raise PlanRefusal(str(e)) from None
+    if critic["status"] == "accepted":
+        critic["accepted_spec"] = cs_mod.accepted_spec(ctx, critic["state"],
+                                                       [m[0] for m in vin.movers])
+    return critic
+
+
+def critic_summary(critic: dict) -> dict:
+    return {k: v for k, v in critic.items() if k not in ("chain", "state", "accepted_spec")}
+
+
+def accepted_movers(critic: dict, movers: list) -> tuple[list, list]:
+    """(the planner's movers, failures): every mover planned exactly as the
+    critic accepted it -- its accepted emission and the anchor points
+    resolved from the accepted selections. Never falls back to the inputs
+    the critic saw first: a mover the accepted specification cannot supply
+    is a typed failure record (critic_scene.accepted_spec), and the caller
+    plans nothing."""
+    spec, failures = critic["accepted_spec"]
+    out = [(role, stage, *spec[role], synth)
+           for role, stage, _em, _w, _e, synth in movers if role in spec]
+    return out, list(failures)
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--run", required=True)
@@ -739,6 +883,25 @@ def main(argv=None) -> int:
     ap.add_argument("--selections", default=None, help="vlm: default <run>/call2/selections.json")
     ap.add_argument("--emissions", default=None,
                     help="vlm (required): emit_scene's artifact, e.g. <run>/call3/emissions.json")
+    ap.add_argument("--critic", choices=("off", "preview"), default="off",
+                    help="vlm: off (default) plans call #3's regions as they are; preview runs "
+                         "VLM call #4 (critic_scene.py) first and plans what it accepts")
+    ap.add_argument("--critic-responses", default=None,
+                    help="--critic preview: replay critic_* / emit_* response files from this "
+                         "dir instead of calling the API")
+    ap.add_argument("--critic-dry-run", action="store_true",
+                    help="--critic preview: write round 1's prompt and images, stop (no call)")
+    ap.add_argument("--critic-verdict-only", action="store_true",
+                    help="--critic preview: one critic call on the specification as given, "
+                         "record its verdict, apply no edit and do not plan (critic_cases.py)")
+    ap.add_argument("--gripper-urdf", default=str(REPO / "curobo_runtime/robot/ur5e_robotiq.urdf"),
+                    help="--critic preview: the 2F-85 below tool0, drawn in the preview")
+    ap.add_argument("--gripper-meshes",
+                    default=str(REPO / "test/curobo_incontainer/robotiq/meshes/collision"))
+    ap.add_argument("--gripper-mesh", default=None,
+                    help="--critic preview: the 2F-85 as one OBJ in the TCP frame (critic_scene.py "
+                         "export-gripper); default <run>/critic_assets/gripper_2f85.obj if it "
+                         "exists, else the URDF")
     a = ap.parse_args(argv)
     if bool(a.teapot_key) != bool(a.mug_key):
         ap.error("--teapot-key and --mug-key go together")
@@ -746,6 +909,12 @@ def main(argv=None) -> int:
         ap.error("--method vlm needs --emissions")
     if a.method == "hand" and (a.plan or a.selections or a.emissions):
         ap.error("--plan/--selections/--emissions are for --method vlm")
+    if a.method == "hand" and a.critic != "off":
+        ap.error("--critic is for --method vlm")
+    if a.critic == "off" and (a.critic_responses or a.critic_dry_run or a.critic_verdict_only):
+        ap.error("--critic-responses/--critic-dry-run/--critic-verdict-only need --critic preview")
+    if a.critic_responses and a.critic_dry_run:
+        ap.error("--critic-responses and --critic-dry-run are exclusive")
     if a.method == "vlm" and (a.teapot_key or a.library != str(HERE / "library")
                               or a.tilt_deg != TILT_DEG):
         ap.error("--teapot-key/--mug-key/--library/--tilt-deg are for --method hand: the vlm "

@@ -17,6 +17,10 @@ Call #3 (emit_scene) also uses the emission-side pieces: entry_line (the
 factual entry line), PROMPT_DELTAS / TEMPERATURE (recorded in the artifact)
 and MAX_PARSE_RETRIES (the call budget it prints).
 
+critic_scene.py's re-emit compares a stage's recorded raw emission with its
+current (possibly edited) emission through parse_emission, to replay the
+emission the stage actually has.
+
 plan_stages_hw.py --method vlm reads call #3's artifact back with
 emission_from_json (not load_emissions, which refuses an artifact whose
 compile gate failed: the planner records that stage's failure instead) and
@@ -35,7 +39,8 @@ try:
     import manip_sim.vlm as _vlm
     from manip_sim.vlm import (FAILURE_TYPES, MAX_PARSE_RETRIES, MODEL, PROMPT_DELTAS,
                                TEMPERATURE, CallLog, Client, ObjectRef, ParseRejection, StagePlan,
-                               StageSpec, VLMError, Vocabulary, emission_from_json, entry_line)
+                               StageSpec, VLMError, Vocabulary, emission_from_json, entry_line,
+                               parse_emission)
     from manip_sim.vlm import _urllib_transport as live_transport   # what plan_stages records
     from manip_sim.vlm import _JSON_ONLY as JSON_ONLY, _load_json as load_json
     from manip_sim.vlm import _text as text_block, image_block
@@ -53,7 +58,7 @@ from manip_bridge.sim_provenance import provenance as _provenance
 SOURCES = (_vlm.__file__,)
 
 __all__ = ["FAILURE_TYPES", "MAX_PARSE_RETRIES", "MODEL", "PROMPT_DELTAS", "TEMPERATURE",
-           "emission_from_json", "entry_line",
+           "emission_from_json", "entry_line", "parse_emission",
            "CallLog", "Client", "ObjectRef", "ParseRejection", "StagePlan", "StageSpec",
            "VLMError", "Vocabulary", "live_transport", "provenance", "SOURCES",
            "JSON_ONLY", "load_json", "text_block", "image_block", "ask"]
