@@ -15,6 +15,12 @@
 # command line, so it is not printed and does not show in `ps`. The model is
 # required: no silent fallback to the drivers' built-in default.
 #
+# Host mode (no container): VLM_HOST_SIM=<sim checkout> runs the driver from
+# outputs/runs/ with the host's manip-tsr Python, that sim checkout on
+# PYTHONPATH and SIM_DIR, and the key in the child's environment only.
+# For code not yet merged into the branch Ros2Bridge mounts, e.g.
+#   VLM_HOST_SIM=~/ur5e-manip-sim-critic scripts/vlm_run.sh critic_cases.py run --run <host run dir> --live
+#
 # Every invocation is appended to outputs/vlm_calls.log: UTC time, model,
 # script, arguments, exit code and calls=N, the API calls the driver itself
 # counted (0 for a replay or dry run; "unknown" if it died before reporting).
@@ -63,11 +69,24 @@ rm -f "$CALLS_DIR/$CALLS_NAME"
 
 echo "[vlm_run] $SCRIPT model=$MANIP_VLM_MODEL temperature=${MANIP_VLM_TEMPERATURE:-0.0 (sim default)}; the driver counts the API calls it makes" >&2
 set +e
-docker exec -e ANTHROPIC_API_KEY -e MANIP_VLM_MODEL "${temp_env[@]}" \
-  -e VLM_CALLS_FILE="/data/runs/.vlm_calls/$CALLS_NAME" "$CONTAINER" bash -lc \
-  'export PYTHONPATH=/root/ros2_ws/src/manip_bridge:$PYTHONPATH; script="$1"; shift; exec python3 "/data/runs/$script" "$@"' \
-  _ "$SCRIPT" "$@"
-code=$?
+if [[ -n "${VLM_HOST_SIM:-}" ]]; then
+  HOST_PY="${VLM_HOST_PYTHON:-$HOME/miniconda3/envs/manip-tsr/bin/python}"
+  SIM="$(cd "$VLM_HOST_SIM" && pwd)"
+  [[ -f "$SIM/manip_sim/vlm.py" ]] || { echo "vlm_run: $SIM is not a sim checkout" >&2; exit 64; }
+  where="host, sim $SIM"
+  echo "[vlm_run] host mode: $HOST_PY, sim $SIM" >&2
+  ( cd "$REPO" && SIM_DIR="$SIM" VLM_CALLS_FILE="$CALLS_DIR/$CALLS_NAME" \
+      PYTHONPATH="$REPO/../manip-tsr:$SIM:$REPO/../manip-cbirrt:$REPO/ros2_ws/src/manip_bridge" \
+      "$HOST_PY" "outputs/runs/$SCRIPT" "$@" )
+  code=$?
+else
+  where="$CONTAINER"
+  docker exec -e ANTHROPIC_API_KEY -e MANIP_VLM_MODEL "${temp_env[@]}" \
+    -e VLM_CALLS_FILE="/data/runs/.vlm_calls/$CALLS_NAME" "$CONTAINER" bash -lc \
+    'export PYTHONPATH=/root/ros2_ws/src/manip_bridge:$PYTHONPATH; script="$1"; shift; exec python3 "/data/runs/$script" "$@"' \
+    _ "$SCRIPT" "$@"
+  code=$?
+fi
 set -e
 
 calls="unknown"                                   # the driver died before writing it
@@ -78,6 +97,6 @@ if [[ -f "$CALLS_DIR/$CALLS_NAME" ]]; then
 fi
 echo "[vlm_run] $SCRIPT made $calls API call(s); exit $code" >&2
 mkdir -p "$(dirname "$LOG")"
-printf '%s\t%s\ttemp=%s\t%s\t%s\texit=%s\tcalls=%s\n' "$(date -u +%FT%TZ)" "$MANIP_VLM_MODEL" \
-  "${MANIP_VLM_TEMPERATURE:-0.0}" "$SCRIPT" "$*" "$code" "$calls" >> "$LOG"
+printf '%s\t%s\ttemp=%s\t%s\t%s\texit=%s\tcalls=%s\tin=%s\n' "$(date -u +%FT%TZ)" "$MANIP_VLM_MODEL" \
+  "${MANIP_VLM_TEMPERATURE:-0.0}" "$SCRIPT" "$*" "$code" "$calls" "$where" >> "$LOG"
 exit $code
