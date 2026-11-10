@@ -62,7 +62,15 @@ class RecordingTransport:
 
     def __call__(self, payload: dict) -> str:
         self.sent += 1
-        text = (self.inner or vlm_compat.live_transport)(payload)
+        try:
+            text = (self.inner or vlm_compat.live_transport)(payload)
+        except vlm_compat.VLMError as e:
+            # a cut-off answer (the sim's ResponseTruncated) still carries its
+            # text: keep it, so the log replays the same retry the live run made
+            cut = getattr(e, "text", None)
+            if isinstance(cut, str):
+                self.raw.append(cut)
+            raise
         self.raw.append(text)
         return text
 

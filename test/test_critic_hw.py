@@ -612,6 +612,31 @@ def test_vlm_record_counts_the_calls_it_sends(tmp_path, monkeypatch):
     assert vlm_record.write_calls_file() is None
 
 
+def test_vlm_record_keeps_a_cut_off_answer(monkeypatch):
+    """A transport error carrying text (the sim's ResponseTruncated) is
+    counted, its text recorded, and the error re-raised; a plain VLMError
+    records nothing."""
+    from manip_bridge import vlm_compat, vlm_record
+    monkeypatch.setattr(vlm_record, "_RECORDERS", [])
+
+    class Cut(vlm_compat.VLMError):
+        def __init__(self, text):
+            super().__init__("cut off")
+            self.text = text
+
+    def raiser(err):
+        def inner(p):
+            raise err
+        return inner
+    t = vlm_record.RecordingTransport(raiser(Cut('{"a": ')))
+    with pytest.raises(Cut):
+        t({})
+    plain = vlm_record.RecordingTransport(raiser(vlm_compat.VLMError("API error 500")))
+    with pytest.raises(vlm_compat.VLMError):
+        plain({})
+    assert t.raw == ['{"a": '] and plain.raw == [] and vlm_record.calls_made() == 2
+
+
 def test_dry_run_writes_round_one_and_stops(hw, critic_env):
     run, setup, _ = critic_env
     side, _ = setup({})
