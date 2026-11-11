@@ -60,6 +60,7 @@ reports the previous run's verdict. Test harness only.
 `outputs/runs/plan_stages_hw.py`: `excess_metrics` records a TOPP-RA refusal
 (`dense: {"refused": ...}`) but the attempt still counts as planned, so the
 executor is the first to refuse it. Proposed: count it as a failed attempt
-and try the next seed. Deferred: 0 of 10 sweep10 seeds hit it at
-`DENSIFY_STEP` 0.005. Trigger: a refusal during trials. If refusals come
+and try the next seed. Deferred: 1 of 50 seeds hit it at `DENSIFY_STEP`
+0.005 (seed 47's transport, 0.0010 rad over SPLINE_TOL); the runbook
+re-plans with `--seed-start 5`. Trigger: refusals during trials. If refusals come
 back, prefer smoothing/shortcutting the CBiRRT path over a smaller step.
