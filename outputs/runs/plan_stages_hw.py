@@ -378,7 +378,9 @@ def run(a) -> int:
               "inputs": {"reach": reach["plan"].get("grasp"), "teapot_key": tk, "mug_key": mk,
                          "fixtures": [tp["_path"], mug["_path"]], "sim_module": psc.SIM_MODULE,
                          "sim": psc.provenance(),
-                         "tilt_deg": a.tilt_deg, "deeper_m": a.deeper},
+                         "tilt_deg": a.tilt_deg, "deeper_m": a.deeper,
+                         "seeds": {"seed_start": a.seed_start, "tries": a.tries},
+                         "timing": {"densify_step": um.DENSIFY_STEP, "spline_tol": um.SPLINE_TOL}},
               "poses": {"T_base_teapot": T_tp.tolist(), "T_base_mug": T_mug.tolist(),
                         "canonical_up_vs_base_z_deg": up_dev},
               "grasp": {"q_grasp": q_grasp.tolist(), "q_lift": q_lift.tolist(),
@@ -394,7 +396,7 @@ def run(a) -> int:
 
     done = None
     try:
-        for k in range(a.tries):
+        for k in range(a.seed_start, a.seed_start + a.tries):
             tr = plan_stage(cli, "transport", q_lift, T_ee_canon, pair_tr, spheres, scene, a, k,
                             TRANSPORT_EPS)
             att = {"seed": k, "transport": {kk: v for kk, v in tr.items() if kk != "Q"}}
@@ -666,6 +668,8 @@ def run_vlm(a) -> int:
               "inputs": {"reach": reach["plan"].get("grasp"), "emissions": str(a.emissions),
                          "plan_sha": (em_doc.get("hardware") or {}).get("plan_sha"),
                          "emit_gate_failed": gate_failed, "deeper_m": a.deeper,
+                         "seeds": {"seed_start": a.seed_start, "tries": a.tries},
+                         "timing": {"densify_step": um.DENSIFY_STEP, "spline_tol": um.SPLINE_TOL},
                          "sim": es_ec.provenance()},
               "frames": "grounding canonical (summary pose x R_body_from_canon)",
               "poses": {"T_base_canon": {k: T.tolist() for k, T in poses.items()},
@@ -733,11 +737,11 @@ def run_vlm(a) -> int:
     T_first = ch.fk(q_lift) @ T_ee_canon
     first_rec = {"role": first[0], "name": first[1].name,
                  "entry_T_base_canon": np.round(T_first, 6).tolist()}
-    cs_first = compile_rec(*first, T_first, 0, first_rec)
+    cs_first = compile_rec(*first, T_first, a.seed_start, first_rec)
     report["first_stage_compile"] = first_rec
     done = None
     try:
-        for k in range(a.tries if cs_first is not None else 0):
+        for k in range(a.seed_start, a.seed_start + (a.tries if cs_first is not None else 0)):
             att = {"seed": k, "stages": []}
             report["attempts"].append(att)
             q_cur, paths = q_lift, {}
@@ -872,6 +876,8 @@ def main(argv=None) -> int:
     ap.add_argument("--scene", choices=("registered", "live"), default="registered")
     ap.add_argument("--tilt-deg", type=float, default=TILT_DEG)
     ap.add_argument("--tries", type=int, default=5, help="transport seeds to try for a pourable end")
+    ap.add_argument("--seed-start", type=int, default=0,
+                    help="first seed; seeds seed_start .. seed_start+tries-1 (repeat-planning sweeps)")
     ap.add_argument("--timeout", type=float, default=20.0, help="CBiRRT budget per stage call (s)")
     ap.add_argument("--n-goal-samples", type=int, default=60)
     ap.add_argument("--deeper", type=float, default=0.0, help="as grasp_exec --deeper")
@@ -903,6 +909,8 @@ def main(argv=None) -> int:
                          "export-gripper); default <run>/critic_assets/gripper_2f85.obj if it "
                          "exists, else the URDF")
     a = ap.parse_args(argv)
+    if a.seed_start < 0:
+        ap.error("--seed-start must be >= 0 (the sidecar seeds NumPy with it)")
     if bool(a.teapot_key) != bool(a.mug_key):
         ap.error("--teapot-key and --mug-key go together")
     if a.method == "vlm" and not a.emissions:
