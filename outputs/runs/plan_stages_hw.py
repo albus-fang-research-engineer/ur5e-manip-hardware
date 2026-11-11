@@ -95,6 +95,10 @@ TRANSPORT_HEIGHT = (0.04, 0.10)
 TRANSPORT_Z_CORRIDOR = (-0.02, 0.45)
 TRANSPORT_EPS = 0.12            # manip_cbirrt's default, what the sim's transport used
 POUR_EPS = 0.05
+CLEARANCE_MARGIN_M = 0.01       # the sidecar's collision margin; at 0 the teapot grazed the
+                                # mug rim by 0.1-3.4 mm in a mesh replay of ten pour plans
+                                # (its spheres leave ~5 mm of the mesh uncovered); at 0.01 the
+                                # closest approach was 7-13 mm and all ten still planned
 TILT_DEG = 95.0
 TABLE_THICK_M = 0.04
 TABLE_HALF_M = 0.6
@@ -277,7 +281,8 @@ def plan_stage(cli, label, q_start, T_ee_canon, pair, spheres, scene, a, seed, e
            "joint_names": list(um.DH_ORDER), "T_ee_body": np.asarray(T_ee_canon, float).tolist(),
            "subgoal": _tsr_msg(pair.subgoal), "path": [_tsr_msg(pair.path)],
            "n_goal_samples": int(a.n_goal_samples), "timeout": float(a.timeout),
-           "eps": float(eps), "seed": int(seed), "attached_spheres": np.asarray(spheres, float).tolist()}
+           "eps": float(eps), "seed": int(seed), "clearance_margin": float(a.clearance_margin),
+           "attached_spheres": np.asarray(spheres, float).tolist()}
     if scene is not None:
         msg["scene"] = scene
     t0 = time.time()
@@ -380,6 +385,7 @@ def run(a) -> int:
                          "sim": psc.provenance(),
                          "tilt_deg": a.tilt_deg, "deeper_m": a.deeper,
                          "seeds": {"seed_start": a.seed_start, "tries": a.tries},
+                         "clearance_margin_m": a.clearance_margin,
                          "timing": {"densify_step": um.DENSIFY_STEP, "spline_tol": um.SPLINE_TOL}},
               "poses": {"T_base_teapot": T_tp.tolist(), "T_base_mug": T_mug.tolist(),
                         "canonical_up_vs_base_z_deg": up_dev},
@@ -669,6 +675,7 @@ def run_vlm(a) -> int:
                          "plan_sha": (em_doc.get("hardware") or {}).get("plan_sha"),
                          "emit_gate_failed": gate_failed, "deeper_m": a.deeper,
                          "seeds": {"seed_start": a.seed_start, "tries": a.tries},
+                         "clearance_margin_m": a.clearance_margin,
                          "timing": {"densify_step": um.DENSIFY_STEP, "spline_tol": um.SPLINE_TOL},
                          "sim": es_ec.provenance()},
               "frames": "grounding canonical (summary pose x R_body_from_canon)",
@@ -879,6 +886,9 @@ def main(argv=None) -> int:
     ap.add_argument("--seed-start", type=int, default=0,
                     help="first seed; seeds seed_start .. seed_start+tries-1 (repeat-planning sweeps)")
     ap.add_argument("--timeout", type=float, default=20.0, help="CBiRRT budget per stage call (s)")
+    ap.add_argument("--clearance-margin", type=float, default=CLEARANCE_MARGIN_M,
+                    help="m; the sidecar's collision margin for the arm and the attached spheres, "
+                         "in [0, 0.05) (cuRobo's activation distance is 0.05)")
     ap.add_argument("--n-goal-samples", type=int, default=60)
     ap.add_argument("--deeper", type=float, default=0.0, help="as grasp_exec --deeper")
     ap.add_argument("--speed", type=float, default=0.1, help="timing used for the dense metrics")
@@ -909,6 +919,8 @@ def main(argv=None) -> int:
                          "export-gripper); default <run>/critic_assets/gripper_2f85.obj if it "
                          "exists, else the URDF")
     a = ap.parse_args(argv)
+    if not 0.0 <= a.clearance_margin < 0.05:
+        ap.error("--clearance-margin must be in [0, 0.05) m (the sidecar refuses anything else)")
     if a.seed_start < 0:
         ap.error("--seed-start must be >= 0 (the sidecar seeds NumPy with it)")
     if bool(a.teapot_key) != bool(a.mug_key):
