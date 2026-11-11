@@ -432,9 +432,11 @@ def test_reemit_compiled_stage_says_the_critic_rejected_it(hw, critic_env, tmp_p
 
 
 def test_reemit_uncompiled_stage_carries_the_compile_error(hw, critic_env, tmp_path, feedback):
-    """The stand-in pour does not compile (O2): the follow-up carries the
-    real compile error and the diagnosis; the pour is chained (the carry
-    moved the teapot before it)."""
+    """The stand-in pour does not compile: the follow-up carries the real
+    compile error and the diagnosis; the pour is chained (the carry moved
+    the teapot before it). Which row fails is the sim compiler's business
+    (path.rot[0] before critic-repair 40c49d2, path.trans[0] after), so
+    only the template is pinned."""
     run, setup, _ = critic_env
     setup({})
     pour_raw = _raw_of(run, POUR)
@@ -448,8 +450,7 @@ def test_reemit_uncompiled_stage_carries_the_compile_error(hw, critic_env, tmp_p
     assert rec["chained"] is True and len(rec["attempts"]) == 1 + ec.COMPILE_RETRIES
     text = feedback[0]["feedback"][0][1]
     assert text.startswith("The compiler rejected that emission: tilt teapot to pour tea into "
-                           "mug.path.rot[0]: the constrained tilt axis does not lie along a w "
-                           "basis vector")
+                           "mug.path.")
     assert text.endswith("A preview critic also reviewed the stage before planning: the tilt "
                          "axis is wrong. Re-emit the corrected JSON object only, changing as "
                          "little as needed.")
