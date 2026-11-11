@@ -117,8 +117,10 @@ def line(ch, q0, p_goal, step=0.005, max_joint_step=0.15, tol_p=1e-4, tol_r=1e-3
 
 SAMPLE_DT = 0.02                 # s between the points sent to the controller
 SPLINE_TOL = 1e-3                # rad, spline vs the straight joint segments between waypoints
-DENSIFY_STEP = 0.01              # rad; the sim executor uses 0.02, but a 0.02-dense pour
-                                 # (20261105_035449) still left SPLINE_TOL by 0.0014 rad
+DENSIFY_STEP = 0.005             # rad; the sim executor uses 0.02, but a 0.02-dense pour
+                                 # (20261105_035449) still left SPLINE_TOL by 0.0014 rad, and
+                                 # at 0.01 two of ten CBiRRT pour seeds (sweep10 seeds 7, 9)
+                                 # did too; at 0.005 all ten time
 
 
 def densify(Q, max_joint_step=DENSIFY_STEP) -> np.ndarray:
